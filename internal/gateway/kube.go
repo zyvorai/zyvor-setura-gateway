@@ -159,6 +159,7 @@ type meta struct {
 	Generation        int64             `json:"generation"`
 	CreationTimestamp string            `json:"creationTimestamp"`
 	Labels            map[string]string `json:"labels"`
+	Annotations       map[string]string `json:"annotations"`
 }
 
 type kobj struct {
@@ -261,6 +262,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		created, _ := time.Parse(time.RFC3339, r.Metadata.CreationTimestamp)
 		cfg.Routes = append(cfg.Routes, &Route{NS: r.Metadata.Namespace, Name: r.Metadata.Name, Generation: r.Metadata.Generation,
 			Created: created, Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() { annotateHTTP(spec.Rules, r.Metadata.Annotations) })
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}
 

@@ -49,6 +49,8 @@ Flags for run and up:
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
   --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
                         a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
+  --shadow-state FILE   snapshot shadow results (counters, recent mismatches) to FILE every 10s and
+                        reload them at start (default off)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -90,6 +92,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
 	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
+	fs.StringVar(&f.opts.ShadowState, "shadow-state", "", "persist shadow results to FILE (atomic snapshots, reloaded at start)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }

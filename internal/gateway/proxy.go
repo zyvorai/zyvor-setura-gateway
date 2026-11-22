@@ -125,6 +125,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 		status = 200
 	}
 	s.stats.record(st.route, st.backend, status)
+	s.latency.observe(st.route, st.backend, time.Since(start))
 	s.observe(rec, r, st, start, status)
 }
 
@@ -223,6 +224,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	rt := s.newTransport(ref.B, ep, rule.Retry, replay, canReplay)
 
 	var body []byte
+	var sp *bodySpool
 	mirrors := rule.Mirrors
 	if len(mirrors) > 0 {
 		var err error
@@ -232,8 +234,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			return
 		}
 		if len(body) > maxMirrorBody {
-			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-			mirrors = nil
+			mirrors, sp = s.bigBody(r, body, mirrors)
 		} else {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
@@ -241,6 +242,14 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 
 	sc := s.shadowStart(r, rule.RouteKey, ref.B.Key, mirrors)
 	defer sc.finish()
+	if sp != nil {
+		defer sp.release()
+		sp.onOver = func() {
+			if sc != nil {
+				s.shadow.skip(rule.RouteKey)
+			}
+		}
+	}
 
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
@@ -271,7 +280,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 				}
 			}
 			injectTrace(pr.Out, st)
-			s.fireMirrors(pr.Out, body, mirrors, sc)
+			s.fireMirrorsOrSpool(pr.Out, body, mirrors, sc, sp)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)

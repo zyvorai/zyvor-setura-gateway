@@ -167,9 +167,17 @@ func mismatchLine(u *ui, when, cat, method, path, where, p, s string) string {
 
 func writeShadowTable(w io.Writer, u *ui, s *builtin.ShadowSummary, recent int) {
 	fmt.Fprintln(w, summaryLine(u, s))
-	fmt.Fprintf(w, "  compared %d  sampled %d  dropped %d  shadow errors %d\n", s.Compared, s.Sampled, s.Dropped, s.Errors)
-	fmt.Fprintf(w, "  mismatches by category: status %d, header %d, body %d, latency %d\n",
+	fmt.Fprintf(w, "  compared %d  sampled %d  dropped %d  skipped %d  shadow errors %d\n", s.Compared, s.Sampled, s.Dropped, s.Skipped, s.Errors)
+	cats := fmt.Sprintf("status %d, header %d, body %d, latency %d",
 		s.ByCategory["status"], s.ByCategory["header"], s.ByCategory["body"], s.ByCategory["latency"])
+	for _, c := range sortedKeys(s.ByCategory) { // gRPC adds grpc-status and grpc-message
+		switch c {
+		case "status", "header", "body", "latency":
+		default:
+			cats += fmt.Sprintf(", %s %d", c, s.ByCategory[c])
+		}
+	}
+	fmt.Fprintf(w, "  mismatches by category: %s\n", cats)
 	if s.LastError != "" {
 		fmt.Fprintf(w, "  last shadow error: %s\n", s.LastError)
 	}

@@ -94,7 +94,15 @@ type histMeta struct {
 	Diff        diffSummary `json:"diff"` // this backup compared with its replacement
 }
 
-type histStore struct{ dir string }
+type histStore struct {
+	dir string
+	// lock tuning; zero values mean the defaults. Tests set them.
+	hbEvery   time.Duration    // heartbeat period (default 5s)
+	hbTimeout time.Duration    // heartbeat age after which an owner on another host is dead (default 1m)
+	now       func() time.Time // default time.Now
+	host      string           // default os.Hostname()
+	alive     func(pid int) (alive, known bool)
+}
 
 func newHistStore(config string) histStore {
 	return histStore{dir: filepath.Join(filepath.Dir(config), historyDirName)}
@@ -220,22 +228,4 @@ func (h histStore) prune(keep int) {
 		os.Remove(filepath.Join(h.dir, all[i].ID+".json"))
 		os.Remove(filepath.Join(h.dir, all[i].ID+".meta.json"))
 	}
-}
-
-// lock serializes rollouts against one config. The returned func releases it.
-func (h histStore) lock() (func(), error) {
-	if err := os.MkdirAll(h.dir, 0o700); err != nil {
-		return nil, err
-	}
-	p := filepath.Join(h.dir, "lock")
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil, userErrorf("another rollout holds %s; if it is stale (no rollout is running) delete it", p)
-		}
-		return nil, err
-	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
-	f.Close()
-	return func() { os.Remove(p) }, nil
 }

@@ -41,6 +41,7 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET012": {"Grant permits nothing", "This ReferenceGrant has an empty from or to list.", "Fill in both lists, or delete the grant."},
 	"SET013": {"Listener refuses this route", "The listener's allowedRoutes does not admit this route's namespace or kind.", "Widen allowedRoutes on the listener, or move the route to an allowed namespace."},
 	"SET014": {"Backend weights are invalid", "A weight is negative or too large, or the rule mixes Service and non-Service backends.", "Use weights from 0 up, and keep one kind of backend per rule."},
+	"SET015": {"Shadow-diff block is invalid", "The shadow-diff block or annotation cannot be parsed, or it names a rule that has no RequestMirror filter.", "Fix the JSON (see docs/shadow.md), or add a RequestMirror filter to that rule."},
 }
 
 func routeKindLabel(resource string) string {

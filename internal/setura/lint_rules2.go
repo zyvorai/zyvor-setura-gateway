@@ -32,7 +32,7 @@ func captureExtras(c *Cluster, namespace string, resources obj) (captured []any,
 		for _, it := range asList(list["items"]) {
 			m := asMap(it)
 			if name := asStr(asMap(m["metadata"])["name"]); name != "" {
-				resources[k+"/"+name] = m["spec"]
+				resources[k+"/"+name] = withShadowAnnotations(m)
 			}
 		}
 	}
