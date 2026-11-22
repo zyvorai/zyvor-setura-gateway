@@ -239,6 +239,11 @@ func promLine(line string) (name string, labels map[string]string, val float64, 
 
 // quantile returns the q-quantile in milliseconds, interpolating linearly
 // inside the bucket, or -1 without observations.
+// stable snaps a value to micro-millisecond precision. Interpolated quantiles that land
+// on a rounding boundary (72.5) otherwise differ in the last bit between architectures
+// (arm64 fuses multiply-add, amd64 does not) and print as 72ms or 73ms.
+func stable(v float64) float64 { return math.Round(v*1e6) / 1e6 }
+
 func quantile(h topHist, q float64) float64 {
 	n := len(h.cum)
 	if n == 0 || h.cum[n-1] <= 0 {
@@ -249,12 +254,12 @@ func quantile(h topHist, q float64) float64 {
 	for i, c := range h.cum {
 		if c >= target {
 			if math.IsInf(h.le[i], 1) {
-				return lo * 1000
+				return stable(lo * 1000)
 			}
 			if c == prev {
-				return h.le[i] * 1000
+				return stable(h.le[i] * 1000)
 			}
-			return (lo + (h.le[i]-lo)*(target-prev)/(c-prev)) * 1000
+			return stable((lo + (h.le[i]-lo)*(target-prev)/(c-prev)) * 1000)
 		}
 		lo, prev = h.le[i], c
 	}
