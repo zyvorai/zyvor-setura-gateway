@@ -31,10 +31,14 @@ type Options struct {
 	AccessLog   io.Writer   // JSON-lines access log, nil to disable
 	Diag        io.Writer   // human diagnostics, nil to discard
 	Rand        func(n int) int
-	ConnHistory int               // recent request records kept for /connections (0 = 500, negative disables)
-	Obs         ObsOptions        // access log format, tracing export, rate limiting
-	ShadowDiff  int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
-	Resilience  ResilienceOptions // retries, outlier ejection, default health checks
+	ConnHistory int        // recent request records kept for /connections (0 = 500, negative disables)
+	Obs         ObsOptions // access log format, tracing export, rate limiting
+	ShadowDiff  int        // default shadow comparison sample percent (0 = only annotated mirrors compare)
+	// ShadowState is a file the shadow results are snapshotted to every
+	// ShadowStateInterval (default 10s) and reloaded from at start; "" disables.
+	ShadowState         string
+	ShadowStateInterval time.Duration
+	Resilience          ResilienceOptions // retries, outlier ejection, default health checks
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -81,6 +85,8 @@ type Server struct {
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
 	shadow   shadowState
+	shadowP  *shadowPersist
+	latency  latencyStats
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -105,7 +111,9 @@ func New(opts Options) *Server {
 	if hist == 0 {
 		hist = DefaultConnHistory
 	}
-	return &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	s.shadowP = s.startShadowPersist()
+	return s
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -481,6 +489,7 @@ func (s *Server) Close() {
 		s.adminSrv.Close()
 	}
 	s.mirrorWG.Wait()
+	s.shadowP.close()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()

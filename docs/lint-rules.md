@@ -19,6 +19,7 @@
 | SET012 | warning | ReferenceGrant with empty `from` or `to` |
 | SET013 | error | listener `allowedRoutes` (namespaces or kinds) rejects the route |
 | SET014 | error | negative or overflowing weights, or mixed Service/non-Service backendRefs in one rule |
+| SET015 | error | shadow-diff block or `setura.zyvor.dev/shadow-diff` annotation is invalid, or names a rule without a `RequestMirror` (see [shadow.md](shadow.md)) |
 
 ## ReferenceGrants (SET004, SET012)
 

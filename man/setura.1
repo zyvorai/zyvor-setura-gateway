@@ -80,7 +80,7 @@ explain saved evidence, optionally with local Ollama
 built\-in Gateway API data plane, no Envoy needed; guarded config rollout
 .TP
 .B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
-compare mirrored responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
+compare mirrored HTTP and gRPC responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
 .TP
 .B publish GATEWAY \-\-listener NAME
 forward an Envoy Gateway listener to IPv4 loopback
@@ -126,6 +126,6 @@ the check, gate, lint, replay or migrate check failed or found differences, or w
 .B 2
 usage or input error
 .SH GATEWAY ROLLOUT
-\fBsetura gateway rollout\fR lints a candidate snapshot, backs up the live file in \fI.setura\-history\fR, replaces it atomically, waits for the admin /status generation, runs a checks file for an observation window and restores the backup on any failure. \fBsetura gateway history\fR lists the backups and \fBsetura gateway rollback\fR restores one.
+\fBsetura gateway rollout\fR lints a candidate snapshot, backs up the live file in \fI.setura\-history\fR, replaces it atomically, waits for the admin /status generation, runs a checks file for an observation window and restores the backup on any failure. The window is judged on the probes and on the gateway's own /stats and /metrics deltas (\fB\-\-max\-error\-rate\fR and \fB\-\-max\-p95\fR apply to both). A candidate that changes canary weights is applied in stages 10,50,100 unless \fB\-\-steps\fR or \fB\-\-no\-steps\fR is given. A rollout lock left by a killed rollout (dead process on this host, or a heartbeat older than \fB\-\-lock\-timeout\fR) is taken over; a live owner never is. Relative certificate paths resolve against the candidate's directory. \fBsetura gateway history\fR lists the backups and \fBsetura gateway rollback\fR restores one.
 .SH SEE ALSO
 https://github.com/zyvorai/zyvor\-setura\-gateway

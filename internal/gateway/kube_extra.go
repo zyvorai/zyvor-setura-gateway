@@ -71,6 +71,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)
 		r := &GRPCRoute{NS: o.Metadata.Namespace, Name: o.Metadata.Name, Generation: o.Metadata.Generation, Created: created,
 			Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules}
+		k.shadowAnnotations("GRPCRoute", o.Metadata, len(spec.Rules), func() { annotateGRPC(r.Rules, o.Metadata.Annotations) })
 		cfg.GRPCRoutes = append(cfg.GRPCRoutes, r)
 		extra[r.stub().StatusKey()] = extraRaw{base: base, plural: "grpcroutes", raw: items[i]}
 	}

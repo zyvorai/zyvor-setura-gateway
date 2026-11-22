@@ -2,8 +2,11 @@ package gateway
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"net/http"
@@ -20,8 +23,13 @@ import (
 const ShadowDiffKey = "setura.zyvor.dev/shadow-diff"
 
 const (
-	defaultShadowMaxBody = 1 << 20
-	shadowContext        = 80
+	// defaultShadowMaxBody is the ceiling (bytes) up to which a body is compared:
+	// byte for byte or structurally up to shadowWindow, by streaming SHA-256 and
+	// length above it. Larger bodies are skipped.
+	defaultShadowMaxBody = 16 << 20
+	// shadowWindow is the most of each body kept in memory for detailed diffs.
+	shadowWindow  = 1 << 20
+	shadowContext = 80
 )
 
 // ShadowDiff is the opt-in comparison block on a RequestMirror filter.
@@ -31,8 +39,14 @@ type ShadowDiff struct {
 	Headers            []string `json:"headers,omitempty"`
 	IgnoreHeaders      []string `json:"ignoreHeaders,omitempty"`
 	IgnoreJSONPaths    []string `json:"ignoreJSONPaths,omitempty"`
-	MaxBody            int      `json:"maxBody,omitempty"`
+	MaxBody            int      `json:"maxBody,omitempty"`            // ceiling in bytes, default 16 MiB
 	LatencyThresholdMs int      `json:"latencyThresholdMs,omitempty"` // 0 records the delta without flagging it
+	// gRPC routes: frame indexes (0-based) left out of the comparison, and how
+	// frame payloads are compared: "bytes" (default) or "json".
+	IgnoreFrames []int  `json:"ignoreFrames,omitempty"`
+	FrameFormat  string `json:"frameFormat,omitempty"`
+
+	annErr error // set when an annotation value could not be decoded
 }
 
 // CShadow is a validated ShadowDiff.
@@ -44,6 +58,8 @@ type CShadow struct {
 	paths     []*jsonPath
 	maxBody   int
 	latencyMs int
+	frames    map[int]bool
+	frameJSON bool
 }
 
 var defaultCompareHeaders = []string{"Content-Type", "Cache-Control", "Location"}
@@ -58,6 +74,9 @@ func compileShadow(d *ShadowDiff) (*CShadow, error) {
 	if d == nil {
 		return c, nil
 	}
+	if d.annErr != nil {
+		return nil, d.annErr
+	}
 	if d.Sample != nil && (*d.Sample < 0 || *d.Sample > 100) {
 		return nil, fmt.Errorf("%s: sample %d is not a percentage", ShadowDiffKey, *d.Sample)
 	}
@@ -67,6 +86,22 @@ func compileShadow(d *ShadowDiff) (*CShadow, error) {
 	c.compare, c.sample, c.latencyMs = d.Compare, d.Sample, d.LatencyThresholdMs
 	if d.MaxBody > 0 {
 		c.maxBody = d.MaxBody
+	}
+	switch d.FrameFormat {
+	case "", "bytes":
+	case "json":
+		c.frameJSON = true
+	default:
+		return nil, fmt.Errorf("%s: frameFormat %q: want bytes or json", ShadowDiffKey, d.FrameFormat)
+	}
+	for _, i := range d.IgnoreFrames {
+		if i < 0 {
+			return nil, fmt.Errorf("%s: ignoreFrames index %d is negative", ShadowDiffKey, i)
+		}
+		if c.frames == nil {
+			c.frames = map[int]bool{}
+		}
+		c.frames[i] = true
 	}
 	for _, h := range d.Headers {
 		c.headers = append(c.headers, http.CanonicalHeaderKey(strings.TrimSpace(h)))
@@ -105,21 +140,24 @@ func (c *CShadow) effective(global int) (on bool, sample int) {
 	return sample > 0, sample
 }
 
-func (c *CShadow) max() int {
+func (c *CShadow) max() int64 {
 	if c == nil || c.maxBody <= 0 {
 		return defaultShadowMaxBody
 	}
-	return c.maxBody
+	return int64(c.maxBody)
 }
 
 // respCapture is one finished response.
 type respCapture struct {
-	status    int
-	hdr       http.Header
-	body      []byte
-	truncated bool
-	dur       time.Duration
-	backend   string
+	status  int
+	hdr     http.Header
+	trailer http.Header
+	body    []byte // the first shadowWindow bytes
+	n       int64  // total length, valid unless over
+	sum     string // hex SHA-256 of the whole body, valid unless over
+	over    bool   // the body exceeded the maxBody ceiling and was not compared
+	dur     time.Duration
+	backend string
 }
 
 // shadowMismatch is one difference found between primary and shadow.
@@ -162,30 +200,70 @@ func compareCaptures(p, s *respCapture, c *CShadow) []shadowMismatch {
 	if m := compareBodies(p, s, c); m != nil {
 		out = append(out, *m)
 	}
+	return append(out, latencyMismatch(p, s, c)...)
+}
+
+func latencyMismatch(p, s *respCapture, c *CShadow) []shadowMismatch {
 	if c.latencyMs > 0 {
 		if d := s.dur - p.dur; d > time.Duration(c.latencyMs)*time.Millisecond {
-			out = append(out, shadowMismatch{Category: "latency", Where: "latency",
-				Primary: p.dur.Round(time.Millisecond).String(), Shadow: s.dur.Round(time.Millisecond).String()})
+			return []shadowMismatch{{Category: "latency", Where: "latency",
+				Primary: p.dur.Round(time.Millisecond).String(), Shadow: s.dur.Round(time.Millisecond).String()}}
 		}
 	}
-	return out
+	return nil
 }
 
-func trimTo(b []byte, n int) []byte {
-	if len(b) > n {
-		return b[:n]
-	}
-	return b
+// bodyCap sees a body once, as it streams by: it keeps the first shadowWindow
+// bytes, the length and a SHA-256, and stops hashing at the ceiling.
+type bodyCap struct {
+	max  int64
+	n    int64
+	over bool
+	buf  []byte
+	h    hash.Hash
 }
+
+func (b *bodyCap) Write(p []byte) (int, error) {
+	if b.over {
+		return len(p), nil
+	}
+	if b.n+int64(len(p)) > b.max {
+		b.over, b.h, b.buf = true, nil, nil
+		return len(p), nil
+	}
+	if b.h == nil {
+		b.h = sha256.New()
+	}
+	b.h.Write(p)
+	b.n += int64(len(p))
+	if room := shadowWindow - len(b.buf); room > 0 {
+		b.buf = append(b.buf, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// fill copies the result into a capture.
+func (b *bodyCap) fill(c *respCapture) {
+	c.body, c.n, c.over = b.buf, b.n, b.over
+	if !b.over {
+		h := b.h
+		if h == nil {
+			h = sha256.New()
+		}
+		c.sum = hex.EncodeToString(h.Sum(nil))
+	}
+}
+
+// bodiesSkipped reports whether a body was over the ceiling on either side.
+func bodiesSkipped(p, s *respCapture) bool { return p.over || s.over }
 
 func compareBodies(p, s *respCapture, c *CShadow) *shadowMismatch {
-	max := c.max()
-	pb, sb := trimTo(p.body, max), trimTo(s.body, max)
-	ptr, str := p.truncated || len(p.body) > max, s.truncated || len(s.body) > max
-	if bytes.Equal(pb, sb) && ptr == str {
+	if bodiesSkipped(p, s) || (p.n == s.n && p.sum == s.sum) {
 		return nil
 	}
-	if !ptr && !str {
+	pb, sb := p.body, s.body
+	small := p.n <= shadowWindow && s.n <= shadowWindow
+	if small {
 		if pv, ok1 := decodeJSON(pb); ok1 {
 			if sv, ok2 := decodeJSON(sb); ok2 {
 				for _, jp := range c.paths {
@@ -203,9 +281,12 @@ func compareBodies(p, s *respCapture, c *CShadow) *shadowMismatch {
 	for off < len(pb) && off < len(sb) && pb[off] == sb[off] {
 		off++
 	}
-	where := fmt.Sprintf("offset %d (primary %d bytes, shadow %d bytes)", off, len(pb), len(sb))
-	if ptr || str {
-		where += ", truncated"
+	where := fmt.Sprintf("offset %d (primary %d bytes, shadow %d bytes)", off, p.n, s.n)
+	if !small {
+		where = fmt.Sprintf("length %d vs %d, sha256 %.12s vs %.12s", p.n, s.n, p.sum, s.sum)
+		if off >= len(pb) || off >= len(sb) {
+			return &shadowMismatch{Category: "body", Where: where, Primary: "(beyond the first 1 MiB)", Shadow: "(beyond the first 1 MiB)"}
+		}
 	}
 	// Redact a generous neighbourhood first so a secret cut by the excerpt
 	// window is still recognised, then show the window of the redacted text.

@@ -306,7 +306,7 @@ func Snapshot(c *Cluster, namespace string) (obj, error) {
 		}
 		for _, it := range asList(list["items"]) {
 			m := asMap(it)
-			resources[kind+"/"+asStr(req(asMap(req(m, "metadata")), "name"))] = req(m, "spec")
+			resources[kind+"/"+asStr(req(asMap(req(m, "metadata")), "name"))] = withShadowAnnotations(m)
 		}
 	}
 	snap := obj{"schema": snapshotSchema, "namespace": namespace, "resources": resources}

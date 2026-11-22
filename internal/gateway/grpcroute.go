@@ -50,6 +50,8 @@ type grpcRouteSpec struct {
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []GRPCRule  `json:"rules"`
+
+	Annotations map[string]string `json:"setura.zyvor.dev/annotations,omitempty"`
 }
 
 func (r *GRPCRoute) stub() *Route {
@@ -68,6 +70,7 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 		if err != nil {
 			return err
 		}
+		annotateGRPC(spec.Rules, spec.Annotations)
 		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	case tlsRouteKey:
 		var spec tlsRouteSpec
@@ -113,8 +116,11 @@ func grpcMatchPath(m *GRPCMethodMatch) (*PathMatch, error) {
 
 // validGRPCFilters accepts the header modifiers; everything else is rejected so
 // a silently ignored filter never changes what a route means.
-func validGRPCFilters(fs []Filter) error {
+func validGRPCFilters(fs []Filter, ruleLevel bool) error {
 	for _, f := range fs {
+		if f.Type == "RequestMirror" && ruleLevel {
+			continue
+		}
 		if f.Type != "RequestHeaderModifier" && f.Type != "ResponseHeaderModifier" {
 			return fmt.Errorf("unsupported GRPCRoute filter type %q", f.Type)
 		}
@@ -149,13 +155,19 @@ rules:
 	for i := range r.Rules {
 		rule := &r.Rules[i]
 		fail := func(err error) { invalid = fmt.Errorf("rule %d: %w", i+1, err) }
-		if err := validGRPCFilters(rule.Filters); err != nil {
+		if err := validGRPCFilters(rule.Filters, true); err != nil {
 			fail(err)
 			break
 		}
 		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Filters: rule.Filters}}
+		mirrors, err := t.grpcMirrors(r, rule, note)
+		if err != nil {
+			fail(err)
+			break
+		}
+		cr.Mirrors = mirrors
 		for _, ref := range rule.BackendRefs {
-			if err := validGRPCFilters(ref.Filters); err != nil {
+			if err := validGRPCFilters(ref.Filters, false); err != nil {
 				fail(err)
 				break rules
 			}
@@ -355,7 +367,13 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 			grpcFail(rec, grpcUnavailable, "upstream error", http.StatusBadGateway)
 		},
 	}
-	proxy.ServeHTTP(rec, r)
+	sc, sp := s.grpcShadow(r, rule, ref.B.Key)
+	defer sc.finish()
+	if sp != nil {
+		defer sp.release()
+		r.Body = sp
+	}
+	proxy.ServeHTTP(sc.wrap(rec), r)
 }
 
 // splitGRPCPath splits /package.Service/Method.

@@ -48,7 +48,7 @@ var helpGroups = []helpGroup{
 	}},
 	{"Publish", []helpEntry{
 		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
-		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
+		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored HTTP and gRPC responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
@@ -74,7 +74,7 @@ var cmdExamples = map[string][]string{
 	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},
-	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json --steps 10,50,100", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
+	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json [--steps 10,50,100|--no-steps] [--max-error-rate 0.01 --max-p95 300ms]", "setura gateway run --config routes.json --shadow-diff 10 --shadow-state shadow.json", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
 	"gate":      {"setura gate orders http://127.0.0.1:8080/ --gateway dev --backend orders-v2 -n demo"},
 	"compare":   {"setura compare https://orders.example.test/ --target dns --target 10.0.0.5"},
 	"snapshot":  {"setura snapshot -n demo > before.json", "setura --context prod-eu,prod-us snapshot -n demo"},
