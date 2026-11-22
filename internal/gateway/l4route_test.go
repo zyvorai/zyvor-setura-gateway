@@ -72,14 +72,13 @@ func TestTCPRouteWeightedHalfClose(t *testing.T) {
 	if ls.AttachedRoutes != 1 || len(ls.SupportedKinds) != 1 || ls.SupportedKinds[0].Kind != "TCPRoute" {
 		t.Errorf("listener status: %+v", ls)
 	}
-	if got := s.Stats().Snapshot()["routes"].(map[string]Counter)["TCPRoute/t/r"]; got.Requests != 5 {
-		t.Errorf("stats: %+v", got)
-	}
-	var sb strings.Builder
-	s.WriteMetrics(&sb)
-	if !strings.Contains(sb.String(), `setura_gateway_l4_connections_total{protocol="TCP",route="TCPRoute/t/r",backend="t/b:80"} 5`) {
-		t.Errorf("metrics:\n%s", sb.String())
-	}
+	// The counters are written when the connection handler returns, after the client saw EOF.
+	waitFor(t, "TCP stats and metrics", func() bool {
+		var sb strings.Builder
+		s.WriteMetrics(&sb)
+		got := s.Stats().Snapshot()["routes"].(map[string]Counter)["TCPRoute/t/r"]
+		return got.Requests == 5 && strings.Contains(sb.String(), `setura_gateway_l4_connections_total{protocol="TCP",route="TCPRoute/t/r",backend="t/b:80"} 5`)
+	})
 }
 
 func TestExplainL4(t *testing.T) {
@@ -218,11 +217,11 @@ func TestUDPRouteSessionsAndIdleTimeout(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	var sb strings.Builder
-	s.WriteMetrics(&sb)
-	if !strings.Contains(sb.String(), `setura_gateway_l4_connections_total{protocol="UDP"`) || !strings.Contains(sb.String(), "setura_gateway_udp_sessions_open 0") {
-		t.Errorf("metrics:\n%s", sb.String())
-	}
+	waitFor(t, "UDP metrics", func() bool {
+		var sb strings.Builder
+		s.WriteMetrics(&sb)
+		return strings.Contains(sb.String(), `setura_gateway_l4_connections_total{protocol="UDP"`) && strings.Contains(sb.String(), "setura_gateway_udp_sessions_open 0")
+	})
 	if c := cond(s.Status().Routes["UDPRoute/t/u"].Parents[0].Conditions, "Accepted"); c.Status != "True" {
 		t.Errorf("UDPRoute Accepted: %+v", c)
 	}
