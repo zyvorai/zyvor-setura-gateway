@@ -36,6 +36,7 @@ var helpGroups = []helpGroup{
 		{"snapshot", "", "capture Gateway and HTTPRoute specs"},
 		{"map", "", "render the declared route topology"},
 		{"ui", "[--listen ADDR]", "live read-only web dashboard: route map, lint, traffic, feed"},
+		{"connections", "[--admin ADDR] [--follow]", "who connected to which listener, over what protocol, and where the gateway sent it"},
 		{"impact", "TARGET", "query what a resource change would affect"},
 	}},
 	{"Analyze", []helpEntry{
@@ -92,8 +93,9 @@ var cmdExamples = map[string][]string{
 		"setura migrate check -n shop --ingress-class nginx",
 		"setura migrate check -n shop --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --format github",
 		"setura migrate check --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --probe-extra"},
-	"ai": {"setura ai report.json --model llama3"},
-	"ui": {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
+	"ai":          {"setura ai report.json --model llama3"},
+	"connections": {"setura connections", "setura connections --follow --filter status=5xx --filter route=orders", "setura connections --admin 127.0.0.1:19000 --format json | jq '.history[0]'"},
+	"ui":          {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
 }
 
 func writeHelp(w io.Writer, u *ui) {

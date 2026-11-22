@@ -16,6 +16,10 @@ type UIInput struct {
 	Snapshot []byte // route specs in setura.route-specs/v1 form, secrets excluded
 	Stats    any    // Stats.Snapshot()
 	Reload   any    // generation and last reload result
+	// Connections says whether the connections table is available:
+	// {"enabled":true,"capacity":N}. The rows themselves are served live at
+	// /api/connections and over the event stream, not in the state document.
+	Connections any
 }
 
 // UIStateBuilder turns a UIInput into the dashboard state document. The
@@ -44,6 +48,9 @@ func (s *Server) UIState() any {
 		return nil
 	}
 	in := UIInput{Snapshot: specSnapshot(t.Cfg), Stats: s.stats.Snapshot()}
+	if s.conns != nil {
+		in.Connections = map[string]any{"enabled": true, "capacity": s.conns.cap}
+	}
 	if d := s.Status(); d != nil {
 		in.Reload = map[string]any{"generation": d.Generation, "ok": d.LastReload.OK, "time": d.LastReload.Time, "error": d.LastReload.Error}
 	}
@@ -63,7 +70,8 @@ func (s *Server) uiFeed(ctx context.Context, hub *webui.Hub) {
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()
 	prev := map[string]Counter{}
-	var gen int64
+	var gen, lastConn int64
+	var hadOpen bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -75,6 +83,13 @@ func (s *Server) uiFeed(ctx context.Context, hub *webui.Hub) {
 				hub.Publish(webui.Event{Kind: "reload", Level: "info", Text: fmt.Sprintf("configuration applied (generation %d)", d.Generation)})
 			}
 			gen = d.Generation
+		}
+		if s.conns != nil {
+			snap := s.PublicConnections(maxConnBatch, lastConn)
+			if len(snap.History) > 0 || len(snap.Open) > 0 || hadOpen {
+				hub.Broadcast(webui.Event{Kind: "conns", Data: connBatch(snap, lastConn)})
+			}
+			hadOpen, lastConn = len(snap.Open) > 0, snap.Latest
 		}
 		cur, _ := s.stats.Snapshot()["routes"].(map[string]Counter)
 		for key, c := range cur {
@@ -102,7 +117,7 @@ func plural(n int64, one, many string) string {
 // StartUI serves the read-only dashboard for s on addr until ctx ends.
 func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer) error {
 	hub := webui.NewHub(200)
-	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token})
+	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token, Connections: s.uiConnections()})
 	bound, stop, err := webui.Serve(ctx, addr, token, h)
 	if err != nil {
 		return err
@@ -116,5 +131,28 @@ func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer
 
 // UIHandler returns the dashboard as an http.Handler for embedding.
 func (s *Server) UIHandler(token string) http.Handler {
-	return webui.New(webui.Options{State: s.UIState, Token: token})
+	return webui.New(webui.Options{State: s.UIState, Token: token, Connections: s.uiConnections()})
+}
+
+const maxConnBatch = 200
+
+// connBatch is the payload of a "conns" event: the records finished since
+// the previous one (oldest first) and the full list of open connections.
+// Truncated tells the page to refetch /api/connections instead.
+func connBatch(snap *ConnSnapshot, prev int64) map[string]any {
+	recs := make([]*logLine, len(snap.History))
+	for i, l := range snap.History {
+		recs[len(recs)-1-i] = l
+	}
+	return map[string]any{"records": recs, "open": snap.Open, "latest": snap.Latest,
+		"truncated": len(recs) == maxConnBatch && snap.Latest-prev > int64(len(recs))}
+}
+
+// uiConnections serves the dashboard's connections table, or nil when the
+// history is disabled.
+func (s *Server) uiConnections() func(int, int64) any {
+	if s.conns == nil {
+		return nil
+	}
+	return func(limit int, since int64) any { return s.PublicConnections(limit, since) }
 }

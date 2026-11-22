@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +123,23 @@ func TestGatewayUIFlag(t *testing.T) {
 	}
 	if !strings.Contains(usage, "--ui ADDR") {
 		t.Fatal("usage must document --ui")
+	}
+}
+
+func TestUIConnectionsFeedAndAPI(t *testing.T) {
+	s, _ := obsServer(t, nil)
+	get(t, s, "x.test", "/ok?token=secret")
+	waitLatest(t, s, 1)
+	h := s.UIHandler("")
+	r := httptest.NewRequest("GET", "/api/connections?limit=10", nil)
+	r.Host = "127.0.0.1:9090"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"path":"/ok"`) || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "user_agent") {
+		t.Fatalf("api/connections: %d %s", w.Code, w.Body.String())
+	}
+	b := connBatch(s.PublicConnections(200, 0), 0)
+	if recs := b["records"].([]*logLine); len(recs) != 1 || b["truncated"] != false {
+		t.Errorf("batch %+v", b)
 	}
 }

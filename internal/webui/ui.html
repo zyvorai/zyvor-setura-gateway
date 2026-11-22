@@ -209,6 +209,54 @@ h2{font-size:24px;letter-spacing:-.02em;margin:44px 0 4px;font-weight:600}
 .rule .lbl{font-size:12px;color:var(--ink-3);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
 .rule .lbl:first-of-type{margin-top:0}
 
+/* connections */
+:root{--bad:#d70015;--bad-fill:#ff3b30}
+@media (prefers-color-scheme:dark){:root{--bad:#ff453a;--bad-fill:#ff453a}}
+.ctools{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:flex-end;margin:0 0 14px}
+.ctools label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-3);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.ctools input,.ctools select{height:36px;border-radius:12px;border:1px solid var(--line);background:var(--card);padding:0 12px;font-size:14px;color:var(--ink);text-transform:none;letter-spacing:0;font-weight:400;min-width:0}
+.ctools input{width:170px}.ctools select{max-width:210px;padding-right:8px}
+.ctools input::placeholder{color:var(--ink-3)}
+.ctools .btn{height:36px}.ctools .btn[hidden]{display:none}
+.ctools .cnt{margin:0 0 6px;font-size:14px;color:var(--ink-2)}
+h3.mini-h{margin:22px 0 10px;font-size:17px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+h3.mini-h .dot{width:8px;height:8px;box-shadow:none;background:var(--ok-fill);animation:pulse 2.4s infinite}
+.twrap{max-height:470px;overflow:auto;overscroll-behavior:contain;border-radius:var(--r)}
+.twrap.short{max-height:220px}
+table.ct{width:100%;min-width:940px;border-collapse:separate;border-spacing:0;font-size:14px}
+.ct th{position:sticky;top:0;z-index:2;background:var(--card);text-align:left;padding:11px 14px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);border-bottom:1px solid var(--line-2);white-space:nowrap}
+.ct td{padding:9px 14px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px;vertical-align:middle}
+.ct tbody tr:last-child td{border-bottom:0}
+.ct tbody tr{cursor:pointer;transition:background .15s}
+.ct tbody tr:hover{background:var(--card-2)}
+.ct tbody tr[aria-selected="true"]{background:var(--accent-soft)}
+.ct tbody tr.new td{animation:flash 1.6s var(--ease)}
+@keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
+.ct .r{text-align:right;font-variant-numeric:tabular-nums}
+.ct .t{color:var(--ink-3);font:12px var(--mono)}
+.ct .m{font:13px var(--mono)}
+.ct .dim{color:var(--ink-3)}
+.ct button.link{border:0;background:none;padding:0;margin:0;font:13px var(--mono);color:var(--ink);text-align:left;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.ct button.link:hover{color:var(--accent)}
+.ct button.link:focus-visible{outline-offset:3px}
+.sp{display:inline-block;min-width:42px;text-align:center;border-radius:980px;padding:1px 9px;font:600 12px/1.65 var(--mono);color:var(--sc,var(--ink-2));background:color-mix(in srgb,var(--sc,var(--ink-2)) 12%,transparent)}
+.sp[data-c="2"]{--sc:var(--ok)}.sp[data-c="3"]{--sc:var(--ink-2)}.sp[data-c="1"]{--sc:var(--accent)}.sp[data-c="4"]{--sc:var(--warn)}.sp[data-c="5"]{--sc:var(--bad)}
+.tag{display:inline-block;margin-left:7px;font-size:12px;color:var(--ink-3)}
+.tag.warn{color:var(--warn);font-weight:600}
+.flow{margin:0;padding:14px 16px;border-radius:16px;background:var(--card-2);border:1px solid var(--line);font:13px/1.9 var(--mono);overflow-wrap:normal}.flow b{white-space:nowrap}
+.flow b{font-weight:600;color:var(--ink)}
+.flow .ar{color:var(--accent);margin:0 6px;font-family:var(--font)}
+.flow .nt{color:var(--ink-3)}
+.plain{margin:0;font-size:15px;color:var(--ink-2);line-height:1.55}
+.kv{display:grid;grid-template-columns:minmax(8.5em,40%) 1fr;gap:7px 14px;margin:0;align-items:baseline}
+.kv dt{color:var(--ink-3);font-size:13px;white-space:normal}
+.kv dd{margin:0;color:var(--ink);font-size:14px;overflow-wrap:anywhere}
+.kv dd.m{font:13px var(--mono)}
+.kv dd small{display:block;color:var(--ink-3);font-size:12px}
+.att{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.att th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);text-align:left;padding:4px 6px 4px 0;font-weight:600}
+.att td{padding:4px 6px 4px 0;border-top:1px solid var(--line);font-family:var(--mono);overflow-wrap:anywhere}
+
 dialog{border:0;border-radius:24px;padding:28px 30px;background:var(--sheet);color:var(--ink);box-shadow:var(--shadow-lg);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);max-width:min(460px,calc(100vw - 32px));width:100%}
 dialog::backdrop{background:rgba(0,0,0,.35)}
 dialog h2{margin:0 0 14px;font-size:24px}
@@ -228,7 +276,7 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
   .detail{margin-left:0}
   .status{align-items:flex-start}.status .dot{margin-top:.5em}
 }
-@media (max-width:560px){.bt{display:none}.search{min-width:110px}}
+@media (max-width:560px){.ctools input{width:100%}.ctools label{flex:1 1 140px}.bt{display:none}.search{min-width:110px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media (forced-colors:active){.seg,.legend i{forced-color-adjust:none}}
 </style>
@@ -284,6 +332,39 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
     <div id="map"><div class="skel tall" aria-hidden="true"></div></div>
   </section>
 
+  <section id="connsec" class="hide" aria-labelledby="connh">
+    <h2 id="connh">Connections</h2>
+    <p class="sub" id="connsub">Who connected to which listener, over what protocol, and where the gateway sent it.</p>
+    <div class="ctools" role="group" aria-label="Filter connections">
+      <label for="cf-ip">Client IP<input id="cf-ip" type="search" placeholder="10.0.0." autocomplete="off" spellcheck="false" aria-keyshortcuts="c"></label>
+      <label for="cf-route">Route<select id="cf-route"></select></label>
+      <label for="cf-backend">Backend<select id="cf-backend"></select></label>
+      <label for="cf-status">Status<select id="cf-status"></select></label>
+      <label for="cf-proto">Protocol<select id="cf-proto"></select></label>
+      <button class="btn" id="cf-clear" type="button" hidden>Clear filters</button>
+      <span class="grow"></span>
+      <span class="cnt" id="cf-count" role="status" aria-live="polite"></span>
+    </div>
+    <div id="openbox" class="hide">
+      <h3 class="mini-h" id="openh"><span class="dot" aria-hidden="true"></span><span id="opent">Open now</span></h3>
+      <div class="card twrap short" tabindex="0" role="region" aria-labelledby="openh">
+        <table class="ct" id="otable">
+          <thead><tr><th scope="col">Client</th><th scope="col">Listener</th><th scope="col">Protocol</th><th scope="col">Route</th><th scope="col">Upstream</th><th scope="col" class="r">Open for</th><th scope="col" class="r">From client</th><th scope="col" class="r">To client</th></tr></thead>
+          <tbody id="otbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <h3 class="mini-h" id="recenth">Recent requests</h3>
+    <div class="card twrap" id="cwrap" tabindex="0" role="region" aria-labelledby="recenth">
+      <table class="ct" id="ctable">
+        <caption class="sr">Recent requests, newest first. Select a row for every detail.</caption>
+        <thead><tr><th scope="col">Time</th><th scope="col">Client</th><th scope="col">Listener</th><th scope="col">Protocol</th><th scope="col">Request</th><th scope="col">Route</th><th scope="col">Upstream</th><th scope="col">Status</th><th scope="col" class="r">Took</th></tr></thead>
+        <tbody id="ctbody"></tbody>
+      </table>
+    </div>
+    <div id="cempty" class="card empty hide"></div>
+  </section>
+
   <section id="lowsec" class="grid2 low">
     <div id="feedsec" class="hide">
       <div class="card" role="region" aria-labelledby="feedh">
@@ -313,6 +394,7 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
     <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next or previous route</dd>
     <dt><kbd>Enter</kbd></dt><dd>Open the focused route</dd>
     <dt><kbd>Esc</kbd></dt><dd>Close details, clear search</dd>
+    <dt><kbd>c</kbd></dt><dd>Filter connections by client IP</dd>
     <dt><kbd>p</kbd></dt><dd>Pause or resume live updates</dd>
     <dt><kbd>?</kbd></dt><dd>Show this help</dd>
   </dl>
@@ -374,6 +456,7 @@ function render(){
   var src=$('source');src.hidden=!S.source;src.textContent=(S.mode?cap(S.mode)+' \u00b7 ':'')+(S.source||'');
   document.title=(sm.headline?sm.headline+' \u00b7 ':'')+'Setura';
   renderError();renderStats(sm);renderAttention();renderHealth();renderShadow();renderMap();renderHistory();renderFoot();
+  if(connOn()){if(!C.loaded&&!C.loading){C.loading=true;loadConns(0)}renderConns()}else renderConns();
   if(sel){var r=find(sel);if(r)renderSheet(r,true);else closeSheet()}
   else if(!deepDone){deepDone=true;var m=/^#route=(.+)$/.exec(location.hash);if(m){try{openRoute(decodeURIComponent(m[1]))}catch(x){}}}
 }
@@ -622,13 +705,255 @@ function renderSheet(r,keep){
   else body.scrollTop=top;
 }
 function closeSheet(){
-  if(!sel)return;var id=sel;sel=null;setHash(null);
+  if(!sel&&selConn==null)return;var id=sel,cid=selConn;sel=null;selConn=null;if(id||cid)setHash(null);
   $('sheet').classList.remove('open');$('sheet').setAttribute('aria-hidden','true');$('scrim').classList.remove('on');
   document.querySelectorAll('.route[aria-current]').forEach(function(b){b.removeAttribute('aria-current')});
-  var back=document.querySelector('.route[data-id="'+cssq(id)+'"]')||opener;if(back&&back.focus)back.focus();
+  if(cid){var ctr=(cid.charAt(0)==='o'?C.otr:C.tr)[cid];if(ctr)ctr.setAttribute('aria-selected','false')}
+  var back=id?(document.querySelector('.route[data-id="'+cssq(id)+'"]')||opener):(cid&&document.querySelector('#connsec tr[data-id="'+cid+'"] button'))||opener;
+  if(back&&back.focus)back.focus();
   hot(null);
 }
 $('close').addEventListener('click',closeSheet);$('scrim').addEventListener('click',closeSheet);
+
+/* ---------- connections ---------- */
+var C={rows:[],open:[],latest:0,cap:500,loaded:false,openAt:0,tr:{},otr:{},sig:''}, selConn=null, CMAX=200;
+var connDeep=false;
+var cf={ip:'',route:'',backend:'',status:'',proto:''};
+function connOn(){return !!(S&&S.connections&&S.connections.enabled)}
+function loadConns(since){
+  fetch('api/connections?limit=500'+(since?'&since='+since:''),{credentials:'same-origin',headers:{Accept:'application/json'}}).then(function(r){
+    if(!r.ok)throw new Error(String(r.status));return r.json();
+  }).then(function(d){C.loaded=true;mergeConns(d.history||[],d.open||[],d.latest||0,d.capacity,!since)}).catch(function(){});
+}
+function mergeConns(recs,open,latest,cap,replace){
+  if(cap)C.cap=cap;
+  if(replace||latest<C.latest){C.rows=[];C.tr={};clear($('ctbody'))}
+  var have={},fresh=false;C.rows.forEach(function(r){have[r.id]=1});
+  recs.forEach(function(r){if(r&&r.id&&!have[r.id]){have[r.id]=1;C.rows.push(r);fresh=true;if(C.loaded&&!replace)r._new=true}});
+  if(fresh){C.rows.sort(function(a,b){return b.id-a.id});if(C.rows.length>C.cap)C.rows.length=C.cap}
+  C.open=open||[];C.openAt=Date.now();C.latest=Math.max(C.latest,latest||0);
+  renderConns();
+  if(!connDeep){connDeep=true;var cm=/^#conn=(\d+)$/.exec(location.hash);if(cm&&findConn('h'+cm[1]))openConn('h'+cm[1],null)}
+  if(selConn&&selConn.charAt(0)==='o'){var o=findConn(selConn);if(o)renderConnSheet(o,true)}
+}
+function onConns(d){
+  if(!d||!connOn())return;
+  if(!C.loaded||d.truncated){loadConns(C.loaded?C.latest:0);return}
+  mergeConns(d.records||[],d.open||[],d.latest||0,null,false);
+}
+function cmatch(r){
+  if(cf.ip&&((r.client_ip||'')+':'+(r.client_port||'')).toLowerCase().indexOf(cf.ip)<0)return false;
+  if(cf.route&&(r.route||'')!==cf.route)return false;
+  if(cf.backend&&(r.backend||'')!==cf.backend)return false;
+  if(cf.proto&&(r.protocol||'')!==cf.proto)return false;
+  if(cf.status&&(r.status==null?'':String(r.status).charAt(0)+'xx')!==cf.status)return false;
+  return true;
+}
+function routeName(r){var x=r||'';return x?x.replace(/^[A-Za-z]+\//,''):'—'}
+function clientOf(r){var ip=r.client_ip||r.remote||'?';return (ip.indexOf(':')>=0?'['+ip+']':ip)+(r.client_port?':'+r.client_port:'')}
+function listenerOf(r){return r.listener_port?':'+r.listener_port:(r.listener||'—')}
+function fmtMs(v){if(v==null)return '';if(v<10)return v.toFixed(1)+' ms';if(v<1000)return Math.round(v)+' ms';return (v/1000).toFixed(v<10000?2:1)+' s'}
+function fmtB(n){n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';if(n<1073741824)return (n/1048576).toFixed(1)+' MB';return (n/1073741824).toFixed(2)+' GB'}
+function fmtAge(ms){var s=Math.max(0,Math.round(ms/1000));if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+(s%60)+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
+function sigOf(r){return (r.tls_version?r.tls_version:'')}
+
+/* keep the same DOM nodes for the same ids so focus and selection survive live updates */
+function syncRows(body,items,cache,keyOf,make){
+  var ref=body.firstChild,seen={};
+  items.forEach(function(it){
+    var k=keyOf(it),tr=cache[k];seen[k]=1;
+    if(!tr){tr=cache[k]=make(it)}
+    if(tr===ref)ref=ref.nextSibling;else body.insertBefore(tr,ref);
+  });
+  while(ref){var nx=ref.nextSibling;body.removeChild(ref);ref=nx}
+  for(var k in cache)if(!seen[k])delete cache[k];
+}
+function statusPill(r){
+  var st=r.status,c=String(st||'').charAt(0);
+  return h('span',{class:'sp','data-c':c,text:String(st==null?'—':st),'aria-label':'status '+st});
+}
+function recRow(r){
+  var id='h'+r.id;
+  var tr=h('tr',{'data-id':id,class:r._new?'new':null,onclick:function(){openConn(id,this.querySelector('button'))}},
+    h('td',{class:'t',text:clock(r.time)}),
+    h('td',null,h('button',{type:'button',class:'link',title:'Show details',
+      'aria-label':'Details: '+clientOf(r)+' to '+routeName(r.route)+', status '+r.status+(r.method?', '+r.method:''),
+      onclick:function(e){e.stopPropagation();openConn(id,this)}},clientOf(r))),
+    h('td',{class:'m',text:listenerOf(r)}),
+    h('td',null,r.protocol||'—',r.tls_version?h('span',{class:'tag',text:r.tls_version}):null),
+    h('td',{class:'m',title:(r.method||'')+' '+(r.path||''),text:r.method==='TLS'?(r.tls_sni||'TLS'):((r.method||'')+' '+(r.path||''))}),
+    h('td',{class:'m',title:r.route||'',text:routeName(r.route)}),
+    h('td',{class:'m',text:r.upstream_addr||'—'}),
+    h('td',null,statusPill(r),r.retries?h('span',{class:'tag warn',text:'↻'+r.retries,title:plural(r.retries,'retry','retries')}):null,r.rate_limited?h('span',{class:'tag warn',text:'limited'}):null),
+    h('td',{class:'r m',text:fmtMs(r.duration_ms)}));
+  tr.setAttribute('aria-selected',selConn===id?'true':'false');
+  return tr;
+}
+function openRow(o){
+  var id='o'+o.id;
+  var age=h('td',{class:'r m'}),fin=h('td',{class:'r m'}),fout=h('td',{class:'r m'});
+  var tr=h('tr',{'data-id':id,onclick:function(){openConn(id,this.querySelector('button'))}},
+    h('td',null,h('button',{type:'button',class:'link',title:'Show details','aria-label':'Details of open '+(o.protocol||'connection')+' from '+clientOf(o),
+      onclick:function(e){e.stopPropagation();openConn(id,this)}},clientOf(o))),
+    h('td',{class:'m',text:listenerOf(o)}),h('td',{text:o.protocol||'—'}),
+    h('td',{class:'m',text:routeName(o.route)}),h('td',{class:'m',text:o.upstream_addr||'—'}),age,fin,fout);
+  tr._cells=[age,fin,fout];tr.setAttribute('aria-selected',selConn===id?'true':'false');
+  return tr;
+}
+function paintOpen(){
+  var el=Date.now()-C.openAt;
+  C.open.forEach(function(o){var tr=C.otr['o'+o.id];if(!tr)return;tr._cells[0].textContent=fmtAge((o.age_ms||0)+el);tr._cells[1].textContent=fmtB(o.bytes_in);tr._cells[2].textContent=fmtB(o.bytes_out);
+    var m=o.route||'',u=o.upstream_addr||'';if(tr.children[3].textContent!==routeName(m))tr.children[3].textContent=routeName(m);if(tr.children[4].textContent!==(u||'—'))tr.children[4].textContent=u||'—'});
+}
+function fillSelect(id,label,vals,cur){
+  var el=$(id),sig=vals.join('\u0001')+'|'+cur;if(el._sig===sig)return;el._sig=sig;
+  clear(el);el.appendChild(h('option',{value:'',text:'All'+(label?' '+label:'')}));
+  vals.forEach(function(v){el.appendChild(h('option',{value:v,text:id==='cf-route'?routeName(v):v,selected:v===cur?true:null}))});
+  el.value=cur;
+}
+function uniq(key){var m={};C.rows.concat(C.open).forEach(function(r){if(r[key])m[r[key]]=1});return Object.keys(m).sort()}
+function renderConns(){
+  var on=connOn(),sec=$('connsec');sec.classList.toggle('hide',!on);
+  if(!on)return;
+  fillSelect('cf-route','routes',uniq('route'),cf.route);
+  fillSelect('cf-backend','backends',uniq('backend'),cf.backend);
+  fillSelect('cf-proto','protocols',uniq('protocol'),cf.proto);
+  var sel=$('cf-status');if(!sel._init){sel._init=1;[['','All statuses'],['2xx','2xx success'],['3xx','3xx redirect'],['4xx','4xx client error'],['5xx','5xx server error']].forEach(function(o){sel.appendChild(h('option',{value:o[0],text:o[1]}))})}
+  var filt=!!(cf.ip||cf.route||cf.backend||cf.status||cf.proto);
+  $('cf-clear').hidden=!filt;
+  var rows=C.rows.filter(cmatch),open=C.open.filter(cmatch);
+  var shown=rows.slice(0,CMAX);
+  syncRows($('ctbody'),shown,C.tr,function(r){return 'h'+r.id},recRow);
+  syncRows($('otbody'),open,C.otr,function(o){return 'o'+o.id},openRow);
+  C.rows.forEach(function(r){delete r._new});
+  paintOpen();
+  $('openbox').classList.toggle('hide',!open.length);
+  $('opent').textContent='Open now · '+open.length;
+  var empty=!rows.length;
+  $('cwrap').classList.toggle('hide',empty);$('recenth').classList.toggle('hide',empty&&!filt&&!C.rows.length&&!open.length);
+  var ce=$('cempty');ce.classList.toggle('hide',!empty);
+  if(empty){
+    clear(ce);
+    if(filt&&C.rows.length){
+      ce.appendChild(h('h3',{text:'Nothing matches these filters'}));ce.appendChild(h('p',{text:'Try a shorter client IP, or clear the filters to see every request again.'}));
+      ce.appendChild(h('button',{class:'btn',type:'button',onclick:clearFilters},'Clear filters'));
+    }else{
+      ce.appendChild(h('h3',{text:C.loaded?'No requests yet':'Loading connections'}));
+      if(C.loaded){ce.appendChild(h('p',{text:'Send a request to one of the listeners and it appears here within a second, with the client, the route and the upstream it reached.'}));ce.appendChild(h('code',{text:'curl -i 127.0.0.1:8080/'}))}
+    }
+  }
+  var n=rows.length,msg=filt?plural(n,'request matches','requests match'):plural(n,'request','requests');
+  if(rows.length>CMAX)msg+=', newest '+CMAX+' shown';
+  $('cf-count').textContent=C.loaded?msg:'';
+  $('connsub').textContent='Who connected to which listener, over what protocol, and where the gateway sent it. Newest first, the last '+C.cap+' are kept in memory. Query strings and header values are never shown.';
+}
+function clearFilters(){
+  cf={ip:'',route:'',backend:'',status:'',proto:''};$('cf-ip').value='';
+  ['cf-route','cf-backend','cf-status','cf-proto'].forEach(function(i){$(i).value=''});renderConns();
+}
+$('cf-ip').addEventListener('input',function(){cf.ip=this.value.trim().toLowerCase();renderConns()});
+[['cf-route','route'],['cf-backend','backend'],['cf-status','status'],['cf-proto','proto']].forEach(function(p){$(p[0]).addEventListener('change',function(){cf[p[1]]=this.value;renderConns()})});
+$('cf-clear').addEventListener('click',function(){clearFilters();$('cf-ip').focus()});
+$('ctbody').addEventListener('keydown',function(e){
+  if(e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;
+  var tr=e.target.closest&&e.target.closest('tr');if(!tr)return;
+  var nx=e.key==='ArrowDown'?tr.nextSibling:tr.previousSibling;
+  if(nx){var b=nx.querySelector('button');if(b){b.focus();nx.scrollIntoView({block:'nearest'});e.preventDefault()}}
+});
+
+/* detail sheet */
+var GRPC=['OK','Cancelled','Unknown','Invalid argument','Deadline exceeded','Not found','Already exists','Permission denied','Resource exhausted','Failed precondition','Aborted','Out of range','Unimplemented','Internal','Unavailable','Data loss','Unauthenticated'];
+function findConn(id){
+  if(id.charAt(0)==='o'){var n=+id.slice(1);return C.open.filter(function(o){return o.id===n})[0]}
+  var n2=+id.slice(1);return C.rows.filter(function(r){return r.id===n2})[0];
+}
+function openConn(id,from){
+  var r=findConn(id);if(!r)return;
+  if(from)opener=from;
+  if(sel){sel=null;setHash(null);document.querySelectorAll('.route[aria-current]').forEach(function(b){b.removeAttribute('aria-current')})}
+  var prev=selConn;selConn=id;try{history.replaceState(null,'',id.charAt(0)==='h'?'#conn='+id.slice(1):location.pathname+location.search)}catch(x){}
+  [prev,id].forEach(function(k){if(!k)return;var tr=(k.charAt(0)==='o'?C.otr:C.tr)[k];if(tr)tr.setAttribute('aria-selected',String(k===selConn))});
+  renderConnSheet(r,false);
+}
+function yesno(v,y,n){return v?y:n}
+function healthWords(s){return {healthy:'Healthy: passing its checks',ejected:'Ejected: taken out of rotation after repeated failures',unhealthy:'Unhealthy: failing its active health check'}[s]||s}
+function summaryOf(r){
+  var bits=[],isOpen=r.kind!=null;
+  var enc=r.tls_version?(' over '+r.tls_version):'';
+  bits.push(clientOf(r)+' connected to port '+(r.listener_port||'?')+' using '+(r.protocol||'an unknown protocol')+enc+(r.tls_sni?', asking for '+r.tls_sni:'')+'.');
+  if(r.rate_limited)bits.push('The gateway refused it because the rate limit for the route was used up.');
+  else if(r.route){
+    var m='It matched '+routeName(r.route)+(r.rule!=null?', rule '+(r.rule+1):'')+(r.match!=null?', match '+(r.match+1):'')+'.';
+    bits.push(m);
+    if(r.backend)bits.push('The gateway chose backend '+r.backend+(r.backend_weight?' (weight '+r.backend_weight+')':'')+(r.upstream_addr?' and sent it to '+r.upstream_addr+(r.upstream_protocol?' over '+r.upstream_protocol:''):'')+'.');
+  }else if(!isOpen)bits.push('No route matched, so the gateway answered itself.');
+  if(r.retries)bits.push('It was retried '+plural(r.retries,'time','times')+' before the final answer.');
+  if(isOpen)bits.push('It is still open ('+fmtAge(r.age_ms||0)+', '+fmtB(r.bytes_in)+' from the client, '+fmtB(r.bytes_out)+' back).');
+  else bits.push((r.status!=null?'The client received '+r.status:'Finished')+(r.duration_ms!=null?' after '+fmtMs(r.duration_ms):'')+'.');
+  return bits.join(' ');
+}
+function flowOf(r){
+  var l=listenerOf(r),paren=[r.protocol,r.tls_version,r.tls_sni?'SNI '+r.tls_sni:''].filter(Boolean).join(', ');
+  var ar=function(){return [h('span',{class:'sr',text:' then '}),h('span',{class:'ar','aria-hidden':'true',text:'→'})]};
+  var f=h('p',{class:'flow'},h('span',{class:'sr',text:'Path: '}),h('b',{text:clientOf(r)}),ar(),h('b',{text:'listener '+l}),paren?h('span',{class:'nt',text:' ('+paren+')'}):null,ar(),
+    h('b',{text:r.route?routeName(r.route):(r.rate_limited?'rate limited':'no route')}),ar(),h('b',{text:r.upstream_addr||'no upstream'}));
+  return f;
+}
+function kv(items){
+  var dl=h('dl',{class:'kv'});
+  items.forEach(function(i){if(i==null||i[1]==null||i[1]==='')return;dl.appendChild(h('dt',{text:i[0]}));dl.appendChild(h('dd',{class:i[2]?'m':null},String(i[1]),i[3]?h('small',{text:i[3]}):null))});
+  return dl.children.length?dl:null;
+}
+function csec(title,dl){return dl?h('div',{class:'sec'},h('h3',{text:title}),dl):null}
+function renderConnSheet(r,keep){
+  var body=$('sheetb'),top=body.scrollTop,isOpen=r.kind!=null;
+  $('sheett').textContent=isOpen?'Open '+({passthrough:'TLS passthrough',websocket:'WebSocket',grpc:'gRPC stream'}[r.kind]||'connection'):(r.status+' '+(r.method==='TLS'?'TLS passthrough':(r.method||'')+' '+(r.path||'')));
+  var chips=clear($('sheetchips'));
+  if(!isOpen&&r.status!=null)chips.appendChild(h('span',{class:'chip st','data-st':r.status>=500?'attention':'ok',text:r.status>=500?'Server error':(r.status>=400?'Client error':'Succeeded')}));
+  if(isOpen)chips.appendChild(h('span',{class:'chip st','data-st':'ok',text:'Open for '+fmtAge(r.age_ms||0)}));
+  [r.protocol,r.tls_version,r.rate_limited?'Rate limited':null,r.retries?plural(r.retries,'retry','retries'):null].forEach(function(x){if(x)chips.appendChild(h('span',{class:'chip',text:x}))});
+  clear(body);
+  body.appendChild(h('div',{class:'sec'},h('p',{class:'plain',text:summaryOf(r)})));
+  body.appendChild(h('div',{class:'sec'},h('h3',{text:'Path of this connection'}),flowOf(r)));
+  var enc=r.tls_version||r.tls_sni||r.tls_alpn||r.tls_cipher;
+  var t=r.time?new Date(r.time):null;
+  body.appendChild(csec('Who connected',kv([
+    ['Connected from',r.client_ip||r.remote,1],['Client port',r.client_port,1],
+    ['Started',t&&!isNaN(t)?t.toLocaleString():null],
+    ['Listener',r.listener,1],['Listener port',r.listener_port,1],
+    ['Protocol',r.protocol],['HTTP version',r.http_version,1],
+    ['Encryption',enc?(r.tls_version||'TLS'):(isOpen||r.protocol==='TLS-passthrough'?null:'None (plain text)')],
+    ['Cipher suite',r.tls_cipher,1],['Server name asked for (SNI)',r.tls_sni,1,r.tls_sni&&r.protocol==='TLS-passthrough'?'The gateway read this from the ClientHello and did not decrypt anything.':null],
+    ['Application protocol (ALPN)',r.tls_alpn,1],['Client certificate',r.tls_client_cert_subject,1]])));
+  body.appendChild(csec('How it was routed',kv([
+    ['Host asked for',r.host,1],['Method',r.method&&r.method!=='TLS'?r.method:null],['Path (query removed)',r.path,1],
+    ['Route',r.route,1],['Rule',r.rule!=null?'Rule '+(r.rule+1):null],['Match',r.match!=null?'Match '+(r.match+1):null],
+    ['Backend',r.backend,1],['Backend weight',r.backend_weight,0,r.backend_weight?'The share of traffic this backend is given among the rule’s backends.':null],
+    ['Rate limited',r.rate_limited?'Yes. Refused with 429 before reaching any backend.':null]])));
+  var up=r.upstream_addr?kv([
+    ['Forwarded to',r.upstream_addr,1],['Upstream speaks',r.upstream_protocol,1],
+    ['Upstream encrypted',r.upstream_tls==null?null:yesno(r.upstream_tls,'Yes, TLS to the backend','No, plain text to the backend')],
+    ['Endpoint health when chosen',r.upstream_health?healthWords(r.upstream_health):null],
+    ['Connection',r.upstream_reused==null?null:yesno(r.upstream_reused,'Reused an idle pooled connection','Opened a new connection')],
+    ['Time to connect',r.upstream_connect_ms?fmtMs(r.upstream_connect_ms):(r.upstream_reused?'0 ms (reused)':null),0,r.upstream_connect_ms?'Includes the TLS handshake when the upstream is encrypted.':null],
+    ['Time to first byte',r.upstream_ttfb_ms?fmtMs(r.upstream_ttfb_ms):null,0,r.upstream_ttfb_ms?'From sending the request to the first byte back.':null],
+    ['Upstream answered',r.upstream_status||null],['Retries',r.retries?String(r.retries):null]]):null;
+  body.appendChild(csec('Where it went',up));
+  if(r.attempts&&r.attempts.length){
+    var tb=h('table',{class:'att'},h('thead',null,h('tr',null,h('th',{scope:'col',text:'#'}),h('th',{scope:'col',text:'Endpoint'}),h('th',{scope:'col',text:'Result'}),h('th',{scope:'col',text:'Connect'}),h('th',{scope:'col',text:'First byte'}))),
+      h('tbody',null,r.attempts.map(function(a,i){return h('tr',null,h('td',{text:String(i+1)}),h('td',{text:a.addr}),h('td',{text:a.error?'failed: '+a.error:String(a.status)}),h('td',{text:a.connect_ms?fmtMs(a.connect_ms):'—'}),h('td',{text:a.ttfb_ms?fmtMs(a.ttfb_ms):'—'}))})));
+    body.appendChild(h('div',{class:'sec'},h('h3',{text:'Attempts'}),tb));
+  }
+  if(r.grpc_service||r.grpc_method)body.appendChild(csec('gRPC call',kv([['Service',r.grpc_service,1],['Method',r.grpc_method,1],
+    ['gRPC status',r.grpc_status!=null?r.grpc_status+' '+(GRPC[r.grpc_status]||''):null]])));
+  body.appendChild(csec('Size and time',kv([
+    ['Status returned',isOpen?null:r.status],['Total time',isOpen?null:fmtMs(r.duration_ms)],
+    ['From the client',isOpen?fmtB(r.bytes_in):(r.request_bytes!=null?fmtB(r.request_bytes):'0 B')],['To the client',isOpen?fmtB(r.bytes_out):(r.response_bytes!=null?fmtB(r.response_bytes):fmtB(r.bytes))],
+    ['Request ID',r.request_id,1],['Trace ID',r.trace_id,1],['Error',r.error]])));
+  body.appendChild(h('div',{class:'sec'},h('p',{class:'good',text:'Header values such as User-Agent and X-Forwarded-For, tokens and query strings are never shown here. They stay in the gateway’s own access log.'})));
+  if(!keep){body.scrollTop=0;$('sheet').classList.add('open');$('sheet').setAttribute('aria-hidden','false');$('scrim').classList.add('on');$('close').focus()}
+  else body.scrollTop=top;
+}
 
 /* ---------- keyboard ---------- */
 $('q').addEventListener('input',function(){query=this.value.trim();render()});
@@ -640,13 +965,14 @@ document.addEventListener('keydown',function(e){
   var t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA');
   if(e.key==='Escape'){
     if($('help').open)return;
-    if(sel){closeSheet();e.preventDefault()}
+    if(sel||selConn!=null){closeSheet();e.preventDefault()}
     else if(typing||query){$('q').value='';query='';$('q').blur();render();e.preventDefault()}
     return;
   }
   if(typing)return;
   if(e.key==='/'){e.preventDefault();$('q').focus();$('q').select()}
   else if(e.key==='?'){e.preventDefault();if(!$('help').open)$('help').showModal()}
+  else if(e.key==='c'){if(connOn()){e.preventDefault();$('cf-ip').scrollIntoView({block:'center'});$('cf-ip').focus()}}
   else if(e.key==='p'){if(!$('pause').hidden)setPaused(!paused)}
   else if(e.key==='j'||e.key==='k'){
     var list=[].slice.call(document.querySelectorAll('.route'));if(!list.length)return;
@@ -659,6 +985,7 @@ document.addEventListener('keydown',function(e){
 /* ---------- live feed ---------- */
 function addFeed(e,quiet){
   if(e.id&&e.id<=lastEvt)return;if(e.id)lastEvt=e.id;
+  if(e.kind==='conns'){onConns(e.data);return}
   $('feedsec').classList.remove('hide');
   var box=$('feed');var ph=box.querySelector('.empty');if(ph)box.removeChild(ph);
   var row=h('div',{class:'fe','data-l':e.level||'info'},h('time',{datetime:e.time,text:clock(e.time)}),h('span',{class:'dot','aria-hidden':'true'}),
@@ -691,7 +1018,7 @@ function connect(){
   var fails=0;
   es.addEventListener('state',function(m){try{onState(JSON.parse(m.data))}catch(x){}});
   es.addEventListener('feed',function(m){try{onFeed(JSON.parse(m.data))}catch(x){}});
-  es.onopen=function(){fails=0;stopPoll();if(!paused)setLive('live');showErr(null)};
+  es.onopen=function(){fails=0;stopPoll();if(!paused)setLive('live');showErr(null);if(C.loaded)loadConns(C.latest)};
   es.onerror=function(){
     if(++fails>=2||es.readyState===2){es.close();es=null;startPoll();setTimeout(connect,20000)}
     else if(!paused)setLive('poll');
@@ -705,6 +1032,7 @@ function poll(){
     if(r.status===401)throw new Error('This dashboard needs a token. Open it with /?token=YOUR_TOKEN once.');
     if(!r.ok)throw new Error('The server answered '+r.status+'.');return r.json();
   }).then(function(st){showErr(null);onState(st)}).catch(function(e){showErr(e)});
+  if(connOn()&&C.loaded)loadConns(C.latest);
   if(feedLive)fetch('api/events?since='+lastEvt,{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){(j.events||[]).forEach(onFeed)}).catch(function(){});
 }
 function showErr(e){
@@ -725,6 +1053,7 @@ $('retry').addEventListener('click',function(){poll()});
     feedLive=!!j.live;if(feedLive){$('pause').hidden=false;$('feedsec').classList.remove('hide');(j.events||[]).forEach(function(e){addFeed(e,true)});if(!j.events.length){$('feed').appendChild(h('div',{class:'empty',style:'padding:28px 22px',text:'Waiting for the first event. Changes and traffic show up here as they happen.'}))}}
     else $('pause').hidden=false;
   }).catch(function(){}).then(function(){poll();connect()});
+  setInterval(function(){if(!paused&&C.open.length)paintOpen()},1000);
   setInterval(function(){if(S&&S.health)renderHealth();if(S&&S.generated&&!paused)renderFoot()},5000);
 })();
 })();
