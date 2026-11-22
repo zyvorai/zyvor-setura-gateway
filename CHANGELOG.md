@@ -1,18 +1,6 @@
 # Changelog
 
-## 0.7.0-rc3
-
-Third release candidate. rc2 shipped and its signatures and provenance verify, but it exposed two release-pipeline bugs: the container image build failed (the Dockerfile did not copy the new `grafana` package that the monitoring rules import), and the binaries were stamped `+dirty` because the release notes were written into the work tree before the build. Both are fixed. Otherwise identical to the 0.7.0 list below.
-
-## 0.7.0-rc2
-
-Second release candidate. rc1 could not ship: a golden-frame test for `setura top` printed a percentile that differed by one millisecond between Apple-silicon and Linux (fused multiply-add), so the release job failed its tests. Fixed by snapping quantiles to a fixed precision; the suite now passes on both architectures. Otherwise identical to the 0.7.0 list below.
-
-## 0.7.0-rc1
-
-Release candidate for 0.7.0, and the first run of the signed release pipeline (cosign signatures, SLSA provenance, SBOMs, `.deb` and `.rpm` packages and the Helm chart). It is a pre-release: it does not move the `latest` image tag. The contents are the 0.7.0 list below.
-
-## 0.7.0 (unreleased)
+## 0.7.0
 
 - **Gateway API 1.5 in the built-in gateway.** HTTPRoute `CORS` (with preflight) and `ExternalAuth` filters, `BackendTLSPolicy` (TLS and mTLS to backends), `timeouts.backendRequest`, session persistence, `ListenerSet`, static Gateway addresses, `matchExpressions` selectors, rule `name`, and basic `TCPRoute` and `UDPRoute`. See `docs/gateway-api-1-5.md`.
 - **Traffic security.** JWT validation (RS256, ES256, EdDSA, cached JWKS), API key and basic auth, IP allow and deny lists, client-certificate validation, OCSP stapling, and admin-endpoint authentication (`--admin-token`). `setura gateway hash` makes the stored hashes; lint rules `SET016` to `SET019`. Secrets are redacted everywhere. See `docs/security.md`.
@@ -25,6 +13,18 @@ Release candidate for 0.7.0, and the first run of the signed release pipeline (c
 - **Fixes.** A data race on the leader-election pointer; `X-Request-Id` returned twice when the upstream echoes it; the dashboard counted a backend's requests once per referencing rule; several timing-dependent tests.
 
 Known limits: the gateway has not passed the upstream conformance suite; ACME has only run against a fake CA; TCPRoute and UDPRoute are basic; gRPC routes get no auth policies; Netra's collector shows mean latency but not percentiles.
+
+## 0.7.0-rc3
+
+Third release candidate. rc2 shipped and its signatures and provenance verify, but it exposed two release-pipeline bugs: the container image build failed (the Dockerfile did not copy the new `grafana` package that the monitoring rules import), and the binaries were stamped `+dirty` because the release notes were written into the work tree before the build. Both are fixed. Otherwise identical to the 0.7.0 list below.
+
+## 0.7.0-rc2
+
+Second release candidate. rc1 could not ship: a golden-frame test for `setura top` printed a percentile that differed by one millisecond between Apple-silicon and Linux (fused multiply-add), so the release job failed its tests. Fixed by snapping quantiles to a fixed precision; the suite now passes on both architectures. Otherwise identical to the 0.7.0 list below.
+
+## 0.7.0-rc1
+
+Release candidate for 0.7.0, and the first run of the signed release pipeline (cosign signatures, SLSA provenance, SBOMs, `.deb` and `.rpm` packages and the Helm chart). It is a pre-release: it does not move the `latest` image tag. The contents are the 0.7.0 list below.
 
 ## 0.6.0
 

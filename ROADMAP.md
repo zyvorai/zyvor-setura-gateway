@@ -4,17 +4,13 @@ Plans, not promises. Dates are intentionally absent.
 
 ## Released
 
+- **0.7.0.** Gateway API 1.5 features, traffic security, ACME and certificate reload, PROXY
+  protocol, operator UX (`top`, `init`, `doctor gateway`, dashboard Changes page and command
+  palette), `migrate convert`, observability integrations, performance work and fuzzing,
+  signed releases (cosign, SLSA provenance, SBOMs), packages and a Helm chart.
 - **0.6.0.** GRPCRoute and TLSRoute, resilience, observability, `ui`, `why`, `replay`,
   guarded rollout, shadow diff, `migrate check`, connections, multi-cluster, alerting,
   Kubernetes watches and leader election.
-
-## 0.7.0 (merged, release pending)
-
-Gateway API 1.5 features, traffic security, ACME and certificate reload, PROXY protocol,
-operator UX (`top`, `init`, `doctor gateway`, dashboard Changes page and command
-palette), `migrate convert`, observability integrations (Grafana, alerts, OTLP gRPC,
-log sinks, SLOs, Netra), performance work and fuzzing, signed releases, packages and
-a Helm chart. See `CHANGELOG.md`.
 
 ## Next
 
