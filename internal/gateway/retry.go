@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,13 @@ type RetryRule struct {
 	Codes    []int  `json:"codes,omitempty"`
 	Attempts *int   `json:"attempts,omitempty"`
 	Backoff  string `json:"backoff,omitempty"`
+	// PerTryTimeout bounds each attempt until response headers arrive.
+	PerTryTimeout string `json:"perTryTimeout,omitempty"`
+	// Jitter randomises each backoff by +/- this fraction (0-1).
+	Jitter *float64 `json:"jitter,omitempty"`
+	// CrossBackend lets a retry move to another weighted backendRef
+	// (overrides the gateway default).
+	CrossBackend *bool `json:"crossBackend,omitempty"`
 }
 
 const (
@@ -31,6 +39,10 @@ type CRetry struct {
 	Codes    map[int]bool
 	Attempts int // retries after the first attempt
 	Backoff  time.Duration
+
+	PerTry       time.Duration
+	Jitter       *float64
+	CrossBackend *bool
 }
 
 func compileRetry(r *RetryRule) (*CRetry, error) {
@@ -54,6 +66,20 @@ func compileRetry(r *RetryRule) (*CRetry, error) {
 		}
 		c.Backoff = d
 	}
+	if r.PerTryTimeout != "" {
+		d, err := time.ParseDuration(r.PerTryTimeout)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("retry.perTryTimeout: %q is not a positive duration", r.PerTryTimeout)
+		}
+		c.PerTry = d
+	}
+	if r.Jitter != nil {
+		if *r.Jitter < 0 || *r.Jitter > 1 {
+			return nil, fmt.Errorf("retry.jitter: %v is outside 0-1", *r.Jitter)
+		}
+		c.Jitter = r.Jitter
+	}
+	c.CrossBackend = r.CrossBackend
 	return c, nil
 }
 
@@ -161,33 +187,96 @@ func isConnectError(err error) bool {
 }
 
 // resTransport is the RoundTripper the proxy uses for every request. It
-// observes outcomes for outlier ejection and, when the rule has a retry
-// block, retries failed attempts on another endpoint before any byte reaches
-// the client.
+// observes outcomes for outlier ejection and circuit breaking and, when the
+// rule has a retry block, retries failed attempts on another endpoint (or,
+// when allowed, another backendRef) before any byte reaches the client.
 type resTransport struct {
 	s     *Server
-	base  http.RoundTripper
+	rule  *CRule
+	ref   *CRef // the ref serving the current attempt
 	b     *Backend
 	first *Endpoint
 	retry *CRetry
 
 	replay    []byte
 	canReplay bool
+	// rebuild makes the outbound request for another ref from the request as
+	// it was before any filter ran: it applies that ref's filters.
+	rebuild func(ctx context.Context, ref *CRef) *http.Request
 
-	tried   map[*Endpoint]bool
-	retries int
+	tried     map[*Endpoint]bool
+	triedRefs map[*CRef]bool
+	retries   int
 }
 
-func (s *Server) newTransport(b *Backend, first *Endpoint, retry *CRetry, replay []byte, canReplay bool) *resTransport {
-	return &resTransport{s: s, base: s.transport(b.Insecure), b: b, first: first, retry: retry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}}
+func (s *Server) newTransport(rule *CRule, ref *CRef, first *Endpoint, retry *CRetry, replay []byte, canReplay bool) *resTransport {
+	return &resTransport{s: s, rule: rule, ref: ref, b: ref.B, first: first, retry: retry, replay: replay, canReplay: canReplay,
+		tried: map[*Endpoint]bool{}, triedRefs: map[*CRef]bool{ref: true}}
 }
 
 // annotate adds the retry-count header when enabled.
 func (t *resTransport) annotate(h http.Header) {
-	if t.s.res.o.RetryHeader && t.retry != nil {
+	if t.s.res.opt().RetryHeader && t.retry != nil {
 		h.Set(RetryHeaderName, strconv.Itoa(t.retries))
 	}
 }
+
+func (t *resTransport) crossBackend() bool {
+	if t.rebuild == nil || t.retry == nil || len(t.rule.Refs) < 2 {
+		return false
+	}
+	if t.retry.CrossBackend != nil {
+		return *t.retry.CrossBackend
+	}
+	return t.s.res.opt().RetryCrossBackend
+}
+
+// otherRef picks, by weight, a backendRef not tried yet whose backend can take
+// traffic; nil when there is none.
+func (t *resTransport) otherRef() *CRef {
+	now := t.s.res.now()
+	total := 0
+	for _, c := range t.rule.Refs {
+		if c.B != nil && c.Weight > 0 && !t.triedRefs[c] && c.B.available(now) {
+			total += c.Weight
+		}
+	}
+	if total == 0 {
+		return nil
+	}
+	n := t.s.intn(total)
+	for _, c := range t.rule.Refs {
+		if c.B != nil && c.Weight > 0 && !t.triedRefs[c] && c.B.available(now) {
+			if n < c.Weight {
+				return c
+			}
+			n -= c.Weight
+		}
+	}
+	return nil
+}
+
+// backoffFor is the wait before retry number n, with jitter applied.
+func (t *resTransport) backoffFor() time.Duration {
+	d := t.retry.Backoff
+	j := t.s.res.opt().RetryJitter
+	if t.retry.Jitter != nil {
+		j = *t.retry.Jitter
+	}
+	if d > 0 && j > 0 {
+		u := float64(t.s.intn(1001)) / 1000 // 0..1
+		d = time.Duration(float64(d) * (1 + j*(2*u-1)))
+	}
+	return d
+}
+
+// tryBody cancels a per-try context when the response body is done.
+type tryBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *tryBody) Close() error { err := b.ReadCloser.Close(); b.cancel(); return err }
 
 func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rs := t.s.res
@@ -198,50 +287,122 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		bud.request(rs.now())
 	}
 	bodyless := req.Body == nil || req.Body == http.NoBody
+	cross := t.crossBackend()
+	switched := false // the current attempt uses a ref other than the first
 	for attempt := 0; ; attempt++ {
 		ep := t.first
 		if attempt > 0 || ep == nil {
 			ep = t.b.choose(rs.now(), t.tried)
 		}
 		t.tried[ep] = true
-		out := req.Clone(ctx)
+		var out *http.Request
+		if switched {
+			out = t.rebuild(ctx, t.ref)
+		} else {
+			out = req.Clone(ctx)
+		}
 		out.URL.Scheme, out.URL.Host = ep.URL.Scheme, ep.URL.Host
 		if t.retry != nil && t.canReplay && !bodyless {
 			out.Body = io.NopCloser(bytes.NewReader(t.replay))
 		}
-		resp, err := t.base.RoundTrip(out)
-		cancelled := err != nil && ctx.Err() != nil
-		if !cancelled {
-			rs.observe(t.b, ep, err != nil || resp.StatusCode >= 500, rs.now())
+
+		// Circuit breaker for this attempt's backend.
+		lim := t.s.limitsFor(t.b)
+		var tk *cbTicket
+		var cerr error
+		if lim.enabled() {
+			tk, cerr = rs.enter(ctx, rs.breakerFor(t.b.Key), lim)
+		}
+		var resp *http.Response
+		var err error
+		var cancelTry context.CancelFunc = func() {}
+		perTryHit := false
+		if cerr != nil {
+			err = cerr
+		} else {
+			actx := ctx
+			var timer *time.Timer
+			if pt := t.retry; pt != nil && pt.PerTry > 0 {
+				actx, cancelTry = context.WithCancel(ctx)
+				timer = time.AfterFunc(pt.PerTry, cancelTry)
+				out = out.WithContext(actx)
+			}
+			resp, err = t.s.transportFor(t.b, lim).RoundTrip(out)
+			if timer != nil && !timer.Stop() && resp == nil && ctx.Err() == nil {
+				perTryHit = true
+				err = fmt.Errorf("per-try timeout %s exceeded: %w", t.retry.PerTry, context.DeadlineExceeded)
+				rs.bump(rs.perTryTimeouts, t.b.Key)
+			}
+		}
+		_, shed := cerr.(*circuitReject)
+		cancelled := err != nil && ctx.Err() != nil && !shed
+		bad := !shed && (err != nil || resp.StatusCode >= 500)
+		if !cancelled && !shed {
+			rs.observe(t.b, ep, bad, rs.now())
+		}
+		if tk != nil {
+			if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
+				resp.Body = &cbBody{ReadCloser: resp.Body, tk: tk, bad: bad}
+			} else {
+				tk.done(bad, cancelled)
+			}
+		}
+		// retry decision
+		final := func() (*http.Response, error) {
+			if resp != nil && t.retry != nil && t.retry.PerTry > 0 {
+				resp.Body = &tryBody{ReadCloser: resp.Body, cancel: cancelTry}
+			} else {
+				cancelTry()
+			}
+			return resp, err
 		}
 		if t.retry == nil || cancelled || attempt >= t.retry.Attempts || !(bodyless || t.canReplay) {
-			return resp, err
+			return final()
 		}
 		var retryable bool
-		if err != nil {
+		switch {
+		case shed:
+			retryable = cross // another backendRef may still serve it
+		case err != nil:
 			// Non-idempotent requests are retried only when nothing was sent.
 			retryable = isConnectError(err) || isIdempotent(req.Method)
-		} else {
+		default:
 			retryable = t.retry.Codes[resp.StatusCode] && isIdempotent(req.Method)
 		}
+		_ = perTryHit
 		if !retryable {
-			return resp, err
+			return final()
 		}
-		if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= t.retry.Backoff {
-			return resp, err // no time left to wait and try again
+		// Choose where the retry goes before spending budget or time on it.
+		var next *CRef
+		if cross {
+			next = t.otherRef()
 		}
-		if !bud.tryRetry(rs.now(), rs.o.RetryBudgetPercent, rs.o.RetryBudgetMin) {
+		if shed && next == nil {
+			return final()
+		}
+		wait := t.backoffFor()
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= wait {
+			return final() // no time left to wait and try again
+		}
+		if !bud.tryRetry(rs.now(), rs.opt().RetryBudgetPercent, rs.opt().RetryBudgetMin) {
 			rs.bump(rs.denied, t.b.Key)
-			return resp, err
+			return final()
 		}
-		if t.retry.Backoff > 0 && rs.sleep(ctx, t.retry.Backoff) != nil {
-			return resp, err
+		if wait > 0 && rs.sleep(ctx, wait) != nil {
+			return final()
 		}
+		cancelTry()
 		if resp != nil {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 		}
 		t.retries++
 		rs.bump(rs.retries, t.b.Key)
+		if next != nil {
+			rs.bump(rs.crossRetries, t.b.Key)
+			t.ref, t.b, t.first, switched = next, next.B, nil, true
+			t.triedRefs[next] = true
+		}
 	}
 }

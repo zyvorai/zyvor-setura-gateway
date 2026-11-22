@@ -27,7 +27,11 @@ Flags for `run` and `up`: `--bind ADDR` (default `127.0.0.1`), `--port-map A=B[,
 (serve spec port A on port B; 0 means any free port), `--port-offset N` (added to spec
 ports below 1024, so `80` becomes `8080` without root), `--admin ADDR|off` (default
 `127.0.0.1:19000`), `--interval DUR` (poll interval, default 1s, 5s in cluster mode),
-`--force`, `--access-log FILE|-|off`. Kubernetes mode adds `--kube-api`,
+`--force`, `--access-log FILE|-|off` (with `--access-log-max-size`, `--access-log-keep`,
+`--access-log-gzip`; SIGHUP rotates). Resilience, observability and traffic-protection flags
+are in [resilience](resilience.md) and [observability](observability.md), and `gateway help`
+lists them all; a `resilience` block in the config file sets the resilience ones (flags win).
+Kubernetes mode adds `--kube-api`,
 `--kube-token-file` and `--kube-ca-file` (defaults are the in-cluster service account).
 Exit codes follow Setura: 0 ok, 2 usage or setup failure (including a refused first
 config).
@@ -122,16 +126,18 @@ returns 500; no match returns 404.
 | Filters: RequestHeaderModifier, ResponseHeaderModifier | Supported (rule and backendRef level) |
 | Filter: RequestRedirect (scheme, hostname, port, path, statusCode) | Supported |
 | Filter: URLRewrite (hostname, ReplaceFullPath, ReplacePrefixMatch) | Supported |
-| Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB |
+| Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB (GRPCRoute: unary calls only) |
 | `timeouts.request` | Supported |
-| `retry` (codes, attempts, backoff) | Supported; budgeted, idempotent-safe, see [resilience](resilience.md) |
+| `retry` (codes, attempts, backoff, jitter, perTryTimeout, crossBackend) | Supported; budgeted, idempotent-safe (POST/PATCH only on connect errors, deliberately), see [resilience](resilience.md) |
+| Circuit breaking (max requests, pending, connections, failure threshold, half-open probing) | Supported per backend, see [resilience](resilience.md) |
 | `timeouts.backendRequest`, session persistence | Not implemented |
 | ReferenceGrant for backendRefs and certificateRefs | Supported |
 | Status: Accepted, Programmed, ResolvedRefs, Conflicted, observedGeneration, attachedRoutes | Supported |
-| Filter: ExtensionRef, CORS, ExternalAuth; BackendTLSPolicy | Not implemented (route marked Accepted=False, UnsupportedValue) |
-| GRPCRoute (service/method match, h2c and h2, streaming, trailers) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
+| Filter: ExtensionRef, CORS, ExternalAuth; BackendTLSPolicy | Not implemented (route marked Accepted=False, UnsupportedValue; ExtensionRef says why) |
+| GRPCRoute (service/method match, h2c and h2, streaming, trailers, grpc-timeout, unary retries and mirroring, gRPC health checks) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
 | TLSRoute with TLS passthrough (SNI routing, wildcards, weights) | Supported |
-| TCPRoute, UDPRoute, TLS termination on TLS listeners | Not implemented |
+| TLSRoute with TLS Terminate to TCP backends, ALPN-based routing (Setura extension) | Supported |
+| TCPRoute, UDPRoute | Not implemented |
 | Gateway `addresses`, per-Gateway load balancer provisioning | Not implemented |
 
 ## Kubernetes controller mode
@@ -175,11 +181,19 @@ without touching what the client sees: see [shadow.md](shadow.md), the
 * One status `generation` in file mode is the reload counter (snapshot files have no
   metadata generation).
 * Selector namespaces support `matchLabels` only; `matchExpressions` fail closed.
-* No circuit breaking, authentication or shared (cross-replica) rate limits. Retries move
-  only between endpoints of one Service, and ejection state resets on reload. Prometheus
-  metrics are served on the admin `/metrics` endpoint. The admin `/stats` endpoint is simple JSON counters per route and backend, resets on
-  restart, and the admin endpoint is unauthenticated (loopback by default; `/config`
+* No authentication (of clients or of the admin endpoint). Rate limits are per replica:
+  `--rate-limit-share N` divides them by the declared replica count as an approximation,
+  because exact sharing would need a shared store the gateway does not have (see
+  [observability](observability.md)). Circuit breaker, ejection and health state is per
+  process (it survives reloads for endpoints that still exist, not restarts). Cross-backend
+  retries are opt-in and HTTPRoute only. Prometheus metrics are served on the admin `/metrics`
+  endpoint. The admin `/stats` endpoint is simple JSON counters per route and backend, resets
+  on restart, and the admin endpoint is unauthenticated (loopback by default; `/config`
   never includes secret material).
+* TLS Terminate on `TLS` listeners forwards plain TCP: no re-encryption to the backend and
+  no PROXY protocol. gRPC retries and mirroring need a unary call that fits in memory;
+  streaming calls pass through untouched.
 * The redirect filter keeps the port from the request `Host` header when no scheme or
   port is given (the spec says listener port; that is wrong behind a port remap).
-* Health checks are active HTTP GETs only; the first request may precede the first check.
+* Health checks are active HTTP GETs or `grpc.health.v1` calls; the first request may
+  precede the first check.

@@ -26,13 +26,49 @@ var UIStateBuilder func(UIInput) (any, error)
 // the dashboard can lint and draw it like any other source.
 func specSnapshot(c *Config) []byte {
 	res := map[string]any{}
+	// Objects outside the default namespace keep it in the key, as the file
+	// format does, so cross-namespace lint rules see the same picture.
+	key := func(kind, ns, name string) string {
+		if ns != "" && ns != c.Namespace {
+			return kind + "." + APIGroup + "/" + ns + "/" + name
+		}
+		return kind + "." + APIGroup + "/" + name
+	}
 	for _, g := range c.Gateways {
-		res["gateways.gateway.networking.k8s.io/"+g.Name] = gatewaySpec{GatewayClassName: g.ClassName, Listeners: g.Listeners}
+		res[key("gateways", g.NS, g.Name)] = gatewaySpec{GatewayClassName: g.ClassName, Listeners: g.Listeners}
 	}
 	for _, r := range c.Routes {
-		res["httproutes.gateway.networking.k8s.io/"+r.Name] = routeSpec{ParentRefs: r.Parents, Hostnames: r.Hostnames, Rules: r.Rules}
+		res[key("httproutes", r.NS, r.Name)] = routeSpec{ParentRefs: r.Parents, Hostnames: r.Hostnames, Rules: r.Rules}
 	}
-	b, _ := json.Marshal(map[string]any{"schema": "setura.route-specs/v1", "namespace": c.Namespace, "resources": res})
+	for _, r := range c.GRPCRoutes {
+		res[key("grpcroutes", r.NS, r.Name)] = grpcRouteSpec{ParentRefs: r.Parents, Hostnames: r.Hostnames, Rules: r.Rules}
+	}
+	for _, r := range c.TLSRoutes {
+		res[key("tlsroutes", r.NS, r.Name)] = tlsRouteSpec{ParentRefs: r.Parents, Hostnames: r.Hostnames, Rules: r.Rules}
+	}
+	doc := map[string]any{"schema": "setura.route-specs/v1", "namespace": c.Namespace, "resources": res}
+	// ReferenceGrants, in the same top-level form a config file uses, so the
+	// dashboard's lint grades a missing grant exactly as linting the file does.
+	// Present (even empty) only when the source supplied grants.
+	if c.GrantsCaptured || len(c.Grants) > 0 {
+		grants := []any{}
+		for _, g := range c.Grants {
+			from, to := []any{}, []any{}
+			for _, f := range g.From {
+				from = append(from, map[string]any{"group": f.Group, "kind": f.Kind, "namespace": f.Namespace})
+			}
+			for _, t := range g.To {
+				e := map[string]any{"group": t.Group, "kind": t.Kind}
+				if t.Name != "" {
+					e["name"] = t.Name
+				}
+				to = append(to, e)
+			}
+			grants = append(grants, map[string]any{"metadata": map[string]any{"namespace": g.Namespace}, "spec": map[string]any{"from": from, "to": to}})
+		}
+		doc["referenceGrants"] = grants
+	}
+	b, _ := json.Marshal(doc)
 	return b
 }
 
@@ -51,8 +87,14 @@ func (s *Server) UIState() any {
 	if err != nil {
 		return nil
 	}
-	if m, ok := st.(map[string]any); ok && (s.opts.ShadowDiff > 0 || s.shadow.active()) {
-		m["shadow"] = s.shadow.Summary()
+	if m, ok := st.(map[string]any); ok {
+		if s.opts.ShadowDiff > 0 || s.shadow.active() {
+			m["shadow"] = s.shadow.Summary()
+		}
+		s.hist.start(s.opts.HistoryInterval)
+		if hs := s.hist.series(); len(hs) > 0 {
+			m["history"] = map[string]any{"series": hs}
+		}
 	}
 	return st
 }

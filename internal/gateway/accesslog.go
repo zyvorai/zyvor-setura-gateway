@@ -29,6 +29,7 @@ type logLine struct {
 	TraceID   string  `json:"trace_id,omitempty"`
 	SpanID    string  `json:"span_id,omitempty"`
 	Error     string  `json:"error,omitempty"`
+	ClientIP  string  `json:"client_ip,omitempty"`
 }
 
 func (l *logLine) text() []byte {
@@ -55,6 +56,7 @@ func (l *logLine) text() []byte {
 	kv("trace_id", l.TraceID)
 	kv("span_id", l.SpanID)
 	kv("error", l.Error)
+	kv("client_ip", l.ClientIP)
 	b[len(b)-1] = '\n'
 	return b
 }
@@ -148,7 +150,7 @@ func (s *Server) observe(rec *recorder, r *http.Request, st *reqState, start tim
 		a.log(&logLine{Time: start.UTC().Format(time.RFC3339Nano), Listener: st.listener, Host: r.Host, Method: r.Method,
 			Path: r.URL.RequestURI(), Status: status, Bytes: rec.bytes, Millis: float64(end.Sub(start).Microseconds()) / 1000,
 			Route: st.route, Rule: st.rule, Backend: st.backend, Remote: r.RemoteAddr, RequestID: st.reqID,
-			TraceID: st.trace.TraceID, SpanID: st.trace.SpanID, Error: st.errMsg})
+			TraceID: st.trace.TraceID, SpanID: st.trace.SpanID, Error: st.errMsg, ClientIP: s.trusted.clientIP(r)})
 	}
 	if x := s.obs.otlp; x != nil {
 		name := r.Method

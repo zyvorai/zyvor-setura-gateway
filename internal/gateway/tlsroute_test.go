@@ -312,15 +312,21 @@ func TestTLSRouteStatusAndKinds(t *testing.T) {
 	if k := byName["pass"].SupportedKinds; len(k) != 1 || k[0].Kind != "TLSRoute" || byName["pass"].AttachedRoutes != 2 {
 		t.Errorf("pass listener: %+v", byName["pass"])
 	}
-	for _, n := range []string{"term", "notls"} {
-		if c := cond(byName[n].Conditions, "Accepted"); c.Status != "False" || c.Reason != "UnsupportedProtocol" {
-			t.Errorf("%s listener Accepted = %+v", n, c)
-		}
+	if c := cond(byName["notls"].Conditions, "Accepted"); c.Status != "False" || c.Reason != "UnsupportedProtocol" {
+		t.Errorf("notls listener Accepted = %+v", c)
+	}
+	// Terminate is supported now; this snapshot has no secret "c", so the
+	// listener is accepted but its certificate reference does not resolve.
+	if c := cond(byName["term"].Conditions, "Accepted"); c.Status != "True" {
+		t.Errorf("term listener Accepted = %+v", c)
+	}
+	if c := cond(byName["term"].Conditions, "ResolvedRefs"); c.Status != "False" || c.Reason != "InvalidCertificateRef" {
+		t.Errorf("term listener ResolvedRefs = %+v", c)
 	}
 	if k := byName["http"].SupportedKinds; len(k) != 2 {
 		t.Errorf("http listener kinds %+v", k)
 	}
-	if s.Addr(8444) != "" || s.Addr(8445) != "" {
+	if s.Addr(8444) != "" || s.Addr(8445) != "" { // unresolved certificate / no tls block
 		t.Error("rejected TLS listeners must not bind")
 	}
 	if !strings.Contains(strings.Join(s.Listening(), "\n"), "tls-passthrough") {

@@ -218,6 +218,9 @@ type BackendDef struct {
 	Timeout            string       `json:"timeout,omitempty"`
 	HealthCheck        *HealthCheck `json:"healthCheck,omitempty"`
 	InsecureSkipVerify bool         `json:"insecureSkipVerify,omitempty"`
+	// CircuitBreaker overrides the gateway-wide circuit breaking defaults for
+	// this backend (negative numbers lift a default limit).
+	CircuitBreaker *CircuitConfig `json:"circuitBreaker,omitempty"`
 }
 
 // HealthCheck is an active HTTP health check.
@@ -229,6 +232,11 @@ type HealthCheck struct {
 	// HealthyThreshold consecutive passes bring it back (both default 1).
 	UnhealthyThreshold int `json:"unhealthyThreshold,omitempty"`
 	HealthyThreshold   int `json:"healthyThreshold,omitempty"`
+	// Protocol is "http" (default) or "grpc": a grpc check calls
+	// grpc.health.v1.Health/Check (Path is ignored) and Service names the
+	// service to ask about ("" asks about the whole server).
+	Protocol string `json:"protocol,omitempty"`
+	Service  string `json:"service,omitempty"`
 }
 
 // UnmarshalJSON accepts "host:port", ["host:port", ...] or an object.
@@ -329,6 +337,11 @@ type Config struct {
 	Secrets    map[string]SecretDef   // namespace/name
 	Grants     []Grant
 	Namespaces map[string]map[string]string // namespace -> labels
+	// Resilience is the optional "resilience" block of a config file.
+	Resilience *ResilienceConfig
+	// GrantsCaptured records that ReferenceGrants were read from the source
+	// (even if there are none), so lint can treat a missing grant as an error.
+	GrantsCaptured bool
 	// ClassStatus lets a source learn about GatewayClass handling.
 	Classes []string
 	// GRPCRoutes and TLSRoutes are the additional route kinds.
@@ -356,6 +369,7 @@ type fileConfig struct {
 	Namespaces map[string]struct {
 		Labels map[string]string `json:"labels"`
 	} `json:"namespaces"`
+	Resilience *ResilienceConfig `json:"resilience"`
 }
 
 type gatewaySpec struct {
@@ -403,6 +417,16 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		case grantKey:
+			var spec struct {
+				From []struct{ Group, Kind, Namespace string } `json:"from"`
+				To   []struct{ Group, Kind, Name string }      `json:"to"`
+			}
+			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			cfg.Grants = append(cfg.Grants, Grant{Namespace: rns, From: spec.From, To: spec.To})
+			cfg.GrantsCaptured = true
 		case grpcRouteKey, tlsRouteKey:
 			if err := cfg.parseExtraRoute(kind, rns, name, fc.Resources[key]); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
@@ -441,6 +465,13 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 	}
 	for k, v := range fc.Namespaces {
 		cfg.Namespaces[k] = v.Labels
+	}
+	cfg.GrantsCaptured = cfg.GrantsCaptured || fc.ReferenceGrants != nil
+	if fc.Resilience != nil {
+		if err := fc.Resilience.validate(); err != nil {
+			return nil, fmt.Errorf("resilience: %w", err)
+		}
+		cfg.Resilience = fc.Resilience
 	}
 	return cfg, nil
 }

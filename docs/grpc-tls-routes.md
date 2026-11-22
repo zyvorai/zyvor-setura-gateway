@@ -17,13 +17,16 @@ need no new RBAC to keep working; add `get/list` on both resources (and `patch` 
 | --- | --- |
 | `HTTP`, `HTTPS` | `HTTPRoute`, `GRPCRoute` |
 | `TLS` with `tls.mode: Passthrough` | `TLSRoute` |
+| `TLS` with `tls.mode: Terminate` (needs `certificateRefs`) | `TLSRoute` |
 
 `allowedRoutes.kinds` narrows that list; `allowedRoutes.namespaces` applies as before.
 A route whose kind the listener does not carry is not attached
 (`Accepted=False`, reason `NotAllowedByListeners`). A listener's
 `status.supportedKinds` is the intersection of the table above and `allowedRoutes.kinds`.
-`TLS` listeners with `Terminate` (or no `tls` block) are rejected with
-`Accepted=False/UnsupportedProtocol`.
+A `TLS` listener without a `tls` block, or with a mode other than `Passthrough` or
+`Terminate`, is rejected with `Accepted=False/UnsupportedProtocol`. A `Terminate` listener
+whose `certificateRefs` do not resolve is `Accepted` but not `ResolvedRefs` and does not serve,
+like an HTTPS listener.
 
 Route status uses the same conditions as HTTPRoute (`Accepted`, `ResolvedRefs`) per
 parentRef. In `/status`, `/stats` and access logs the route key is
@@ -56,8 +59,37 @@ GRPCRoutes are considered for such requests and only HTTPRoutes for everything e
   Cross-namespace refs need a `ReferenceGrant` with `from.kind: GRPCRoute` (TLSRoute:
   `from.kind: TLSRoute`).
 * **Filters.** `RequestHeaderModifier` and `ResponseHeaderModifier`, on the rule or on a
-  backendRef. Any other filter type makes the route `Accepted=False/UnsupportedValue`
-  rather than being silently ignored.
+  backendRef, and `RequestMirror` (see below). Any other filter type makes the route
+  `Accepted=False/UnsupportedValue` rather than being silently ignored. `ExtensionRef` gets
+  its own message: the built-in gateway has no extension mechanism, and ignoring the
+  reference would silently change what the route does, so it is refused (HTTPRoute likewise).
+* **Deadlines (`grpc-timeout`).** A client's `grpc-timeout` header (up to 8 digits and a unit
+  `H M S m u n`) becomes the call's deadline, capped by the backend `timeout` when that is
+  shorter. The backend receives the time that is left, re-encoded (`grpc-timeout: 1973m`), so
+  its own deadline matches the client's; an unparsable value is dropped and ignored. When the
+  deadline passes before the backend answers, the client gets Trailers-Only
+  `DEADLINE_EXCEEDED` (a call already streaming a response is cut off). Without the header
+  nothing is added to the request.
+* **Retries.** A rule may carry `retry: {"codes": ["UNAVAILABLE"], "attempts": 2, "backoff":
+  "25ms", "jitter": 0.2}` (codes by name or number 1-16, default `UNAVAILABLE`, attempts 0-10).
+  The gateway retries only what it can replay safely: a call is replayable when it is a
+  unary call, meaning one length-prefixed message (up to the retry body limit, 64 KiB by
+  default) followed by the client's end of stream, which it sees within 50 ms of the message.
+  Streaming calls (more than one message, or a client that keeps the stream open), big
+  messages and slow clients are never held up or retried; they flow through unchanged.
+  A replayable call is retried when the transport fails (counted as `UNAVAILABLE`: connection
+  refused, reset stream) or when the backend answers Trailers-Only with a listed code. A
+  response that already carries messages is never retried. Retries go to another endpoint of
+  the same backend when there is one, share the retry budget with HTTP retries
+  (`--retry-budget`) and are bounded by the call's deadline. `--retry-header` adds
+  `X-Setura-Retries`. Retries are not moved to another `backendRef` for gRPC.
+* **Mirroring.** `RequestMirror` (backendRef, `percent`) copies unary calls, in the same
+  sense, to the mirror backend, fire-and-forget (answers are discarded, failures never reach
+  the caller). Streaming calls and messages above 1 MiB are not mirrored. `shadow-diff` is
+  not supported on a GRPCRoute and is rejected.
+* **Health.** Besides the passive ejection every backend gets, a backend may use gRPC health
+  checking: `healthCheck: {"protocol": "grpc", "service": "pkg.Orders"}` (see
+  [resilience.md](resilience.md)).
 * **Proxying.** The request and response bodies stream in both directions (unary,
   server, client and bidirectional streaming all work; each message is flushed as it
   arrives). Response trailers (`grpc-status`, `grpc-message`, custom ones) are forwarded,
@@ -78,11 +110,12 @@ GRPCRoutes are considered for such requests and only HTTPRoutes for everything e
   Access logs and `/stats` record those with the HTTP-equivalent status (404 or 5xx),
   so they do not look like successes.
 
-Not implemented for GRPCRoute: `RequestMirror`, `ExtensionRef`, `grpc-timeout` header
-propagation as a gateway deadline, retries, and gRPC health checking of backends (the
-HTTP `healthCheck` still works if the backend also serves HTTP on that path).
+Not implemented for GRPCRoute: mirroring or retrying streaming calls (they cannot be replayed
+without buffering them whole, which would break streaming), retries across `backendRef`s,
+circuit breaking, and `ExtensionRef` (refused, see above). The 50 ms wait that tells a unary
+call from a stream only applies to rules that have `retry` or `RequestMirror`.
 
-## TLSRoute (passthrough)
+## TLSRoute (passthrough and terminate)
 
 On a `TLS` listener with `tls.mode: Passthrough` the gateway never terminates TLS and
 needs no certificate. For each connection it reads TLS records up to the end of the
@@ -108,8 +141,41 @@ certificate of, the backend.
 * Listener reload: a changed table applies to new connections at once; a port that is no
   longer served stops accepting and lets open connections drain (up to 30 seconds).
 
-Not implemented: TLS `Terminate` on `TLS` listeners, routing on ALPN, PROXY protocol,
-and TLS 1.3 Encrypted ClientHello (the SNI is then the public name).
+### ALPN routing
+
+TLSRoute has no ALPN field, so the gateway has a Setura extension on a rule:
+`"setura.zyvor.dev/alpn": ["h2"]`. A rule with it only takes connections whose client
+**offers** one of those protocols in its ClientHello (passthrough) or **negotiates** one
+(Terminate, below). Among rules whose hostnames match equally well, one whose ALPN matches
+wins over one without ALPN, which in turn takes everything else; a rule whose ALPN does not
+match is skipped, and a more specific hostname always beats an ALPN match on a wildcard.
+Example: one backend for `h2` clients and another for `http/1.1` on the same name. A
+connection that matches no rule is dropped like any other unrouted connection. A passthrough
+client that offers several protocols is routed by the first rule (in rule order) that any of
+them matches; the backend still makes the real choice.
+
+### Terminate
+
+On a `TLS` listener with `tls.mode: Terminate` the gateway completes the handshake itself and
+forwards the decrypted bytes over plain TCP to the backend (`host:port` endpoints; there
+is no re-encryption, and no PROXY protocol, so the backend sees the gateway as the client
+address). It reuses the HTTPS certificate machinery: `certificateRefs` resolve like an HTTPS
+listener's (Secrets, `ReferenceGrant`s, hot reload of rotated files), and the certificate is
+picked per SNI with the same selection (hostname match, else the first). TLS 1.2 or newer.
+The ClientHello is read first (to pick the listener by SNI exactly as for passthrough), then
+replayed into the handshake, so a Terminate and a Passthrough listener can share a port when
+their hostnames differ: the connection takes the path its SNI's listener asks for.
+
+ALPN offered to clients is the union of the `setura.zyvor.dev/alpn` lists of the listener's
+rules; a client that offers protocols none of them serves fails the handshake
+(`no_application_protocol`), and a client that offers none (or the listener has no ALPN
+rules) negotiates nothing and goes to a rule without ALPN. Handshake failures, routing and
+backend errors close the connection and are logged with `"method":"TLS"` like passthrough
+connections; `Listening()` shows `tls-terminate`.
+
+Not implemented: TCPRoute and UDPRoute, PROXY protocol, re-encrypting to the backend,
+client-certificate authentication, and TLS 1.3 Encrypted ClientHello (the SNI is then the
+public name).
 
 ## Try it
 

@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,7 +16,18 @@ const (
 	otlpQueue    = 2048
 	otlpBatch    = 128
 	otlpInterval = 2 * time.Second
+
+	defaultOTLPRetries = 4                      // retries after the first attempt
+	defaultOTLPBackoff = 250 * time.Millisecond // first wait, doubling
+	maxOTLPBackoff     = 10 * time.Second
 )
+
+// OTLPOptions tunes span export; zero values give the defaults.
+type OTLPOptions struct {
+	Queue   int           // spans buffered before new ones are dropped (default 2048)
+	Retries int           // retries of a failed batch (default 4; negative disables retrying)
+	Backoff time.Duration // first retry wait, doubling up to 10s with jitter (default 250ms)
+}
 
 type span struct {
 	trace        traceInfo
@@ -42,6 +54,8 @@ type otlpExporter struct {
 	exported atomic.Int64
 	dropped  atomic.Int64
 	failures atomic.Int64
+	retries  atomic.Int64
+	opts     OTLPOptions
 }
 
 func otlpURL(endpoint string) string {
@@ -55,11 +69,24 @@ func otlpURL(endpoint string) string {
 }
 
 func newOTLP(endpoint string, interval time.Duration) *otlpExporter {
+	return newOTLPOpts(endpoint, interval, OTLPOptions{})
+}
+
+func newOTLPOpts(endpoint string, interval time.Duration, o OTLPOptions) *otlpExporter {
 	if interval <= 0 {
 		interval = otlpInterval
 	}
-	x := &otlpExporter{url: otlpURL(endpoint), client: &http.Client{Timeout: 5 * time.Second}, interval: interval,
-		ch: make(chan span, otlpQueue), done: make(chan struct{}), stopped: make(chan struct{})}
+	if o.Queue <= 0 {
+		o.Queue = otlpQueue
+	}
+	if o.Retries == 0 {
+		o.Retries = defaultOTLPRetries
+	}
+	if o.Backoff <= 0 {
+		o.Backoff = defaultOTLPBackoff
+	}
+	x := &otlpExporter{url: otlpURL(endpoint), client: &http.Client{Timeout: 5 * time.Second}, interval: interval, opts: o,
+		ch: make(chan span, o.Queue), done: make(chan struct{}), stopped: make(chan struct{})}
 	go x.run()
 	return x
 }
@@ -112,23 +139,82 @@ func (x *otlpExporter) run() {
 	}
 }
 
+// send exports one batch. A failed attempt (network error, 429, 502, 503,
+// 504) is retried with exponential backoff and jitter, honouring Retry-After;
+// other 4xx answers drop the batch at once, as retrying cannot help. While a
+// batch is being retried new spans wait in the bounded queue and are dropped
+// (and counted) when it is full. Shutdown stops retrying.
 func (x *otlpExporter) send(batch []span) {
-	req, err := http.NewRequest(http.MethodPost, x.url, bytes.NewReader(encodeOTLP(batch)))
-	if err != nil {
-		x.dropped.Add(int64(len(batch)))
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := x.client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		if resp.StatusCode/100 == 2 {
+	payload := encodeOTLP(batch)
+	wait := x.opts.Backoff
+	for attempt := 0; ; attempt++ {
+		retryAfter, retryable := x.try(payload)
+		if retryAfter < 0 {
 			x.exported.Add(int64(len(batch)))
 			return
 		}
+		x.failures.Add(1)
+		if !retryable || x.opts.Retries < 0 || attempt >= x.opts.Retries || x.closing() {
+			x.dropped.Add(int64(len(batch)))
+			return
+		}
+		d := wait
+		if retryAfter > 0 {
+			d = retryAfter
+		}
+		d += time.Duration(randIntn(int(d/4) + 1)) // up to 25% jitter
+		if d > maxOTLPBackoff {
+			d = maxOTLPBackoff
+		}
+		t := time.NewTimer(d)
+		select {
+		case <-t.C:
+		case <-x.done:
+			t.Stop()
+			x.dropped.Add(int64(len(batch)))
+			return
+		}
+		x.retries.Add(1)
+		if wait *= 2; wait > maxOTLPBackoff {
+			wait = maxOTLPBackoff
+		}
 	}
-	x.failures.Add(1)
-	x.dropped.Add(int64(len(batch)))
+}
+
+func (x *otlpExporter) closing() bool {
+	select {
+	case <-x.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// try posts payload once. It returns a negative retryAfter on success;
+// otherwise retryAfter is the collector's Retry-After (0 if none) and
+// retryable says whether another attempt may help.
+func (x *otlpExporter) try(payload []byte) (retryAfter time.Duration, retryable bool) {
+	req, err := http.NewRequest(http.MethodPost, x.url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := x.client.Do(req)
+	if err != nil {
+		return 0, true
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	switch c := resp.StatusCode; {
+	case c/100 == 2:
+		return -1, false
+	case c == 429 || c == 502 || c == 503 || c == 504:
+		if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n > 0 {
+			retryAfter = time.Duration(n) * time.Second
+		}
+		return retryAfter, true
+	}
+	return 0, false
 }
 
 func (x *otlpExporter) close() {

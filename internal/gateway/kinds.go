@@ -6,6 +6,7 @@ import "sort"
 const (
 	grpcRouteKey = "grpcroutes." + APIGroup
 	tlsRouteKey  = "tlsroutes." + APIGroup
+	grantKey     = "referencegrants." + APIGroup
 )
 
 // protocolKinds lists the route kinds a listener protocol can carry.

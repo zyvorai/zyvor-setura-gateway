@@ -103,12 +103,47 @@ func toObj(set map[string]bool) obj {
 }
 
 func grantsCaptured(snapshot obj) bool {
+	if _, ok := snapshot["referenceGrants"].([]any); ok {
+		return true // the gateway file format lists grants at the top level
+	}
+	for key := range asMap(snapshot["resources"]) {
+		if strings.HasPrefix(key, refGrant+"/") {
+			return true // a snapshot that carries grants knows them
+		}
+	}
 	for _, c := range asList(snapshot["captured"]) {
 		if c == "referencegrants" {
 			return true
 		}
 	}
 	return false
+}
+
+type lintGrant struct {
+	ns   string
+	spec obj
+}
+
+// lintGrants lists every ReferenceGrant in the snapshot: resources named
+// referencegrants.* and the gateway file's top-level referenceGrants array.
+func lintGrants(snapshot obj, ns string) []lintGrant {
+	var out []lintGrant
+	for key, spec := range asMap(snapshot["resources"]) {
+		resource, rest, _ := strings.Cut(key, "/")
+		if resource != refGrant {
+			continue
+		}
+		gns := ns
+		if a, _, found := strings.Cut(rest, "/"); found {
+			gns = a
+		}
+		out = append(out, lintGrant{gns, asMap(spec)})
+	}
+	for _, g := range asList(snapshot["referenceGrants"]) {
+		gm := asMap(g)
+		out = append(out, lintGrant{str(asMap(gm["metadata"]), "namespace", ns), asMap(gm["spec"])})
+	}
+	return out
 }
 
 // refGrantSeverity decides how to report a cross-namespace backendRef from a
@@ -121,24 +156,16 @@ func refGrantSeverity(snapshot obj, ns, fromKind string, ref obj) string {
 	}
 	rn := str(ref, "namespace", ns)
 	g, k, n := str(ref, "group", ""), str(ref, "kind", "Service"), asStr(ref["name"])
-	for key, spec := range asMap(snapshot["resources"]) {
-		resource, rest, _ := strings.Cut(key, "/")
-		if resource != refGrant {
-			continue
-		}
-		gns := ns
-		if a, _, found := strings.Cut(rest, "/"); found {
-			gns = a
-		}
-		if gns != rn {
+	for _, gr := range lintGrants(snapshot, ns) {
+		if gr.ns != rn {
 			continue
 		}
 		fromOK := false
-		for _, f := range asList(asMap(spec)["from"]) {
+		for _, f := range asList(gr.spec["from"]) {
 			fm := asMap(f)
 			fromOK = fromOK || (str(fm, "group", "") == group && str(fm, "kind", "") == fromKind && str(fm, "namespace", "") == ns)
 		}
-		for _, t := range asList(asMap(spec)["to"]) {
+		for _, t := range asList(gr.spec["to"]) {
 			tm := asMap(t)
 			if fromOK && str(tm, "group", "") == g && str(tm, "kind", "") == k {
 				if tn := asStr(tm["name"]); tn == "" || tn == n {

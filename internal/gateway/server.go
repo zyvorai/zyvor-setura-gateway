@@ -33,7 +33,10 @@ type Options struct {
 	Rand       func(n int) int
 	Obs        ObsOptions        // access log format, tracing export, rate limiting
 	ShadowDiff int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
-	Resilience ResilienceOptions // retries, outlier ejection, default health checks
+	Resilience ResilienceOptions // retries, outlier ejection, circuit breaking, default health checks
+	// HistoryInterval is the dashboard history sampling period (default 1s;
+	// negative disables the sampler goroutine, for tests that sample by hand).
+	HistoryInterval time.Duration
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -78,6 +81,8 @@ type Server struct {
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
 	shadow   shadowState
+	hist     *history
+	trusted  trustedNets
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -98,7 +103,8 @@ func New(opts Options) *Server {
 			MaxIdleConns: 256, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}}
 	}
-	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
+		hist: newHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -234,7 +240,11 @@ func (s *Server) Apply(ld *Loaded) error {
 			r.Generation = s.seq
 		}
 	}
+	if err := s.res.setFile(cfg.Resilience); err != nil {
+		return err
+	}
 	t := BuildTable(cfg)
+	s.carryState(s.table.Load(), t)
 	bindErr := map[string]string{}
 	specPorts := make([]int, 0, len(t.Ports))
 	for p := range t.Ports {
@@ -323,6 +333,9 @@ func (s *Server) Listening() []string {
 			scheme = "https"
 		case "TLS":
 			scheme = "tls-passthrough"
+			if l.Terminate {
+				scheme = "tls-terminate"
+			}
 		}
 		host := l.Host
 		if host == "" {
@@ -444,6 +457,8 @@ func (s *Server) Close() {
 		s.adminSrv.Close()
 	}
 	s.mirrorWG.Wait()
+	s.hist.close()
+	s.res.closeTransports()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()
@@ -516,6 +531,9 @@ func (c *Config) Dump() map[string]any {
 			"parentRefs": r.Parents, "hostnames": r.Hostnames, "rules": r.Rules})
 	}
 	out := map[string]any{"namespace": c.Namespace, "gateways": gws, "httproutes": routes, "backends": c.Backends, "secrets": sortedKeys(c.Secrets)}
+	if c.Resilience != nil {
+		out["resilience"] = c.Resilience
+	}
 	c.dumpExtra(out)
 	return out
 }

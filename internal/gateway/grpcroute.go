@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ type GRPCRule struct {
 	Matches     []GRPCMatch  `json:"matches,omitempty"`
 	Filters     []Filter     `json:"filters,omitempty"`
 	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
+	// Retry retries replayable (unary) calls on UNAVAILABLE and similar.
+	Retry *GRPCRetry `json:"retry,omitempty"`
 }
 
 // GRPCMatch is one GRPCRouteMatch.
@@ -102,11 +105,23 @@ func grpcMatchPath(m *GRPCMethodMatch) (*PathMatch, error) {
 	return nil, fmt.Errorf("unsupported gRPC method match type %q", m.Type)
 }
 
-// validGRPCFilters accepts the header modifiers; everything else is rejected so
-// a silently ignored filter never changes what a route means.
+// validGRPCFilters accepts the header modifiers and RequestMirror (unary calls
+// only); everything else is rejected so a silently ignored filter never
+// changes what a route means.
 func validGRPCFilters(fs []Filter) error {
 	for _, f := range fs {
-		if f.Type != "RequestHeaderModifier" && f.Type != "ResponseHeaderModifier" {
+		switch f.Type {
+		case "RequestHeaderModifier", "ResponseHeaderModifier":
+		case "RequestMirror":
+			if f.RequestMirror == nil {
+				return fmt.Errorf("RequestMirror filter has no requestMirror block")
+			}
+			if f.RequestMirror.ShadowDiff != nil {
+				return fmt.Errorf("RequestMirror shadow-diff is not supported on GRPCRoute")
+			}
+		case "ExtensionRef":
+			return fmt.Errorf("ExtensionRef filters are not supported by the built-in gateway: it has no extension mechanism, and ignoring the reference would change what the route does")
+		default:
 			return fmt.Errorf("unsupported GRPCRoute filter type %q", f.Type)
 		}
 	}
@@ -145,6 +160,27 @@ rules:
 			break
 		}
 		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Filters: rule.Filters}}
+		if rule.Retry != nil {
+			var err error
+			if cr.GRPCRetry, err = compileGRPCRetry(rule.Retry); err != nil {
+				fail(err)
+				break
+			}
+		}
+		for _, f := range rule.Filters {
+			if f.Type == "RequestMirror" {
+				b, fc := t.backendFor("GRPCRoute", r.NS, f.RequestMirror.BackendRef)
+				note(fc)
+				pct := 100
+				if f.RequestMirror.Percent != nil {
+					pct = *f.RequestMirror.Percent
+				}
+				if b != nil {
+					cs, _ := compileShadow(nil)
+					cr.Mirrors = append(cr.Mirrors, &CMirror{B: b, Percent: pct, Shadow: cs})
+				}
+			}
+		}
 		for _, ref := range rule.BackendRefs {
 			if err := validGRPCFilters(ref.Filters); err != nil {
 				fail(err)
@@ -294,45 +330,87 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
-	ref := s.pickWeighted(rule.Refs, rule.Total)
+	ref := s.pickRef(rule)
 	if ref == nil || ref.B == nil {
 		fail(grpcUnavailable, "no valid backend for this route", http.StatusInternalServerError)
 		return
 	}
-	ep := ref.B.pick()
+	ep := ref.B.choose(s.res.now(), nil)
 	st.backend = ref.B.Key
-	tr := s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure)
-	if tr == nil {
+	if s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure) == nil {
 		fail(grpcUnavailable, "cleartext HTTP/2 backends need Go 1.24 or newer", http.StatusBadGateway)
 		return
 	}
-	if bt := ref.B.Timeout; bt > 0 {
-		ctx, cancel := context.WithTimeout(r.Context(), bt)
+	// Deadline: the shorter of the backend timeout and the client's grpc-timeout.
+	timeout := ref.B.Timeout
+	hdrTimeout, hdrOK := time.Duration(0), false
+	hasHdr := r.Header.Get("Grpc-Timeout") != ""
+	if hasHdr {
+		if hdrTimeout, hdrOK = parseGRPCTimeout(r.Header.Get("Grpc-Timeout")); hdrOK && (timeout == 0 || hdrTimeout < timeout) {
+			timeout = hdrTimeout
+		}
+	}
+	var deadline time.Time
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		r = r.WithContext(ctx)
+		deadline, _ = ctx.Deadline()
 	}
+	// Retries and mirrors work on a unary call held in memory.
+	var replay []byte
+	canReplay := false
+	mirrors := rule.Mirrors
+	if rule.GRPCRetry != nil || len(mirrors) > 0 {
+		limit := s.res.opt().RetryBodyLimit
+		if len(mirrors) > 0 && limit < maxMirrorBody {
+			limit = maxMirrorBody
+		}
+		replay, canReplay = bufferUnary(r, limit)
+		if !canReplay {
+			mirrors = nil
+		}
+	}
+	rt := &grpcTransport{s: s, b: ref.B, first: ep, retry: rule.GRPCRetry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}}
 	filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
 	proxy := &httputil.ReverseProxy{
-		Transport:     tr,
+		Transport:     rt,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
 			pr.Out.Host = pr.In.Host
-			pr.SetXForwarded()
+			s.setForwarded(pr)
 			if pg.TLS {
 				pr.Out.Header.Set("X-Forwarded-Proto", "https")
 			}
 			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
+			if hasHdr {
+				// Forward what is left of the deadline; drop an unparsable value.
+				pr.Out.Header.Del("Grpc-Timeout")
+				if hdrOK {
+					left := hdrTimeout
+					if !deadline.IsZero() {
+						left = time.Until(deadline)
+					}
+					pr.Out.Header.Set("Grpc-Timeout", formatGRPCTimeout(left))
+				}
+			}
 			for _, f := range filters {
 				if f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil {
 					applyHeaderMod(pr.Out.Header, f.RequestHeaderModifier)
 				}
 			}
+			if len(mirrors) > 0 {
+				s.fireGRPCMirrors(pr.Out, replay, mirrors)
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
+			if rt.retries > 0 && s.res.opt().RetryHeader {
+				resp.Header.Set(RetryHeaderName, strconv.Itoa(rt.retries))
+			}
 			for _, f := range filters {
 				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
 					applyHeaderMod(resp.Header, f.ResponseHeaderModifier)

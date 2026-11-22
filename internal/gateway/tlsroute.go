@@ -26,6 +26,12 @@ type TLSRoute struct {
 // TLSRule is one TLSRoute rule.
 type TLSRule struct {
 	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
+	// ALPN restricts the rule to connections whose client offers (passthrough)
+	// or negotiates (Terminate) one of these protocols, for example ["h2"].
+	// It is a Setura extension: TLSRoute has no ALPN field. Among rules whose
+	// hostnames match equally well, one with a matching ALPN wins over one
+	// without; a rule whose ALPN does not match is skipped.
+	ALPN []string `json:"setura.zyvor.dev/alpn,omitempty"`
 }
 
 type tlsRouteSpec struct {
@@ -44,6 +50,7 @@ type TLSEntry struct {
 	Hosts    []string
 	Refs     []*CRef
 	Total    int
+	ALPN     []string
 }
 
 func (t *Table) attachTLS(r *TLSRoute) {
@@ -52,7 +59,7 @@ func (t *Table) attachTLS(r *TLSRoute) {
 	t.routes = append(t.routes, res)
 	var entries []*TLSEntry
 	for i := range r.Rules {
-		e := &TLSEntry{RouteKey: stub.StatusKey()}
+		e := &TLSEntry{RouteKey: stub.StatusKey(), ALPN: r.Rules[i].ALPN}
 		for _, ref := range r.Rules[i].BackendRefs {
 			w := refWeight(ref)
 			b, fc := t.backendFor("TLSRoute", r.NS, ref)
@@ -101,19 +108,55 @@ func (l *RTListener) selectTLST(host string, tr *Trace) *TLSEntry {
 	return best
 }
 
+// selectTLSALPN is selectTLS that also takes the client's ALPN protocols into
+// account (offered for passthrough, negotiated for Terminate).
+func (l *RTListener) selectTLSALPN(host string, alpn []string) *TLSEntry {
+	var best *TLSEntry
+	bestRank, bestALPN := -1, false
+	for _, e := range l.TLSEntries {
+		withALPN := false
+		if len(e.ALPN) > 0 {
+			for _, want := range e.ALPN {
+				for _, got := range alpn {
+					withALPN = withALPN || want == got
+				}
+			}
+			if !withALPN {
+				continue
+			}
+		}
+		for _, h := range e.Hosts {
+			if !hostMatches(h, host) {
+				continue
+			}
+			if r := hostRank(h); r > bestRank || (r == bestRank && withALPN && !bestALPN) {
+				best, bestRank, bestALPN = e, r, withALPN
+			}
+		}
+	}
+	return best
+}
+
 // parseClientHello extracts the server_name from a ClientHello handshake
 // message (hs starts at the handshake type byte). It reports whether hs holds
 // the complete message; sni is empty when the extension is absent.
 func parseClientHello(hs []byte) (sni string, complete bool, err error) {
+	sni, _, complete, err = parseClientHelloALPN(hs)
+	return
+}
+
+// parseClientHelloALPN is parseClientHello that also returns the protocols
+// from the ALPN extension (empty when the client offers none).
+func parseClientHelloALPN(hs []byte) (sni string, alpn []string, complete bool, err error) {
 	if len(hs) < 4 {
-		return "", false, nil
+		return "", nil, false, nil
 	}
 	if hs[0] != 1 {
-		return "", false, errors.New("not a ClientHello")
+		return "", nil, false, errors.New("not a ClientHello")
 	}
 	n := int(hs[1])<<16 | int(hs[2])<<8 | int(hs[3])
 	if len(hs) < 4+n {
-		return "", false, nil
+		return "", nil, false, nil
 	}
 	b := hs[4 : 4+n]
 	bad := errors.New("malformed ClientHello")
@@ -140,47 +183,60 @@ func parseClientHello(hs []byte) (sni string, complete bool, err error) {
 		return v, true
 	}
 	if !skip(2 + 32) { // version, random
-		return "", true, bad
+		return "", nil, true, bad
 	}
 	for _, lb := range []int{1, 2, 1} { // session id, cipher suites, compression
 		if _, ok := vec(lb); !ok {
-			return "", true, bad
+			return "", nil, true, bad
 		}
 	}
 	if len(b) == 0 {
-		return "", true, nil // no extensions
+		return "", nil, true, nil // no extensions
 	}
 	exts, ok := vec(2)
 	if !ok {
-		return "", true, bad
+		return "", nil, true, bad
 	}
 	for len(exts) >= 4 {
 		typ := int(exts[0])<<8 | int(exts[1])
 		l := int(exts[2])<<8 | int(exts[3])
 		if len(exts) < 4+l {
-			return "", true, bad
+			return "", nil, true, bad
 		}
 		data := exts[4 : 4+l]
 		exts = exts[4+l:]
-		if typ != 0 { // server_name
-			continue
-		}
-		if len(data) < 2 {
-			return "", true, bad
-		}
-		list := data[2:]
-		for len(list) >= 3 {
-			nt, nl := list[0], int(list[1])<<8|int(list[2])
-			if len(list) < 3+nl {
-				return "", true, bad
+		switch typ {
+		case 0: // server_name
+			if len(data) < 2 {
+				return "", nil, true, bad
 			}
-			if nt == 0 {
-				return strings.TrimSuffix(strings.ToLower(string(list[3:3+nl])), "."), true, nil
+			list := data[2:]
+			for sni == "" && len(list) >= 3 {
+				nt, nl := list[0], int(list[1])<<8|int(list[2])
+				if len(list) < 3+nl {
+					return "", nil, true, bad
+				}
+				if nt == 0 {
+					sni = strings.TrimSuffix(strings.ToLower(string(list[3:3+nl])), ".")
+				}
+				list = list[3+nl:]
 			}
-			list = list[3+nl:]
+		case 16: // application_layer_protocol_negotiation
+			if len(data) < 2 {
+				return "", nil, true, bad
+			}
+			list := data[2:]
+			for len(list) >= 1 {
+				pl := int(list[0])
+				if len(list) < 1+pl {
+					return "", nil, true, bad
+				}
+				alpn = append(alpn, string(list[1:1+pl]))
+				list = list[1+pl:]
+			}
 		}
 	}
-	return "", true, nil
+	return sni, alpn, true, nil
 }
 
 const maxHelloBytes = 64 << 10
@@ -189,35 +245,42 @@ const maxHelloBytes = 64 << 10
 // consuming anything beyond it. raw is every byte read, to be replayed to the
 // backend.
 func readClientHello(c io.Reader) (raw []byte, sni string, err error) {
+	raw, sni, _, err = readClientHelloALPN(c)
+	return
+}
+
+// readClientHelloALPN is readClientHello that also returns the ALPN protocols
+// the client offered.
+func readClientHelloALPN(c io.Reader) (raw []byte, sni string, alpn []string, err error) {
 	var hs []byte
 	for len(raw) < maxHelloBytes {
 		var hdr [5]byte
 		if _, err = io.ReadFull(c, hdr[:]); err != nil {
-			return raw, "", err
+			return raw, "", nil, err
 		}
 		if hdr[0] != 22 || hdr[1] != 3 {
-			return raw, "", errors.New("not a TLS handshake")
+			return raw, "", nil, errors.New("not a TLS handshake")
 		}
 		n := int(hdr[3])<<8 | int(hdr[4])
 		if n == 0 || n > 1<<14+256 {
-			return raw, "", errors.New("bad TLS record length")
+			return raw, "", nil, errors.New("bad TLS record length")
 		}
 		rec := make([]byte, n)
 		raw = append(raw, hdr[:]...)
 		if _, err = io.ReadFull(c, rec); err != nil {
-			return raw, "", err
+			return raw, "", nil, err
 		}
 		raw = append(raw, rec...)
 		hs = append(hs, rec...)
-		sni, done, perr := parseClientHello(hs)
+		sni, alpn, done, perr := parseClientHelloALPN(hs)
 		if perr != nil {
-			return raw, "", perr
+			return raw, "", nil, perr
 		}
 		if done {
-			return raw, sni, nil
+			return raw, sni, alpn, nil
 		}
 	}
-	return raw, "", errors.New("ClientHello too large")
+	return raw, "", nil, errors.New("ClientHello too large")
 }
 
 // rawListener serves a TLS passthrough port.
@@ -314,7 +377,7 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 		s.logConn(&line, start)
 	}()
 	c.SetReadDeadline(time.Now().Add(10 * time.Second))
-	raw, sni, err := readClientHello(c)
+	raw, sni, alpn, err := readClientHelloALPN(c)
 	line.Host = sni
 	if err != nil {
 		status, line.Error = http.StatusBadRequest, "reading ClientHello: "+err.Error()
@@ -336,7 +399,21 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 		return
 	}
 	line.Listener = l.Key
-	e := l.selectTLS(sni)
+	var client net.Conn = c
+	replay := raw
+	if l.Terminate {
+		tc, neg, err := s.terminateTLS(c, raw, port, l)
+		if err != nil {
+			status, line.Error = http.StatusBadRequest, "TLS handshake: "+err.Error()
+			return
+		}
+		defer tc.Close()
+		client, replay, alpn = tc, nil, nil
+		if neg != "" {
+			alpn = []string{neg}
+		}
+	}
+	e := l.selectTLSALPN(sni, alpn)
 	if e == nil {
 		status, line.Error = http.StatusNotFound, "no TLSRoute matched"
 		return
@@ -365,12 +442,14 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 		return
 	}
 	defer rl.untrack(up)
-	if _, err := up.Write(raw); err != nil {
-		status, line.Error = http.StatusBadGateway, "writing to backend: "+err.Error()
-		return
+	if replay != nil {
+		if _, err := up.Write(replay); err != nil {
+			status, line.Error = http.StatusBadGateway, "writing to backend: "+err.Error()
+			return
+		}
 	}
 	status = http.StatusOK
-	splice(c, up, &line)
+	splice(client, up, &line)
 }
 
 // splice copies both directions until each side finishes, half-closing so

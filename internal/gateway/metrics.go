@@ -26,6 +26,8 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	counter("setura_gateway_retries_total", "Upstream attempts retried after a failure.", rs.retries)
 	counter("setura_gateway_retries_denied_total", "Retries refused because the retry budget was spent.", rs.denied)
 	counter("setura_gateway_ejections_total", "Endpoints ejected by passive outlier detection.", rs.ejections)
+	counter("setura_gateway_retries_cross_backend_total", "Retries that moved to another weighted backendRef.", rs.crossRetries)
+	counter("setura_gateway_retry_per_try_timeouts_total", "Attempts abandoned because the per-try timeout expired.", rs.perTryTimeouts)
 	rs.mu.Unlock()
 
 	type row struct {
@@ -60,6 +62,7 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	}
 	gauge("setura_gateway_endpoint_healthy", "1 when the endpoint passes active health checks.", func(r row) int { return r.healthy })
 	gauge("setura_gateway_endpoint_ejected", "1 while the endpoint is ejected by outlier detection.", func(r row) int { return r.ejected })
+	s.writeCircuitMetrics(w)
 	s.writeShadowMetrics(w)
 }
 

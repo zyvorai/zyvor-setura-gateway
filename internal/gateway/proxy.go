@@ -125,6 +125,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 		status = 200
 	}
 	s.stats.record(st.route, st.backend, status)
+	s.hist.observe(st.route, status, time.Since(start))
 	s.observe(rec, r, st, start, status)
 }
 
@@ -218,9 +219,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	var replay []byte
 	canReplay := false
 	if rule.Retry != nil {
-		replay, canReplay = bufferBody(r, s.res.o.RetryBodyLimit)
+		replay, canReplay = bufferBody(r, s.res.opt().RetryBodyLimit)
 	}
-	rt := s.newTransport(ref.B, ep, rule.Retry, replay, canReplay)
+	rt := s.newTransport(rule, ref, ep, rule.Retry, replay, canReplay)
+	var pristine *http.Request
 
 	var body []byte
 	mirrors := rule.Mirrors
@@ -249,31 +251,20 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
 			pr.Out.Host = pr.In.Host
-			pr.SetXForwarded()
+			s.setForwarded(pr)
 			if pg.TLS {
 				pr.Out.Header.Set("X-Forwarded-Proto", "https")
 			}
 			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
-			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
-			for _, f := range filters {
-				switch {
-				case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
-					applyHeaderMod(pr.Out.Header, f.RequestHeaderModifier)
-				case f.Type == "URLRewrite" && f.URLRewrite != nil:
-					if f.URLRewrite.Hostname != "" {
-						pr.Out.Host = f.URLRewrite.Hostname
-					}
-					if p := f.URLRewrite.Path; p != nil {
-						np := rewritePath(pr.Out.URL.Path, p, e.Match)
-						pr.Out.URL.Path, pr.Out.URL.RawPath = np, ""
-					}
-				}
-			}
+			pristine = pr.Out.Clone(pr.Out.Context()) // before filters, for retries on another backendRef
+			applyRefFilters(pr.Out, rule, ref, e.Match)
 			injectTrace(pr.Out, st)
 			s.fireMirrors(pr.Out, body, mirrors, sc)
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			ref := rt.ref // a retry may have moved to another backendRef
+			st.backend = ref.B.Key
 			resp.Header.Set(BackendHeader, ref.Name)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
@@ -287,14 +278,28 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			st.errMsg = err.Error()
+			st.backend = rt.b.Key
 			code := http.StatusBadGateway
 			if errors.Is(err, context.DeadlineExceeded) {
 				code = http.StatusGatewayTimeout
 			}
-			w.Header().Set(BackendHeader, ref.Name)
+			w.Header().Set(BackendHeader, rt.ref.Name)
 			rt.annotate(w.Header())
+			var shed *circuitReject
+			if errors.As(err, &shed) {
+				w.Header().Set(CircuitHeader, shed.Reason)
+				w.Header().Set("Retry-After", "1")
+				plain(w, http.StatusServiceUnavailable, "upstream shed load: circuit breaker "+shed.Reason)
+				return
+			}
 			plain(w, code, "upstream error")
 		},
+	}
+	rt.rebuild = func(ctx context.Context, nr *CRef) *http.Request {
+		out := pristine.Clone(ctx)
+		applyRefFilters(out, rule, nr, e.Match)
+		injectTrace(out, st)
+		return out
 	}
 	proxy.ServeHTTP(sc.wrap(rec), r)
 }

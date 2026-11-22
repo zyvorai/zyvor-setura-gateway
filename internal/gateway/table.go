@@ -44,6 +44,7 @@ type RTListener struct {
 	Key        string
 	Host       string
 	Certs      []tls.Certificate
+	Terminate  bool // TLS listener that terminates (mode Terminate) instead of passing through
 	Entries    []*Entry
 	TLSEntries []*TLSEntry // TLSRoute entries (passthrough listeners)
 	Attached   int
@@ -73,6 +74,8 @@ type CRule struct {
 	Redirect *Redirect
 	Mirrors  []*CMirror
 	Retry    *CRetry
+	// GRPCRetry is the retry policy of a GRPCRoute rule.
+	GRPCRetry *CGRPCRetry
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -131,7 +134,8 @@ type Backend struct {
 	Health    *HealthCheck
 	Insecure  bool
 	rr        atomic.Uint64
-	hmu       sync.Mutex // guards Endpoint.st and ejection decisions
+	hmu       *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
+	CB        *CircuitOptions
 }
 
 // pick returns the next healthy endpoint, or any endpoint when none is.
@@ -150,8 +154,15 @@ func (b *Backend) pick() *Endpoint {
 }
 
 func newBackend(key, name string, def *BackendDef) (*Backend, error) {
-	b := &Backend{Key: key, Name: name, Health: def.HealthCheck, Insecure: def.InsecureSkipVerify}
+	b := &Backend{Key: key, Name: name, Health: def.HealthCheck, Insecure: def.InsecureSkipVerify, hmu: new(sync.Mutex)}
 	var err error
+	if def.CircuitBreaker != nil {
+		if err = def.CircuitBreaker.validate(); err != nil {
+			return nil, fmt.Errorf("backend %s: circuitBreaker: %w", key, err)
+		}
+		o := def.CircuitBreaker.options()
+		b.CB = &o
+	}
 	if b.Timeout, err = parseDur(def.Timeout); err != nil {
 		return nil, fmt.Errorf("backend %s: timeout: %w", key, err)
 	}
@@ -263,8 +274,11 @@ func BuildTable(cfg *Config) *Table {
 			case proto != "HTTP" && proto != "HTTPS" && proto != "TLS":
 				l.Accepted = fact{false, "UnsupportedProtocol", "built-in gateway serves HTTP, HTTPS and TLS (passthrough) listeners only"}
 				continue
-			case proto == "TLS" && (spec.TLS == nil || spec.TLS.Mode != "Passthrough"):
-				l.Accepted = fact{false, "UnsupportedProtocol", "TLS listeners need tls.mode Passthrough; Terminate is not supported for TLS listeners"}
+			case proto == "TLS" && spec.TLS == nil:
+				l.Accepted = fact{false, "UnsupportedProtocol", "TLS listeners need a tls block with mode Passthrough or Terminate"}
+				continue
+			case proto == "TLS" && spec.TLS.Mode != "" && spec.TLS.Mode != "Passthrough" && spec.TLS.Mode != "Terminate":
+				l.Accepted = fact{false, "UnsupportedProtocol", fmt.Sprintf("TLS listener mode %q is not supported (want Passthrough or Terminate)", spec.TLS.Mode)}
 				continue
 			case spec.Port < 1 || spec.Port > 65535:
 				l.Accepted = fact{false, "Invalid", "port out of range"}
@@ -282,6 +296,10 @@ func BuildTable(cfg *Config) *Table {
 			}
 			hostSeen[shape] = l.Key
 			portProto[spec.Port] = proto
+			if proto == "TLS" && spec.TLS.Mode != "Passthrough" {
+				l.Terminate = true
+				cfg.resolveCerts(l)
+			}
 			if proto == "HTTPS" {
 				cfg.resolveCerts(l)
 				if l.L.TLS != nil && l.L.TLS.Mode == "Passthrough" {
@@ -453,6 +471,8 @@ func validFilters(fs []Filter) error {
 	for _, f := range fs {
 		switch f.Type {
 		case "RequestHeaderModifier", "ResponseHeaderModifier", "RequestRedirect", "URLRewrite", "RequestMirror":
+		case "ExtensionRef":
+			return fmt.Errorf("ExtensionRef filters are not supported by the built-in gateway: it has no extension mechanism, and ignoring the reference would change what the route does")
 		default:
 			return fmt.Errorf("unsupported filter type %q", f.Type)
 		}

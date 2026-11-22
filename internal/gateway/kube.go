@@ -368,6 +368,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 	// ReferenceGrants and namespace labels are optional extras: a 403 or 404
 	// simply means "none".
 	if items, err := k.list(ctx, "/apis/gateway.networking.k8s.io/v1beta1/referencegrants"); err == nil {
+		cfg.GrantsCaptured = true
 		gs, _ := decode(items)
 		for _, g := range gs {
 			var spec struct {

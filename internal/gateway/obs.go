@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -17,8 +18,12 @@ type ObsOptions struct {
 	AccessLogBuffer int    // queued lines before dropping (default 4096)
 	OTLPEndpoint    string // OTLP/HTTP collector, "" disables span export
 	OTLPInterval    time.Duration
+	OTLP            OTLPOptions // retry, backoff and queue size of span export
 	RateLimit       RateLimitConfig
-	Now             func() time.Time // clock for rate limiting (tests)
+	// TrustedProxies are the peers whose X-Forwarded-For is believed when
+	// working out the client address (rate-limit key, access log client_ip).
+	TrustedProxies []netip.Prefix
+	Now            func() time.Time // clock for rate limiting (tests)
 }
 
 // obs bundles the optional components; nil members are disabled.
@@ -35,9 +40,12 @@ func newObs(o *Options) *obs {
 		x.access = newAccessLogger(o.AccessLog, o.Obs.AccessLogFormat, o.Obs.AccessLogBuffer)
 	}
 	if o.Obs.OTLPEndpoint != "" {
-		x.otlp = newOTLP(o.Obs.OTLPEndpoint, o.Obs.OTLPInterval)
+		x.otlp = newOTLPOpts(o.Obs.OTLPEndpoint, o.Obs.OTLPInterval, o.Obs.OTLP)
 	}
 	x.limiter = newLimiter(o.Obs.RateLimit, o.Obs.Now)
+	if x.limiter != nil {
+		x.limiter.trusted = trustedNets(o.Obs.TrustedProxies)
+	}
 	return x
 }
 
@@ -102,18 +110,33 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 		head("setura_gateway_accesslog_dropped_total", "counter", "Access log lines dropped because the buffer was full.")
 		fmt.Fprintf(&b, "setura_gateway_accesslog_dropped_total %d\n", a.dropped.Load())
 	}
+	if rf, ok := s.opts.AccessLog.(*rotatingFile); ok {
+		head("setura_gateway_accesslog_rotations_total", "counter", "Access log rotations performed.")
+		fmt.Fprintf(&b, "setura_gateway_accesslog_rotations_total %d\n", rf.rotations.Load())
+		head("setura_gateway_accesslog_rotation_errors_total", "counter", "Access log rotation or compression failures.")
+		fmt.Fprintf(&b, "setura_gateway_accesslog_rotation_errors_total %d\n", rf.errors.Load())
+	}
 	if x := s.obs.otlp; x != nil {
 		head("setura_gateway_otlp_spans_exported_total", "counter", "Spans accepted by the OTLP collector.")
 		fmt.Fprintf(&b, "setura_gateway_otlp_spans_exported_total %d\n", x.exported.Load())
 		head("setura_gateway_otlp_spans_dropped_total", "counter", "Spans dropped (queue full or export failed).")
 		fmt.Fprintf(&b, "setura_gateway_otlp_spans_dropped_total %d\n", x.dropped.Load())
+		head("setura_gateway_otlp_export_failures_total", "counter", "Failed OTLP export attempts (each retry that fails counts).")
+		fmt.Fprintf(&b, "setura_gateway_otlp_export_failures_total %d\n", x.failures.Load())
+		head("setura_gateway_otlp_retries_total", "counter", "OTLP export retries performed.")
+		fmt.Fprintf(&b, "setura_gateway_otlp_retries_total %d\n", x.retries.Load())
+		head("setura_gateway_otlp_queue_length", "gauge", "Spans waiting in the bounded export queue.")
+		fmt.Fprintf(&b, "setura_gateway_otlp_queue_length %d\n", len(x.ch))
 	}
 	io.WriteString(w, b.String())
 }
 
 type obsFlags struct {
 	format, rate, key, otlp string
-	burst                   int
+	burst, share            int
+	trusted                 string
+	otlpRetries, otlpQueue  int
+	otlpBackoff             time.Duration
 }
 
 func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
@@ -122,6 +145,11 @@ func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
 	fs.StringVar(&f.rate, "rate-limit", "", "local rate limit such as 100/s, 600/m (empty disables)")
 	fs.IntVar(&f.burst, "rate-burst", 0, "rate limit bucket size (default: the per-second rate)")
 	fs.StringVar(&f.key, "rate-key", "ip", "rate limit key: ip, route or header:NAME")
+	fs.IntVar(&f.share, "rate-limit-share", 0, "divide the rate by this many gateway replicas (approximates a shared limit)")
+	fs.StringVar(&f.trusted, "trusted-proxies", "", "CIDRs/IPs whose X-Forwarded-For is believed for the client address")
+	fs.IntVar(&f.otlpRetries, "otlp-retries", 0, "retries of a failed OTLP export (default 4, -1 = none)")
+	fs.IntVar(&f.otlpQueue, "otlp-queue", 0, "OTLP spans buffered before dropping (default 2048)")
+	fs.DurationVar(&f.otlpBackoff, "otlp-backoff", 0, "first OTLP retry wait, doubling (default 250ms)")
 }
 
 func (f *obsFlags) apply(o *Options) error {
@@ -131,6 +159,15 @@ func (f *obsFlags) apply(o *Options) error {
 		return fmt.Errorf("--access-log-format %q: want json or text", f.format)
 	}
 	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint = f.format, f.otlp
+	o.Obs.OTLP = OTLPOptions{Queue: f.otlpQueue, Retries: f.otlpRetries, Backoff: f.otlpBackoff}
+	tp, err := ParseTrustedProxies(f.trusted)
+	if err != nil {
+		return fmt.Errorf("--trusted-proxies: %w", err)
+	}
+	o.Obs.TrustedProxies = tp
+	if f.share < 0 {
+		return fmt.Errorf("--rate-limit-share %d: want 1 or more", f.share)
+	}
 	if f.rate == "" {
 		return nil
 	}
@@ -138,7 +175,7 @@ func (f *obsFlags) apply(o *Options) error {
 	if err != nil {
 		return fmt.Errorf("--rate-limit: %w", err)
 	}
-	o.Obs.RateLimit = RateLimitConfig{Rate: rate, Per: per, Burst: f.burst, Key: f.key}
+	o.Obs.RateLimit = RateLimitConfig{Rate: rate, Per: per, Burst: f.burst, Key: f.key, Share: f.share}
 	if err := o.Obs.RateLimit.validate(); err != nil {
 		return fmt.Errorf("--rate-key/--rate-burst: %w", err)
 	}
