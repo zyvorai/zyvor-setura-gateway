@@ -49,9 +49,12 @@ type GRPCMethodMatch struct {
 }
 
 type grpcRouteSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []GRPCRule  `json:"rules"`
+
+	Annotations map[string]string `json:"setura.zyvor.dev/annotations,omitempty"`
 }
 
 func (r *GRPCRoute) stub() *Route {
@@ -66,13 +69,22 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 		if err := json.Unmarshal(raw, &spec); err != nil {
 			return err
 		}
-		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		created, err := spec.created()
+		if err != nil {
+			return err
+		}
+		annotateGRPC(spec.Rules, spec.Annotations)
+		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	case tlsRouteKey:
 		var spec tlsRouteSpec
 		if err := json.Unmarshal(raw, &spec); err != nil {
 			return err
 		}
-		c.TLSRoutes = append(c.TLSRoutes, &TLSRoute{NS: ns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		created, err := spec.created()
+		if err != nil {
+			return err
+		}
+		c.TLSRoutes = append(c.TLSRoutes, &TLSRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	}
 	return nil
 }
@@ -105,21 +117,15 @@ func grpcMatchPath(m *GRPCMethodMatch) (*PathMatch, error) {
 	return nil, fmt.Errorf("unsupported gRPC method match type %q", m.Type)
 }
 
-// validGRPCFilters accepts the header modifiers and RequestMirror (unary calls
-// only); everything else is rejected so a silently ignored filter never
+// validGRPCFilters accepts the header modifiers, and RequestMirror at rule
+// level; everything else is rejected so a silently ignored filter never
 // changes what a route means.
-func validGRPCFilters(fs []Filter) error {
+func validGRPCFilters(fs []Filter, ruleLevel bool) error {
 	for _, f := range fs {
-		switch f.Type {
-		case "RequestHeaderModifier", "ResponseHeaderModifier":
-		case "RequestMirror":
-			if f.RequestMirror == nil {
-				return fmt.Errorf("RequestMirror filter has no requestMirror block")
-			}
-			if f.RequestMirror.ShadowDiff != nil {
-				return fmt.Errorf("RequestMirror shadow-diff is not supported on GRPCRoute")
-			}
-		case "ExtensionRef":
+		switch {
+		case f.Type == "RequestMirror" && ruleLevel:
+		case f.Type == "RequestHeaderModifier", f.Type == "ResponseHeaderModifier":
+		case f.Type == "ExtensionRef":
 			return fmt.Errorf("ExtensionRef filters are not supported by the built-in gateway: it has no extension mechanism, and ignoring the reference would change what the route does")
 		default:
 			return fmt.Errorf("unsupported GRPCRoute filter type %q", f.Type)
@@ -155,7 +161,7 @@ rules:
 	for i := range r.Rules {
 		rule := &r.Rules[i]
 		fail := func(err error) { invalid = fmt.Errorf("rule %d: %w", i+1, err) }
-		if err := validGRPCFilters(rule.Filters); err != nil {
+		if err := validGRPCFilters(rule.Filters, true); err != nil {
 			fail(err)
 			break
 		}
@@ -167,22 +173,14 @@ rules:
 				break
 			}
 		}
-		for _, f := range rule.Filters {
-			if f.Type == "RequestMirror" {
-				b, fc := t.backendFor("GRPCRoute", r.NS, f.RequestMirror.BackendRef)
-				note(fc)
-				pct := 100
-				if f.RequestMirror.Percent != nil {
-					pct = *f.RequestMirror.Percent
-				}
-				if b != nil {
-					cs, _ := compileShadow(nil)
-					cr.Mirrors = append(cr.Mirrors, &CMirror{B: b, Percent: pct, Shadow: cs})
-				}
-			}
+		mirrors, err := t.grpcMirrors(r, rule, note)
+		if err != nil {
+			fail(err)
+			break
 		}
+		cr.Mirrors = mirrors
 		for _, ref := range rule.BackendRefs {
-			if err := validGRPCFilters(ref.Filters); err != nil {
+			if err := validGRPCFilters(ref.Filters, false); err != nil {
 				fail(err)
 				break rules
 			}
@@ -213,8 +211,8 @@ rules:
 	}
 	res.Parents = t.attachParents("GRPCRoute", r.NS, r.Parents, r.Hostnames, invalid, func(l *RTListener, hosts []string) {
 		for i := range r.Rules {
-			for _, cm := range cms[i] {
-				l.Entries = append(l.Entries, &Entry{Route: stub, Rule: crs[i], Match: cm, Hosts: hosts, GRPC: true})
+			for j, cm := range cms[i] {
+				l.Entries = append(l.Entries, &Entry{Route: stub, Rule: crs[i], Match: cm, Hosts: hosts, GRPC: true, MatchIdx: j})
 			}
 		}
 	})
@@ -300,7 +298,10 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	start := time.Now()
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}
+	st.countBody(r)
+	st.grpcSvc, st.grpcMethod = splitGRPCPath(r.URL.Path)
 	defer func() { s.logRequest(rec, r, st, start) }()
+	defer s.trackOpen(rec, r, st, "grpc")()
 	fail := func(code int, msg string, stats int) {
 		st.errMsg = msg
 		grpcFail(rec, code, msg, stats)
@@ -330,13 +331,16 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
+	st.match, st.matched = e.MatchIdx, true
+	st.markRoute()
 	ref := s.pickRef(rule)
 	if ref == nil || ref.B == nil {
 		fail(grpcUnavailable, "no valid backend for this route", http.StatusInternalServerError)
 		return
 	}
 	ep := ref.B.choose(s.res.now(), nil)
-	st.backend = ref.B.Key
+	st.backend, st.weight = ref.B.Key, ref.Weight
+	st.markRoute()
 	if s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure) == nil {
 		fail(grpcUnavailable, "cleartext HTTP/2 backends need Go 1.24 or newer", http.StatusBadGateway)
 		return
@@ -357,35 +361,22 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		r = r.WithContext(ctx)
 		deadline, _ = ctx.Deadline()
 	}
-	// Retries and mirrors work on a unary call held in memory.
+	// Retries work on a unary call held in memory.
 	var replay []byte
 	canReplay := false
-	mirrors := rule.Mirrors
-	if rule.GRPCRetry != nil || len(mirrors) > 0 {
-		limit := s.res.opt().RetryBodyLimit
-		if len(mirrors) > 0 && limit < maxMirrorBody {
-			limit = maxMirrorBody
-		}
-		replay, canReplay = bufferUnary(r, limit)
-		if !canReplay {
-			mirrors = nil
-		}
+	if rule.GRPCRetry != nil {
+		replay, canReplay = bufferUnary(r, s.res.opt().RetryBodyLimit)
 	}
-	rt := &grpcTransport{s: s, b: ref.B, first: ep, retry: rule.GRPCRetry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}}
-	filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
+	rt := &grpcTransport{s: s, b: ref.B, first: ep, retry: rule.GRPCRetry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}, st: st}
+	filters := requestFilters(rule, ref)
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			pr.Out.Host = pr.In.Host
-			s.setForwarded(pr)
-			if pg.TLS {
-				pr.Out.Header.Set("X-Forwarded-Proto", "https")
-			}
-			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
-			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true)
+			s.chainForwardedFor(pr.In, pr.Out)
 			if hasHdr {
 				// Forward what is left of the deadline; drop an unparsable value.
 				pr.Out.Header.Del("Grpc-Timeout")
@@ -396,14 +387,6 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 					}
 					pr.Out.Header.Set("Grpc-Timeout", formatGRPCTimeout(left))
 				}
-			}
-			for _, f := range filters {
-				if f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil {
-					applyHeaderMod(pr.Out.Header, f.RequestHeaderModifier)
-				}
-			}
-			if len(mirrors) > 0 {
-				s.fireGRPCMirrors(pr.Out, replay, mirrors)
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
@@ -428,5 +411,17 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 			grpcFail(rec, grpcUnavailable, "upstream error", http.StatusBadGateway)
 		},
 	}
-	proxy.ServeHTTP(rec, r)
+	sc, sp := s.grpcShadow(r, rule, ref.B.Key)
+	defer sc.finish()
+	if sp != nil {
+		defer sp.release()
+		r.Body = sp
+	}
+	proxy.ServeHTTP(sc.wrap(rec), r)
+}
+
+// splitGRPCPath splits /package.Service/Method.
+func splitGRPCPath(p string) (service, method string) {
+	service, method, _ = strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	return service, method
 }

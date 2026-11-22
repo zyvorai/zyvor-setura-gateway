@@ -29,9 +29,9 @@ type routeHist struct {
 	next, count    int
 }
 
-// history keeps a per-route time series, sampled once per second into a
+// rateHistory keeps a per-route time series, sampled once per second into a
 // fixed ring, for the dashboard's history section.
-type history struct {
+type rateHistory struct {
 	mu     sync.Mutex
 	routes map[string]*routeHist
 
@@ -40,10 +40,10 @@ type history struct {
 	done      chan struct{}
 }
 
-func newHistory() *history { return &history{routes: map[string]*routeHist{}} }
+func newRateHistory() *rateHistory { return &rateHistory{routes: map[string]*routeHist{}} }
 
 // observe records one finished request.
-func (h *history) observe(route string, status int, d time.Duration) {
+func (h *rateHistory) observe(route string, status int, d time.Duration) {
 	if h == nil || route == "" {
 		return
 	}
@@ -87,7 +87,7 @@ func p95Of(b *[len(latencyBoundsMs) + 1]int64, total int64) float64 {
 }
 
 // sample closes the current second for every route.
-func (h *history) sample() {
+func (h *rateHistory) sample() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for name, r := range h.routes {
@@ -124,7 +124,7 @@ func (r *routeHist) points() []histPoint {
 
 // series renders the busiest routes as the dashboard's history section:
 // requests per second, server error rate and p95 latency per route.
-func (h *history) series() []map[string]any {
+func (h *rateHistory) series() []map[string]any {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	type rt struct {
@@ -171,7 +171,7 @@ func (h *history) series() []map[string]any {
 
 // start samples every interval until stopHistory; it runs once. A negative
 // interval means the owner calls sample itself (tests).
-func (h *history) start(interval time.Duration) {
+func (h *rateHistory) start(interval time.Duration) {
 	h.startOnce.Do(func() {
 		if interval < 0 {
 			return
@@ -203,7 +203,7 @@ func (h *history) start(interval time.Duration) {
 	})
 }
 
-func (h *history) close() {
+func (h *rateHistory) close() {
 	h.startOnce.Do(func() {}) // a start after close must not launch a goroutine
 	if h.stop != nil {
 		select {

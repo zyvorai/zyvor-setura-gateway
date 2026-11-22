@@ -131,22 +131,25 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// allow takes one token for the request. When refused it returns how long
-// until a token is available.
-func (l *limiter) allow(route string, r *http.Request) (bool, time.Duration) {
-	var k string
+// bucketKey names the token bucket a request draws from.
+func (l *limiter) bucketKey(route string, r *http.Request) string {
 	switch {
 	case l.key == "route":
-		k = route
+		return route
 	case l.header != "":
 		v := r.Header.Get(l.header)
 		if v == "" {
 			v = "ip:" + l.trusted.clientIP(r)
 		}
-		k = route + "\x00" + v
-	default:
-		k = route + "\x00" + l.trusted.clientIP(r)
+		return route + "\x00" + v
 	}
+	return route + "\x00" + l.trusted.clientIP(r)
+}
+
+// allow takes one token for the request. When refused it returns how long
+// until a token is available.
+func (l *limiter) allow(route string, r *http.Request) (bool, time.Duration) {
+	k := l.bucketKey(route, r)
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -217,7 +220,7 @@ func (s *Server) rateLimited(w http.ResponseWriter, r *http.Request, st *reqStat
 	if secs < 1 {
 		secs = 1
 	}
-	st.errMsg = "rate limited"
+	st.errMsg, st.rateLimited = "rate limited", true
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	plain(w, http.StatusTooManyRequests, "rate limit exceeded")
 	return true

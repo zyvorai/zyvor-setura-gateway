@@ -378,9 +378,13 @@ type gatewaySpec struct {
 }
 
 type routeSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []Rule      `json:"rules"`
+	// Annotations carries the shadow-diff annotations of the object this spec
+	// was taken from (see SeturaAnnotationsKey).
+	Annotations map[string]string `json:"setura.zyvor.dev/annotations,omitempty"`
 }
 
 // ParseConfig reads a Setura snapshot (setura.route-specs/v1) extended with
@@ -416,7 +420,12 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
-			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+			created, err := spec.created()
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			annotateHTTP(spec.Rules, spec.Annotations)
+			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {
 				From []struct{ Group, Kind, Namespace string } `json:"from"`

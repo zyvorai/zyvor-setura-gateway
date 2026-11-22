@@ -19,6 +19,7 @@ type ObsOptions struct {
 	OTLPEndpoint    string // OTLP/HTTP collector, "" disables span export
 	OTLPInterval    time.Duration
 	OTLP            OTLPOptions // retry, backoff and queue size of span export
+	LogQuery        bool        // keep the query string in logged paths (default: stripped)
 	RateLimit       RateLimitConfig
 	// TrustedProxies are the peers whose X-Forwarded-For is believed when
 	// working out the client address (rate-limit key, access log client_ip).
@@ -137,11 +138,13 @@ type obsFlags struct {
 	trusted                 string
 	otlpRetries, otlpQueue  int
 	otlpBackoff             time.Duration
+	logQuery                bool
 }
 
 func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
 	fs.StringVar(&f.format, "access-log-format", "json", "access log format: json or text")
 	fs.StringVar(&f.otlp, "otlp-endpoint", "", "export spans to this OTLP/HTTP collector (host:port or URL)")
+	fs.BoolVar(&f.logQuery, "log-query", false, "keep query strings in logged paths (default: stripped, they often hold tokens)")
 	fs.StringVar(&f.rate, "rate-limit", "", "local rate limit such as 100/s, 600/m (empty disables)")
 	fs.IntVar(&f.burst, "rate-burst", 0, "rate limit bucket size (default: the per-second rate)")
 	fs.StringVar(&f.key, "rate-key", "ip", "rate limit key: ip, route or header:NAME")
@@ -158,7 +161,7 @@ func (f *obsFlags) apply(o *Options) error {
 	default:
 		return fmt.Errorf("--access-log-format %q: want json or text", f.format)
 	}
-	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint = f.format, f.otlp
+	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint, o.Obs.LogQuery = f.format, f.otlp, f.logQuery
 	o.Obs.OTLP = OTLPOptions{Queue: f.otlpQueue, Retries: f.otlpRetries, Backoff: f.otlpBackoff}
 	tp, err := ParseTrustedProxies(f.trusted)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,7 +111,12 @@ type rolloutOptions struct {
 	Keep                int
 	MaxErrorRate        float64
 	MaxP95              time.Duration
+	NoSteps             bool          // apply the candidate directly even when it changes canary weights
+	LockTimeout         time.Duration // heartbeat age after which a lock owner on another host counts as dead
 }
+
+// defaultSteps is used when the candidate changes canary weights and --steps is absent.
+var defaultSteps = []int{10, 50, 100}
 
 type stepResult struct {
 	Name       string   `json:"name"`
@@ -122,6 +128,9 @@ type stepResult struct {
 	P95MS      float64  `json:"p95Ms"`
 	OK         bool     `json:"ok"`
 	Evidence   []string `json:"evidence,omitempty"`
+	// Gateway is the gateway's own view of this stage (/stats and /metrics
+	// deltas over the window); absent when the admin API did not provide it.
+	Gateway *gwStage `json:"gateway,omitempty"`
 }
 
 type rolloutResult struct {
@@ -137,6 +146,15 @@ type rolloutResult struct {
 	Failures         int          `json:"failures"`
 	RolledBack       bool         `json:"rolledBack"`
 	RestoreConfirmed bool         `json:"restoreConfirmed"`
+	// TrippedBy names the source of the verdict that failed the rollout:
+	// "probes", "gateway /stats", "gateway /metrics", "apply" or "interrupt".
+	TrippedBy string `json:"trippedBy,omitempty"`
+	// CertDir is the directory relative certificate paths were resolved against.
+	CertDir string `json:"certDir,omitempty"`
+	// StepsNote says when --steps was defaulted or ignored.
+	StepsNote string `json:"stepsNote,omitempty"`
+	// GatewayStats says whether /stats and /metrics were used ("used") or why not.
+	GatewayStats string `json:"gatewayStats,omitempty"`
 }
 
 type rollout struct {
@@ -147,6 +165,7 @@ type rollout struct {
 	lint  func([]byte) (bool, string)
 	log   io.Writer
 	hist  histStore
+	scope func(key string) bool // gateway series judged (nil: all)
 }
 
 func (r *rollout) logf(f string, a ...any) {
@@ -281,41 +300,6 @@ func (r *rollout) breach(s *observeStats, final bool) string {
 	return ""
 }
 
-// observe runs the checks repeatedly for the observation window.
-func (r *rollout) observe(ctx context.Context, name string) (*observeStats, string, error) {
-	s := &observeStats{}
-	start := r.clock.Now()
-	for {
-		rows, err := r.probe(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return s, "", ctx.Err()
-			}
-			return s, "checks could not run: " + err.Error(), nil
-		}
-		for _, rep := range rows {
-			s.probes++
-			s.lat = append(s.lat, rep.ElapsedMS)
-			if !rep.OK {
-				s.failures++
-				if len(s.evidence) < 5 {
-					s.evidence = append(s.evidence, failureEvidence(rep))
-				}
-			}
-		}
-		done := r.clock.Now().Sub(start) >= r.o.Observe
-		if why := r.breach(s, done); why != "" {
-			return s, why, nil
-		}
-		if done {
-			return s, "", nil
-		}
-		if err := r.clock.Sleep(ctx, r.o.ProbeInterval); err != nil {
-			return s, "", err
-		}
-	}
-}
-
 // restore puts the previous config back and waits for the gateway to confirm.
 func (r *rollout) restore(prevRaw []byte, res *rolloutResult, st *builtin.StatusDoc) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.o.ApplyTimeout+5*time.Second)
@@ -349,6 +333,26 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 	if err != nil {
 		return nil, 2, err
 	}
+	// Relative certificate paths resolve against the candidate's directory.
+	candAbs, _ := filepath.Abs(r.o.New)
+	liveAbs, _ := filepath.Abs(r.o.Config)
+	certDir := filepath.Dir(candAbs)
+	cand, certs, err := resolveCandidateCerts(cand, certDir, filepath.Dir(liveAbs))
+	if err != nil {
+		return nil, 2, err
+	}
+	if certs != nil {
+		res.CertDir = certs.Dir
+		r.logf("%s", certs.describe(filepath.Dir(liveAbs)))
+		if len(certs.Missing) > 0 && !r.o.Force {
+			res.Outcome, res.Reason = "refused", "candidate references certificate files that do not exist (use --force to roll out anyway)"
+			res.Evidence = certs.Missing
+			return res, 1, nil
+		}
+		for _, m := range certs.Missing {
+			r.logf("warning: %s", m)
+		}
+	}
 	if raw, err := os.ReadFile(r.o.Checks); err != nil {
 		return nil, 2, err
 	} else {
@@ -368,16 +372,27 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 		return res, 1, nil
 	}
 	var plan []planStage
-	if len(r.o.Steps) > 0 {
-		plan, err = canaryPlan(live, cand, r.o.Steps)
+	steps, defaulted := r.o.Steps, false
+	if len(steps) == 0 && !r.o.NoSteps {
+		steps, defaulted = defaultSteps, true
+	}
+	if len(steps) > 0 {
+		plan, err = canaryPlan(live, cand, steps)
 		if err != nil {
 			return nil, 2, err
 		}
-		if len(plan) == 0 {
-			r.logf("no canary weight change between live and candidate; applying the candidate directly")
+		switch {
+		case len(plan) == 0 && !defaulted:
+			res.StepsNote = "--steps ignored: no canary weight change between live and candidate; the candidate is applied directly"
+		case len(plan) > 0 && defaulted:
+			res.StepsNote = "the candidate changes canary weights and --steps was not given: using the default 10,50,100 (--no-steps applies it directly)"
+		}
+		if res.StepsNote != "" {
+			r.logf("%s", res.StepsNote)
 		}
 	}
 	plan = append(plan, planStage{name: "candidate", data: cand})
+	r.scope = gatewayScope(live, cand)
 
 	st0, err := r.admin.Status(ctx)
 	if err != nil {
@@ -390,7 +405,7 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 		}
 	}
 
-	unlock, err := r.hist.lock()
+	unlock, err := r.hist.lockWith(r.logf)
 	if err != nil {
 		return nil, 2, err
 	}
@@ -419,6 +434,7 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 		got, err := r.install(ctx, stg.data, cur)
 		if ctx.Err() != nil {
 			r.restore(live, res, cur)
+			res.TrippedBy = "interrupt"
 			return fail("interrupted", "interrupted while applying "+stg.name+"; the previous config was restored", nil)
 		}
 		if got != nil {
@@ -429,20 +445,25 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 		if err != nil {
 			sr.Evidence = []string{err.Error()}
 			res.Steps = append(res.Steps, sr)
+			res.TrippedBy = "apply"
 			return r.failStep(res, live, cur, fmt.Sprintf("%s: %v", stg.name, err), nil)
 		}
-		stats, why, oerr := r.observe(ctx, stg.name)
+		gw := r.openWindow(ctx, res)
+		stats, v, oerr := r.observe(ctx, gw)
+		sr.Gateway = gw.summary()
 		sr.Probes, sr.Failures, sr.ErrorRate, sr.P95MS, sr.Evidence = stats.probes, stats.failures, math.Round(stats.rate()*10000)/10000, stats.p95(), stats.evidence
 		res.Probes += stats.probes
 		res.Failures += stats.failures
 		if oerr != nil {
 			res.Steps = append(res.Steps, sr)
 			r.restore(live, res, cur)
+			res.TrippedBy = "interrupt"
 			return fail("interrupted", "interrupted during "+stg.name+" observation; the previous config was restored", stats.evidence)
 		}
-		if why != "" {
+		if v.why != "" {
 			res.Steps = append(res.Steps, sr)
-			return r.failStep(res, live, cur, fmt.Sprintf("%s: %s", stg.name, why), stats.evidence)
+			res.TrippedBy = v.source
+			return r.failStep(res, live, cur, fmt.Sprintf("%s: %s", stg.name, v.why), stats.evidence)
 		}
 		sr.OK = true
 		res.Steps = append(res.Steps, sr)
@@ -644,17 +665,19 @@ func runRolloutCommand(sub string, args []string, stdout, stderr io.Writer) int 
 	admin := fs.String("admin", builtin.DefaultAdmin, "gateway admin address")
 	fs.IntVar(&o.Keep, "keep", 10, "backups to keep in .setura-history")
 	fs.DurationVar(&o.ApplyTimeout, "apply-timeout", 15*time.Second, "how long to wait for the gateway to apply a config")
+	lockTimeout := fs.Duration("lock-timeout", time.Minute, "heartbeat age after which a lock held from another host counts as stale")
 	var newCfg, checks, steps, to string
 	switch sub {
 	case "rollout":
 		fs.StringVar(&newCfg, "new", "", "candidate snapshot file (required)")
 		fs.StringVar(&checks, "checks", "", "checks file run against the gateway (required)")
 		fs.DurationVar(&o.Observe, "observe", 30*time.Second, "observation window per step")
-		fs.StringVar(&steps, "steps", "", "progressive canary weights for the new backend, for example 10,50,100")
+		fs.StringVar(&steps, "steps", "", "progressive canary weights for the new backend, for example 10,50,100 (default 10,50,100 when the candidate changes canary weights)")
+		fs.BoolVar(&o.NoSteps, "no-steps", false, "apply the candidate directly even when it changes canary weights")
 		fs.BoolVar(&o.RollbackOnFail, "rollback-on-fail", true, "restore the previous config on failure")
 		fs.BoolVar(&o.Force, "force", false, "roll out a candidate that has lint errors")
-		fs.Float64Var(&o.MaxErrorRate, "max-error-rate", 0, "tolerated fraction of failed probes (0 to 1; default 0 fails on any failure)")
-		fs.DurationVar(&o.MaxP95, "max-p95", 0, "fail when probe p95 latency exceeds this (0 disables)")
+		fs.Float64Var(&o.MaxErrorRate, "max-error-rate", 0, "tolerated error fraction for probes and the gateway's own /stats (0 to 1; default 0 fails on any failure)")
+		fs.DurationVar(&o.MaxP95, "max-p95", 0, "fail when p95 latency exceeds this, for probes and the gateway's own /metrics (0 disables)")
 		fs.DurationVar(&o.ProbeInterval, "probe-interval", time.Second, "pause between probe rounds")
 	case "rollback":
 		fs.StringVar(&to, "to", "", "backup ID to restore (default: the newest)")
@@ -677,6 +700,10 @@ func runRolloutCommand(sub string, args []string, stdout, stderr io.Writer) int 
 	o.Config = *config
 	o.ApplyPoll = 100 * time.Millisecond
 	hist := newHistStore(o.Config)
+	if *lockTimeout <= 0 {
+		return usage(errors.New("--lock-timeout must be positive"))
+	}
+	hist.hbTimeout = *lockTimeout
 
 	switch sub {
 	case "history":
@@ -689,6 +716,9 @@ func runRolloutCommand(sub string, args []string, stdout, stderr io.Writer) int 
 	}
 	if o.Steps, err = parseSteps(steps); err != nil {
 		return usage(err)
+	}
+	if o.NoSteps && len(o.Steps) > 0 {
+		return usage(errors.New("--steps and --no-steps contradict each other"))
 	}
 	if o.MaxErrorRate < 0 || o.MaxErrorRate > 1 || o.Observe < 0 || o.Keep < 1 {
 		return usage(errors.New("--max-error-rate must be 0-1, --observe must not be negative, --keep must be at least 1"))
@@ -724,6 +754,12 @@ func writeRollout(w io.Writer, res *rolloutResult, pretty bool) {
 			mark = "FAIL"
 		}
 		fmt.Fprintf(w, "  %s %-14s generation %d  probes %d  failed %d  error-rate %.1f%%  p95 %.1f ms\n", mark, s.Name, s.Generation, s.Probes, s.Failures, s.ErrorRate*100, s.P95MS)
+		if g := s.Gateway; g != nil {
+			fmt.Fprintf(w, "       gateway /stats+/metrics: %d requests, %d 5xx (%.1f%%, before %.1f%% over %d), p95 %.1f ms\n", g.Requests, g.Errors, g.ErrorRate*100, g.BeforeErrorRate*100, g.BeforeRequests, g.P95Ms)
+		}
+	}
+	if res.TrippedBy != "" && !res.OK {
+		fmt.Fprintf(w, "  tripped by: %s\n", res.TrippedBy)
 	}
 	for _, e := range res.Evidence {
 		fmt.Fprintf(w, "  evidence: %s\n", e)
@@ -820,7 +856,7 @@ func (r *rollout) rollback(ctx context.Context, id string) (*rolloutResult, int,
 	if err != nil {
 		return nil, 2, err
 	}
-	unlock, err := r.hist.lock()
+	unlock, err := r.hist.lockWith(r.logf)
 	if err != nil {
 		return nil, 2, err
 	}

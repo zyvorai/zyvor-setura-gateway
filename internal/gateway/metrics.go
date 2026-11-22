@@ -64,6 +64,7 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	gauge("setura_gateway_endpoint_ejected", "1 while the endpoint is ejected by outlier detection.", func(r row) int { return r.ejected })
 	s.writeCircuitMetrics(w)
 	s.writeShadowMetrics(w)
+	s.latency.write(w)
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {

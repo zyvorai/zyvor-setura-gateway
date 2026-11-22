@@ -226,6 +226,7 @@ type grpcTransport struct {
 	canReplay bool
 	tried     map[*Endpoint]bool
 	retries   int
+	st        *reqState // receives upstream details; may be nil
 }
 
 func trailersOnly(resp *http.Response) (code int, ok bool) {
@@ -251,13 +252,22 @@ func (t *grpcTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			ep = t.b.choose(rs.now(), t.tried)
 		}
 		t.tried[ep] = true
-		out := req.Clone(ctx)
+		rctx, health := ctx, ""
+		var trace *attemptTrace
+		if t.st != nil {
+			rctx, trace = t.st.up.begin(ctx)
+			health = t.b.state(ep, rs.now())
+		}
+		out := req.Clone(rctx)
 		out.URL.Scheme, out.URL.Host = ep.URL.Scheme, ep.URL.Host
-		if t.retry != nil && t.canReplay {
+		if attempt > 0 && t.retry != nil && t.canReplay { // the first try reads the live body (a mirror spool may wrap it)
 			out.Body = io.NopCloser(bytes.NewReader(t.replay))
 		}
-		tr := t.s.grpcTr.get(ep.URL.Scheme, t.b.Insecure)
-		resp, err := tr.RoundTrip(out)
+		resp, err := t.s.grpcTr.get(ep.URL.Scheme, t.b.Insecure).RoundTrip(out)
+		if t.st != nil {
+			t.st.up.end(trace, ep, health, resp, err)
+			t.st.noteUpstream()
+		}
 		cancelled := err != nil && ctx.Err() != nil
 		code, tonly := -1, false
 		if err == nil {
@@ -303,39 +313,6 @@ func (t *grpcTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		t.retries++
 		rs.bump(rs.retries, t.b.Key)
-	}
-}
-
-// fireGRPCMirrors sends fire-and-forget copies of a buffered unary call.
-func (s *Server) fireGRPCMirrors(out *http.Request, body []byte, mirrors []*CMirror) {
-	for _, m := range mirrors {
-		if m.Percent <= 0 || (m.Percent < 100 && s.intn(100) >= m.Percent) {
-			continue
-		}
-		ep := m.B.pick()
-		if ep == nil {
-			continue
-		}
-		u := *out.URL
-		u.Scheme, u.Host = ep.URL.Scheme, ep.URL.Host
-		req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-		if err != nil {
-			continue
-		}
-		req.Header = out.Header.Clone()
-		req.Header.Set("X-Setura-Mirror", "1")
-		req.Host = out.Host
-		tr := s.grpcTr.get(ep.URL.Scheme, m.B.Insecure)
-		s.mirrorWG.Add(1)
-		go func() {
-			defer s.mirrorWG.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if resp, err := (&http.Client{Transport: tr}).Do(req.WithContext(ctx)); err == nil {
-				io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-				resp.Body.Close()
-			}
-		}()
 	}
 }
 

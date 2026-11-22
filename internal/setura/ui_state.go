@@ -23,6 +23,10 @@ type UIInput struct {
 	Health  any // {"targets":[{url,ok,stage,backend,ms,since}]}
 	History any // {"points":[...]} filled by a later release
 	Reload  any // {"generation":n,"ok":bool,"time":"...","error":"..."}
+	// Connections is {"enabled":true,"capacity":N} when the gateway keeps a
+	// connections table; the rows are served separately and never enter the
+	// state document.
+	Connections any
 }
 
 // ruleHelp is the plain-language explanation shown for each lint rule.
@@ -41,6 +45,7 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET012": {"Grant permits nothing", "This ReferenceGrant has an empty from or to list.", "Fill in both lists, or delete the grant."},
 	"SET013": {"Listener refuses this route", "The listener's allowedRoutes does not admit this route's namespace or kind.", "Widen allowedRoutes on the listener, or move the route to an allowed namespace."},
 	"SET014": {"Backend weights are invalid", "A weight is negative or too large, or the rule mixes Service and non-Service backends.", "Use weights from 0 up, and keep one kind of backend per rule."},
+	"SET015": {"Shadow-diff block is invalid", "The shadow-diff block or annotation cannot be parsed, or it names a rule that has no RequestMirror filter.", "Fix the JSON (see docs/shadow.md), or add a RequestMirror filter to that rule."},
 }
 
 func routeKindLabel(resource string) string {
@@ -350,6 +355,9 @@ func BuildUIState(snapshot obj, in UIInput) (obj, error) {
 	}
 	if in.Reload != nil {
 		state["reload"] = in.Reload
+	}
+	if in.Connections != nil {
+		state["connections"] = in.Connections
 	}
 	return scrub(state, in.Redact), nil
 }

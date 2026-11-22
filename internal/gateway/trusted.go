@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/netip"
 	"strings"
 )
@@ -109,40 +108,22 @@ func (t trustedNets) clientIP(r *http.Request) string {
 	return cand.String()
 }
 
-// setForwarded fills the X-Forwarded-* headers of an outbound request. The
-// incoming X-Forwarded-For is dropped (it is client-controlled) unless the
-// TCP peer is a trusted proxy, in which case the peer is appended to it.
-func (s *Server) setForwarded(pr *httputil.ProxyRequest) {
-	pr.SetXForwarded()
-	if !s.trusted.peerTrusted(pr.In) {
+// chainForwardedFor keeps a trusted proxy's X-Forwarded-For chain: shapeUpstream
+// has set the header to the TCP peer alone (a client-supplied header is never
+// believed), and when that peer is a trusted proxy the received chain is put
+// back in front of it, so the backend sees "client, proxy" with the peer
+// appended instead of replaced.
+func (s *Server) chainForwardedFor(in *http.Request, out *http.Request) {
+	if !s.trusted.peerTrusted(in) {
 		return
 	}
 	var prior []string
-	for _, v := range pr.In.Header.Values("X-Forwarded-For") {
+	for _, v := range in.Header.Values("X-Forwarded-For") {
 		prior = append(prior, strings.TrimSpace(v))
 	}
 	if len(prior) == 0 {
 		return
 	}
-	peer, _ := peerAddr(pr.In)
-	pr.Out.Header.Set("X-Forwarded-For", strings.Join(prior, ", ")+", "+peer.String())
-}
-
-// applyRefFilters applies a rule's and a backendRef's request filters.
-func applyRefFilters(out *http.Request, rule *CRule, ref *CRef, m *CMatch) {
-	filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
-	for _, f := range filters {
-		switch {
-		case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
-			applyHeaderMod(out.Header, f.RequestHeaderModifier)
-		case f.Type == "URLRewrite" && f.URLRewrite != nil:
-			if f.URLRewrite.Hostname != "" {
-				out.Host = f.URLRewrite.Hostname
-			}
-			if p := f.URLRewrite.Path; p != nil {
-				np := rewritePath(out.URL.Path, p, m)
-				out.URL.Path, out.URL.RawPath = np, ""
-			}
-		}
-	}
+	peer, _ := peerAddr(in)
+	out.Header.Set("X-Forwarded-For", strings.Join(prior, ", ")+", "+peer.String())
 }

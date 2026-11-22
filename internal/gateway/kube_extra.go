@@ -36,7 +36,7 @@ func (k *KubeSource) listOptional(ctx context.Context, group string, versions []
 }
 
 // loadExtraRoutes reads GRPCRoutes and TLSRoutes that attach to our Gateways.
-func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[string]bool) (map[string]extraRaw, error) {
+func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[string]bool, stale map[string]extraRaw) (map[string]extraRaw, error) {
 	extra := map[string]extraRaw{}
 	ours := func(ns string, refs []ParentRef) []ParentRef {
 		var out []ParentRef
@@ -65,11 +65,13 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		}
 		parents := ours(o.Metadata.Namespace, spec.ParentRefs)
 		if len(parents) == 0 {
+			noteStale(stale, base, "grpcroutes", "grpcroute", o, items[i])
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)
 		r := &GRPCRoute{NS: o.Metadata.Namespace, Name: o.Metadata.Name, Generation: o.Metadata.Generation, Created: created,
 			Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules}
+		k.shadowAnnotations("GRPCRoute", o.Metadata, len(spec.Rules), func() { annotateGRPC(r.Rules, o.Metadata.Annotations) })
 		cfg.GRPCRoutes = append(cfg.GRPCRoutes, r)
 		extra[r.stub().StatusKey()] = extraRaw{base: base, plural: "grpcroutes", raw: items[i]}
 	}
@@ -87,6 +89,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		}
 		parents := ours(o.Metadata.Namespace, spec.ParentRefs)
 		if len(parents) == 0 {
+			noteStale(stale, base, "tlsroutes", "tlsroute", o, items[i])
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)

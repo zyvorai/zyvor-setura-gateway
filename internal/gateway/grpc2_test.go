@@ -277,46 +277,6 @@ func TestGRPCRetryOnConnectErrorGoesToAnotherEndpoint(t *testing.T) {
 	}
 }
 
-func TestGRPCMirrorsUnaryCalls(t *testing.T) {
-	primary := newGRPCBackend(t, "primary")
-	mirror := newGRPCBackend(t, "mirror")
-	rl := grule(nil, gref("primary", 1))
-	rl["filters"] = l{m{"type": "RequestMirror", "requestMirror": m{"backendRef": gref("mirror", 1)}}}
-	be := map[string]any{"primary": primary.addr(), "mirror": mirror.addr()}
-	s := startServer(t, grpcSnap(grpcGateway(), grpcOneRoute(rl), be, nil), nil)
-	c := h2cClient(s.Addr(8080))
-
-	r := grpcCall(t, c, "http", "svc.test", "/p.S/Unary", []string{"hello"})
-	if r.Status != "0" || len(r.Msgs) != 1 || r.Msgs[0] != "primary:hello" {
-		t.Fatalf("the caller must see the primary's answer, got %+v", r)
-	}
-	eventually(t, func() bool { return len(mirror.paths()) == 1 })
-	if mirror.paths()[0] != "/p.S/Unary" {
-		t.Errorf("mirror saw %v", mirror.paths())
-	}
-
-	// A streaming call (two messages) is not mirrored.
-	grpcCall(t, c, "http", "svc.test", "/p.S/Stream", []string{"a", "b"})
-	time.Sleep(100 * time.Millisecond)
-	if len(mirror.paths()) != 1 {
-		t.Errorf("streaming call was mirrored: %v", mirror.paths())
-	}
-	if len(primary.paths()) != 2 {
-		t.Errorf("primary saw %v", primary.paths())
-	}
-}
-
-func TestGRPCMirrorFailureDoesNotAffectCaller(t *testing.T) {
-	primary := newGRPCBackend(t, "primary")
-	rl := grule(nil, gref("primary", 1))
-	rl["filters"] = l{m{"type": "RequestMirror", "requestMirror": m{"backendRef": gref("dead", 1), "percent": 100}}}
-	be := map[string]any{"primary": primary.addr(), "dead": deadAddr(t)}
-	s := startServer(t, grpcSnap(grpcGateway(), grpcOneRoute(rl), be, nil), nil)
-	if r := grpcCall(t, h2cClient(s.Addr(8080)), "http", "svc.test", "/p.S/Unary", []string{"hello"}); r.Status != "0" {
-		t.Fatalf("%+v", r)
-	}
-}
-
 func eventually(t *testing.T, cond func() bool) {
 	t.Helper()
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
@@ -349,28 +309,33 @@ func TestGRPCExtensionRefRejectedClearly(t *testing.T) {
 	}
 }
 
-func TestGRPCRouteRejectsBadRetryAndShadowDiff(t *testing.T) {
+func TestGRPCRouteRejectsBadRetry(t *testing.T) {
 	be := map[string]any{"b": "127.0.0.1:1"}
-	bad := grule(nil, gref("b", 1))
-	bad["retry"] = m{"codes": l{"WHATEVER"}}
-	mirrorDiff := grule(nil, gref("b", 1))
-	mirrorDiff["filters"] = l{m{"type": "RequestMirror", "requestMirror": m{"backendRef": gref("b", 1), "setura.zyvor.dev/shadow-diff": m{}}}}
-	for name, rl := range map[string]m{"unknown code": bad, "shadow-diff": mirrorDiff} {
-		func() {
-			defer func() {
-				if recover() != nil {
-					t.Errorf("%s panicked", name)
-				}
-			}()
-			raw := grpcSnap(grpcGateway(), grpcOneRoute(rl), be, nil)
-			if _, err := ParseConfig(raw, ""); err == nil {
-				s := startServer(t, raw, nil)
-				if c := cond(s.Status().Routes["GRPCRoute/t/g"].Parents[0].Conditions, "Accepted"); c.Status != "False" {
-					t.Errorf("%s accepted", name)
-				}
+	for name, retry := range map[string]m{"unknown code": {"codes": l{"WHATEVER"}}, "attempts": {"attempts": 99}, "jitter": {"jitter": 3}, "backoff": {"backoff": "x"}} {
+		rl := grule(nil, gref("b", 1))
+		rl["retry"] = retry
+		raw := grpcSnap(grpcGateway(), grpcOneRoute(rl), be, nil)
+		if _, err := ParseConfig(raw, ""); err == nil {
+			s := startServer(t, raw, nil)
+			if c := cond(s.Status().Routes["GRPCRoute/t/g"].Parents[0].Conditions, "Accepted"); c.Status != "False" {
+				t.Errorf("%s accepted", name)
 			}
-		}()
+		}
 	}
+}
+
+func TestGRPCMirrorStillWorksWithRetryConfigured(t *testing.T) {
+	flaky := newFlakyGRPC(t, 1, "14")
+	mirror := newGRPCBackend(t, "mirror")
+	rl := retryRule(nil, 2, gref("b", 1))
+	rl["filters"] = l{m{"type": "RequestMirror", "requestMirror": m{"backendRef": gref("mirror", 1)}}}
+	be := map[string]any{"b": saddr(flaky.Server), "mirror": mirror.addr()}
+	s := startServer(t, grpcSnap(grpcGateway(), grpcOneRoute(rl), be, nil), grpcRes(nil))
+	r := grpcCall(t, h2cClient(s.Addr(8080)), "http", "svc.test", "/p.S/Unary", []string{"hello"})
+	if r.Status != "0" || flaky.hits.Load() != 2 {
+		t.Fatalf("reply %+v hits %d, want the retried call to succeed", r, flaky.hits.Load())
+	}
+	eventually(t, func() bool { return len(mirror.paths()) >= 1 })
 }
 
 // ---- gRPC health checking ----

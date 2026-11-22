@@ -207,6 +207,7 @@ type resTransport struct {
 	tried     map[*Endpoint]bool
 	triedRefs map[*CRef]bool
 	retries   int
+	st        *reqState // receives upstream details; may be nil
 }
 
 func (s *Server) newTransport(rule *CRule, ref *CRef, first *Endpoint, retry *CRetry, replay []byte, canReplay bool) *resTransport {
@@ -295,11 +296,17 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			ep = t.b.choose(rs.now(), t.tried)
 		}
 		t.tried[ep] = true
+		rctx, health := ctx, ""
+		var tr *attemptTrace
+		if t.st != nil {
+			rctx, tr = t.st.up.begin(ctx)
+			health = t.b.state(ep, rs.now())
+		}
 		var out *http.Request
 		if switched {
-			out = t.rebuild(ctx, t.ref)
+			out = t.rebuild(rctx, t.ref)
 		} else {
-			out = req.Clone(ctx)
+			out = req.Clone(rctx)
 		}
 		out.URL.Scheme, out.URL.Host = ep.URL.Scheme, ep.URL.Host
 		if t.retry != nil && t.canReplay && !bodyless {
@@ -320,10 +327,10 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if cerr != nil {
 			err = cerr
 		} else {
-			actx := ctx
+			actx := rctx
 			var timer *time.Timer
 			if pt := t.retry; pt != nil && pt.PerTry > 0 {
-				actx, cancelTry = context.WithCancel(ctx)
+				actx, cancelTry = context.WithCancel(rctx)
 				timer = time.AfterFunc(pt.PerTry, cancelTry)
 				out = out.WithContext(actx)
 			}
@@ -332,6 +339,10 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				perTryHit = true
 				err = fmt.Errorf("per-try timeout %s exceeded: %w", t.retry.PerTry, context.DeadlineExceeded)
 				rs.bump(rs.perTryTimeouts, t.b.Key)
+			}
+			if t.st != nil {
+				t.st.up.end(tr, ep, health, resp, err)
+				t.st.noteUpstream()
 			}
 		}
 		_, shed := cerr.(*circuitReject)

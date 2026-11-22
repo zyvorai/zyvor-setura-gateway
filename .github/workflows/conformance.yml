@@ -27,9 +27,9 @@ jobs:
           done
           kubectl wait --for=condition=Ready node --all --timeout=180s
       - name: Run the conformance suite
-        # --patch-addresses is a harness shim (the controller does not publish
-        # Gateway status.addresses yet); the report README says how to read that.
-        run: scripts/run-conformance.sh --context default --k3s-container setura-k3s --patch-addresses
+        # --loadbalancer makes the install Service a LoadBalancer (K3s ServiceLB assigns the
+        # node IP); the controller publishes it as Gateway status.addresses itself.
+        run: scripts/run-conformance.sh --context default --k3s-container setura-k3s --loadbalancer
       - name: Cluster state on failure
         if: failure()
         run: |

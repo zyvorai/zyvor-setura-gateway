@@ -31,10 +31,10 @@ type shadowState struct {
 }
 
 type shadowRoute struct {
-	Sampled, Compared, Matched, Mismatched, Errors, Dropped int64
-	Cat                                                     map[string]int64
-	deltas                                                  []float64
-	dn                                                      int
+	Sampled, Compared, Matched, Mismatched, Errors, Dropped, Skipped int64
+	Cat                                                              map[string]int64
+	deltas                                                           []float64
+	dn                                                               int
 }
 
 func (r *shadowRoute) cat(c string) {
@@ -107,6 +107,15 @@ func (s *shadowState) release() {
 	s.mu.Unlock()
 }
 
+// skip counts a request whose body was over the maxBody ceiling and therefore
+// not compared.
+func (s *shadowState) skip(route string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.route(route).Skipped++
+	s.total.Skipped++
+}
+
 func (s *shadowState) fail(route, msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,6 +170,7 @@ type ShadowRouteSummary struct {
 	Mismatched int64            `json:"mismatched"`
 	Errors     int64            `json:"errors"`
 	Dropped    int64            `json:"dropped"`
+	Skipped    int64            `json:"skipped"`
 	ByCategory map[string]int64 `json:"byCategory"`
 	MatchRate  *float64         `json:"matchRate,omitempty"`
 	P50DeltaMs float64          `json:"p50DeltaMs"`
@@ -205,7 +215,7 @@ func summarize(r *shadowRoute, deltas []float64) ShadowRouteSummary {
 		cat[k] = v
 	}
 	return ShadowRouteSummary{Sampled: r.Sampled, Compared: r.Compared, Matched: r.Matched, Mismatched: r.Mismatched, Errors: r.Errors,
-		Dropped: r.Dropped, ByCategory: cat, MatchRate: rate(r), P50DeltaMs: percentile(deltas, .5), P95DeltaMs: percentile(deltas, .95)}
+		Dropped: r.Dropped, Skipped: r.Skipped, ByCategory: cat, MatchRate: rate(r), P50DeltaMs: percentile(deltas, .5), P95DeltaMs: percentile(deltas, .95)}
 }
 
 // Summary returns a copy of the current results, newest mismatches first.
@@ -231,7 +241,7 @@ func (s *shadowState) Summary() ShadowSummary {
 func (s *shadowState) active() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.total.Sampled+s.total.Dropped+s.total.Errors > 0
+	return s.total.Sampled+s.total.Dropped+s.total.Errors+s.total.Skipped > 0
 }
 
 // writeShadowMetrics emits setura_gateway_shadow_total.
@@ -252,11 +262,16 @@ func (s *Server) writeShadowMetrics(w io.Writer) {
 		}
 		row("matched", r.Matched)
 		row("mismatched", r.Mismatched)
-		for _, c := range []string{"status", "header", "body", "latency"} {
+		cats := map[string]bool{"status": true, "header": true, "body": true, "latency": true}
+		for c := range r.Cat {
+			cats[c] = true
+		}
+		for _, c := range sortedKeys(cats) {
 			row(c, r.Cat[c])
 		}
 		row("error", r.Errors)
 		row("dropped", r.Dropped)
+		row("skipped", r.Skipped)
 	}
 }
 
@@ -268,7 +283,8 @@ type shadowReq struct {
 	path    string
 	backend string
 	on      map[*CMirror]*CShadow
-	max     int
+	max     int64
+	grpc    bool
 	start   time.Time
 	done    chan struct{}
 	cap     *shadowWriter
@@ -300,7 +316,7 @@ func (q *shadowReq) wrap(w http.ResponseWriter) http.ResponseWriter {
 		return w
 	}
 	q.start = time.Now()
-	q.cap = &shadowWriter{ResponseWriter: w, max: q.max}
+	q.cap = &shadowWriter{ResponseWriter: w, bc: bodyCap{max: q.max}}
 	return q.cap
 }
 
@@ -308,6 +324,9 @@ func (q *shadowReq) wrap(w http.ResponseWriter) http.ResponseWriter {
 func (q *shadowReq) finish() {
 	if q != nil && q.cap != nil {
 		q.cap.dur = time.Since(q.start)
+		if q.grpc {
+			q.cap.trailer = finalTrailers(q.cap.ResponseWriter.Header())
+		}
 		close(q.done)
 	}
 }
@@ -323,6 +342,10 @@ func (q *shadowReq) submit(m *CMirror, req *http.Request, client *http.Client) b
 	if !ok {
 		return false
 	}
+	return q.launch(m, cfg, req, client)
+}
+
+func (q *shadowReq) launch(m *CMirror, cfg *CShadow, req *http.Request, client *http.Client) bool {
 	s := q.s
 	if !s.shadow.acquire(q.route) {
 		return false
@@ -339,10 +362,11 @@ func (q *shadowReq) submit(m *CMirror, req *http.Request, client *http.Client) b
 			s.shadow.fail(q.route, "shadow request failed")
 			return
 		}
-		mx := cfg.max()
-		body, rerr := io.ReadAll(io.LimitReader(resp.Body, int64(mx)+1))
+		bc := &bodyCap{max: cfg.max()}
+		_, rerr := io.Copy(bc, io.LimitReader(resp.Body, bc.max+1))
+		sh := &respCapture{status: resp.StatusCode, hdr: resp.Header, trailer: resp.Trailer.Clone(), dur: time.Since(t0), backend: m.B.Key}
 		resp.Body.Close()
-		sh := &respCapture{status: resp.StatusCode, hdr: resp.Header, body: body, truncated: len(body) > mx, dur: time.Since(t0), backend: m.B.Key}
+		bc.fill(sh)
 		if rerr != nil {
 			s.shadow.fail(q.route, "shadow response read failed")
 			return
@@ -353,27 +377,36 @@ func (q *shadowReq) submit(m *CMirror, req *http.Request, client *http.Client) b
 			s.shadow.fail(q.route, "primary response did not complete")
 			return
 		}
-		p := &respCapture{status: q.cap.status, hdr: q.cap.hdr, body: q.cap.buf, truncated: q.cap.truncated, dur: q.cap.dur, backend: q.backend}
+		p := &respCapture{status: q.cap.status, hdr: q.cap.hdr, trailer: q.cap.trailer, dur: q.cap.dur, backend: q.backend}
+		q.cap.bc.fill(p)
 		if p.status == 0 {
 			p.status = http.StatusOK
 		}
 		if p.hdr == nil {
 			p.hdr = http.Header{}
 		}
-		s.shadow.record(q.route, q.method, q.path, p, sh, compareCaptures(p, sh, cfg), time.Now())
+		var mm []shadowMismatch
+		if q.grpc {
+			mm = compareGRPC(p, sh, cfg)
+		} else {
+			mm = compareCaptures(p, sh, cfg)
+		}
+		if bodiesSkipped(p, sh) {
+			s.shadow.skip(q.route)
+		}
+		s.shadow.record(q.route, q.method, q.path, p, sh, mm, time.Now())
 	}()
 	return true
 }
 
-// shadowWriter copies the response head and the first max body bytes.
+// shadowWriter copies the response head and streams the body through bodyCap.
 type shadowWriter struct {
 	http.ResponseWriter
-	max       int
-	status    int
-	hdr       http.Header
-	buf       []byte
-	truncated bool
-	dur       time.Duration
+	bc      bodyCap
+	status  int
+	hdr     http.Header
+	trailer http.Header
+	dur     time.Duration
 }
 
 func (w *shadowWriter) WriteHeader(code int) {
@@ -387,12 +420,7 @@ func (w *shadowWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status, w.hdr = http.StatusOK, w.ResponseWriter.Header().Clone()
 	}
-	if room := w.max + 1 - len(w.buf); room > 0 {
-		w.buf = append(w.buf, p[:min(room, len(p))]...)
-	}
-	if len(w.buf) > w.max {
-		w.buf, w.truncated = w.buf[:w.max], true
-	}
+	w.bc.Write(p)
 	return w.ResponseWriter.Write(p)
 }
 

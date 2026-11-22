@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type TLSRule struct {
 }
 
 type tlsRouteSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []TLSRule   `json:"rules"`
@@ -368,7 +370,15 @@ func (s *Server) startPassthrough(ln net.Listener, port int) *rawListener {
 func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 	defer c.Close()
 	start := time.Now()
-	line := logLine{Method: "TLS", Remote: c.RemoteAddr().String()}
+	ip, cport := splitRemote(c.RemoteAddr().String())
+	lport := 0
+	if a, ok := c.LocalAddr().(*net.TCPAddr); ok {
+		lport = a.Port
+	}
+	line := logLine{Method: "TLS", Remote: c.RemoteAddr().String(), ClientIP: ip, ClientPort: cport, ListenerPort: lport, Protocol: protoTLSPT}
+	open, unregister := s.conns.register(OpenView{Kind: "passthrough", ClientIP: ip, ClientPort: cport, ListenerPort: lport, Protocol: protoTLSPT})
+	defer unregister()
+	var local openConn // counters when the open list is disabled
 	var status int
 	var routeKey, backendKey string
 	defer func() {
@@ -378,7 +388,8 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 	}()
 	c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	raw, sni, alpn, err := readClientHelloALPN(c)
-	line.Host = sni
+	line.Host, line.TLSSNI = sni, sni
+	open.set(func(v *OpenView) { v.SNI, v.Host = sni, sni })
 	if err != nil {
 		status, line.Error = http.StatusBadRequest, "reading ClientHello: "+err.Error()
 		return
@@ -424,19 +435,37 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 		status, line.Error = http.StatusInternalServerError, "no valid backend"
 		return
 	}
-	backendKey = ref.B.Key
+	backendKey, line.BackendWeight = ref.B.Key, ref.Weight
+	open.set(func(v *OpenView) { v.Listener, v.Route, v.Backend = l.Key, routeKey, backendKey })
 	var up net.Conn
+	var attempts []attemptRec
+	var dialTime time.Duration
 	for range ref.B.Eps {
 		ep := ref.B.pick()
+		t0 := time.Now()
 		up, err = (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", ep.URL.Host)
+		d := time.Since(t0)
+		rec := attemptRec{Addr: ep.URL.Host, ConnectMS: ms(d)}
+		if err != nil {
+			rec.Error = err.Error()
+		}
+		attempts = append(attempts, rec)
 		if err == nil {
+			dialTime = d
 			break
 		}
 	}
+	if len(attempts) > 1 {
+		line.Attempts = attempts
+	}
+	line.Retries = len(attempts) - 1
 	if up == nil || err != nil {
 		status, line.Error = http.StatusBadGateway, fmt.Sprint("dialing backend: ", err)
 		return
 	}
+	line.UpstreamAddr, line.UpstreamConnectMS = up.RemoteAddr().String(), ms(dialTime)
+	line.UpstreamProto, line.UpstreamTLS, line.UpstreamReused = "tcp", boolp(false), boolp(false)
+	open.set(func(v *OpenView) { v.UpstreamAddr = line.UpstreamAddr })
 	defer up.Close()
 	if !rl.track(up) {
 		return
@@ -448,18 +477,23 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 			return
 		}
 	}
+	in, out := &local.in, &local.out
+	if open != nil {
+		in, out = &open.in, &open.out
+	}
+	in.Add(int64(len(raw)))
 	status = http.StatusOK
-	splice(client, up, &line)
+	splice(client, up, &line, in, out)
 }
 
 // splice copies both directions until each side finishes, half-closing so
-// that a one-way FIN reaches the peer.
-func splice(a, b net.Conn, line *logLine) {
+// that a one-way FIN reaches the peer. in and out count bytes as they move,
+// so the open connection list stays live.
+func splice(a, b net.Conn, line *logLine, in, out *atomic.Int64) {
 	var wg sync.WaitGroup
-	var in, out int64
-	cp := func(dst, src net.Conn, n *int64) {
+	cp := func(dst, src net.Conn, n *atomic.Int64) {
 		defer wg.Done()
-		*n, _ = io.Copy(dst, src)
+		io.Copy(dst, &tally{r: src, n: n})
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			cw.CloseWrite()
 		} else {
@@ -467,20 +501,38 @@ func splice(a, b net.Conn, line *logLine) {
 		}
 	}
 	wg.Add(2)
-	go cp(b, a, &in)
-	go cp(a, b, &out)
+	go cp(b, a, in)
+	go cp(a, b, out)
 	wg.Wait()
-	line.Bytes = in + out
+	line.RequestBytes, line.ResponseBytes = in.Load(), out.Load()
+	line.Bytes = line.RequestBytes + line.ResponseBytes
+}
+
+// tally counts bytes read from r.
+type tally struct {
+	r io.Reader
+	n *atomic.Int64
+}
+
+func (t *tally) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		t.n.Add(int64(n))
+	}
+	return n, err
 }
 
 func (s *Server) logConn(line *logLine, start time.Time) {
 	a := s.obs.access
-	if a == nil {
+	if a == nil && s.conns == nil {
 		return
 	}
 	line.Time = start.UTC().Format(time.RFC3339Nano)
 	line.Millis = float64(time.Since(start).Microseconds()) / 1000
-	a.log(line)
+	if a != nil {
+		a.log(line)
+	}
+	s.conns.push(line)
 }
 
 func newTLSH2Transport(skipVerify bool) *http.Transport {

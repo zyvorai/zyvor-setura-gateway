@@ -24,6 +24,8 @@ type ReqSpec struct {
 	Host   string // Host header, port allowed
 	Method string
 	Path   string // request target: path with optional query string
+	GRPC   bool   // a gRPC call (HTTP/2, application/grpc): only GRPCRoutes match
+	SNI    string // a TLS passthrough connection: only TLSRoutes match, Path and Method are unused
 }
 
 // WeightedBackend is one backend and its share of a rule's traffic.
@@ -42,6 +44,13 @@ type Decision struct {
 	Rule     int               `json:"rule"`
 	Backends []WeightedBackend `json:"backends,omitempty"` // sorted by key, weight > 0
 	Location string            `json:"location,omitempty"` // redirect target
+	Kind     string            `json:"kind,omitempty"`     // "grpc" or "tls" when not plain HTTP
+	// Rule policy that is not routing: what the data path does besides picking
+	// a backend. Retry, Timeout and Mirrors are empty for gRPC and TLS, which
+	// the data path neither retries nor mirrors.
+	Retry   string   `json:"retry,omitempty"`
+	Timeout string   `json:"timeout,omitempty"`
+	Mirrors []string `json:"mirrors,omitempty"`
 	// HeaderDependent is set when a rule that needs request headers could
 	// also match (and beat the reported winner). The log has no headers, so
 	// the true outcome is unknown; the fields above describe the no-header case.
@@ -71,11 +80,19 @@ func (t *Table) ListenerPort(key string) int {
 }
 
 // Resolve decides, without sockets or live backends, what the data plane
-// would do with the request. Match code is shared with the proxy. Health,
-// rate limits and gRPC content negotiation are not modelled.
+// would do with the request. Match code is shared with the proxy. Endpoint
+// health is not known to an offline table and is not modelled here.
 func (t *Table) Resolve(spec ReqSpec) Decision {
+	if spec.SNI != "" {
+		return t.resolveTLS(spec)
+	}
 	d := Decision{Outcome: OutcomeNoListener, Status: http.StatusNotFound}
 	r := &http.Request{Method: strings.ToUpper(spec.Method), Header: http.Header{}, ProtoMajor: 1, ProtoMinor: 1}
+	if spec.GRPC {
+		d.Kind = "grpc"
+		r.Method, r.ProtoMajor, r.ProtoMinor = http.MethodPost, 2, 0
+		r.Header.Set("Content-Type", "application/grpc")
+	}
 	target := spec.Path
 	if target == "" {
 		target = "/"
@@ -102,7 +119,7 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 	var pg *PortGroup
 	var l *RTListener
 	for _, p := range ports {
-		if g := t.Ports[p]; g != nil {
+		if g := t.Ports[p]; g != nil && !g.Passthrough {
 			if l = g.pickListener(host); l != nil {
 				pg = g
 				break
@@ -131,6 +148,9 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 	}
 	rule := e.Rule
 	d.Route, d.Rule = rule.RouteKey, rule.Index
+	if !e.GRPC {
+		d.Retry, d.Timeout, d.Mirrors = rulePolicy(rule)
+	}
 	if rule.Redirect != nil {
 		d.Outcome = OutcomeRedirect
 		d.Status = rule.Redirect.StatusCode
@@ -178,13 +198,14 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 func (l *RTListener) selectReplay(r *http.Request, host string) (*Entry, []*Entry) {
 	var best *Entry
 	var bestScore score
+	grpc := isGRPC(r)
 	type cand struct {
 		e *Entry
 		s score
 	}
 	var hdr []cand
 	for _, e := range l.Entries {
-		if e.GRPC {
+		if e.GRPC != grpc {
 			continue
 		}
 		rank, ok := -1, false

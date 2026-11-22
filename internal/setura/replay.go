@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,13 +24,28 @@ const (
 	classOutcome = "outcome"
 	classWeights = "weights"
 	classUnknown = "unknown"
+	classPolicy  = "policy"    // retry or timeout of a logged route changed
+	classMirror  = "mirror"    // mirror or shadow-diff added, removed or changed
+	classRate    = "ratelimit" // the gateway's rate-limit policy changed (--before/--after-rate-limit)
+	classHealth  = "health"    // traffic now goes to a backend the log shows failing
 )
 
-var replayClasses = []string{classRoute, classBackend, classOutcome, classWeights, classUnknown}
+var replayClasses = []string{classRoute, classBackend, classOutcome, classWeights, classUnknown, classPolicy, classMirror, classRate, classHealth}
+
+// A backend is flagged unhealthy when the log shows at least healthMinReqs
+// requests to it and at least half answered 5xx. The log cannot say whether
+// the cause was ejection, an outage or a bad deploy, so replay flags it and
+// never changes a verdict because of it.
+const healthMinReqs = 20
 
 const (
 	replayMaxLine    = 4 << 20 // longer lines are skipped, never buffered whole
 	replayCacheLimit = 100000  // exact-request memo entries
+	// replayGroupLimit bounds the request groups. Past it, requests whose
+	// (host, path shape) is new share one overflow group per method and
+	// decision pair, so memory stays flat on logs with unbounded distinct
+	// paths (slugs, asset hashes). Counts stay exact; only the label coarsens.
+	replayGroupLimit = 20000
 )
 
 // ReplayOptions configure one replay run.
@@ -39,6 +53,9 @@ type ReplayOptions struct {
 	Log, Before, After string
 	Limit              int
 	IgnoreWeights      bool
+	DefaultHost        string // Host for Common Log Format lines, which carry none
+	BeforeRate         string // rate-limit policy of the before gateway ("100/s,burst=20,key=route"), empty for none
+	AfterRate          string
 }
 
 // ReplayInput counts what was read from the access log.
@@ -50,6 +67,40 @@ type ReplayInput struct {
 	// LoggedRouteMismatch counts requests whose logged route differs from what
 	// the "before" config resolves: a sign the log and before file disagree.
 	LoggedRouteMismatch int64 `json:"logged_route_mismatch"`
+	// Formats counts the lines read per access-log format (json, text, common).
+	Formats map[string]int64 `json:"formats,omitempty"`
+	// GRPC and TLS count the requests replayed as gRPC calls and as TLS
+	// passthrough connections instead of plain HTTP.
+	GRPC int64 `json:"grpc,omitempty"`
+	TLS  int64 `json:"tls,omitempty"`
+	// MergedShapes counts requests folded into overflow groups because the
+	// log had more distinct (host, path shape) pairs than replayGroupLimit.
+	MergedShapes int64 `json:"merged_shapes,omitempty"`
+}
+
+// ReplayBackendHealth is a backend the log shows failing.
+type ReplayBackendHealth struct {
+	Backend  string  `json:"backend"`
+	Requests int64   `json:"requests"`
+	Errors   int64   `json:"errors_5xx"`
+	Percent  float64 `json:"error_percent"`
+}
+
+// ReplayPolicy is a retry, timeout or mirror change on a route with logged traffic.
+type ReplayPolicy struct {
+	Route    string `json:"route"`
+	Field    string `json:"field"` // retry, timeout or mirror
+	Before   string `json:"before"`
+	After    string `json:"after"`
+	Requests int64  `json:"requests"`
+}
+
+// ReplayRateLimit reports a change of the gateway-wide rate-limit policy.
+type ReplayRateLimit struct {
+	Before   string `json:"before"`
+	After    string `json:"after"`
+	Requests int64  `json:"requests"` // replayed HTTP requests the policy applies to
+	Logged   int64  `json:"logged_429"`
 }
 
 // ReplayExample is one concrete request for a change class.
@@ -78,6 +129,7 @@ type ReplayGroup struct {
 	Example  string           `json:"example"`
 	Before   builtin.Decision `json:"before"`
 	After    builtin.Decision `json:"after"`
+	Suspect  []string         `json:"suspect_backends,omitempty"`
 }
 
 // ReplayRoute is the impact on one before-to-after route transition.
@@ -105,20 +157,23 @@ type ReplayShift struct {
 
 // ReplayReport is the full result.
 type ReplayReport struct {
-	Schema        string        `json:"schema"`
-	Log           string        `json:"log"`
-	Before        string        `json:"before"`
-	After         string        `json:"after"`
-	IgnoreWeights bool          `json:"ignore_weights,omitempty"`
-	Input         ReplayInput   `json:"input"`
-	Changed       int64         `json:"changed_requests"`
-	Unchanged     int64         `json:"unchanged_requests"`
-	Classes       []ReplayClass `json:"classes"`
-	TopRoutes     []ReplayRoute `json:"top_routes"`
-	TopGroups     []ReplayGroup `json:"top_groups"`
-	WeightShifts  []ReplayShift `json:"weight_shifts"`
-	FailOn        []string      `json:"fail_on,omitempty"`
-	Failed        bool          `json:"failed"`
+	Schema        string                `json:"schema"`
+	Log           string                `json:"log"`
+	Before        string                `json:"before"`
+	After         string                `json:"after"`
+	IgnoreWeights bool                  `json:"ignore_weights,omitempty"`
+	Input         ReplayInput           `json:"input"`
+	Changed       int64                 `json:"changed_requests"`
+	Unchanged     int64                 `json:"unchanged_requests"`
+	Classes       []ReplayClass         `json:"classes"`
+	TopRoutes     []ReplayRoute         `json:"top_routes"`
+	TopGroups     []ReplayGroup         `json:"top_groups"`
+	WeightShifts  []ReplayShift         `json:"weight_shifts"`
+	PolicyChanges []ReplayPolicy        `json:"policy_changes,omitempty"`
+	RateLimit     *ReplayRateLimit      `json:"rate_limit,omitempty"`
+	BackendHealth []ReplayBackendHealth `json:"backend_health,omitempty"`
+	FailOn        []string              `json:"fail_on,omitempty"`
+	Failed        bool                  `json:"failed"`
 }
 
 func (r *ReplayReport) class(name string) *ReplayClass {
@@ -130,14 +185,6 @@ func (r *ReplayReport) class(name string) *ReplayClass {
 	return nil
 }
 
-type replayLine struct {
-	Listener string `json:"listener"`
-	Host     string `json:"host"`
-	Method   string `json:"method"`
-	Path     string `json:"path"`
-	Route    string `json:"route"`
-}
-
 // replayLabel names a decision's route or outcome for transitions.
 func replayLabel(d builtin.Decision) string {
 	if d.Route != "" {
@@ -146,23 +193,47 @@ func replayLabel(d builtin.Decision) string {
 	return d.Outcome
 }
 
-func decisionSig(d builtin.Decision) string {
-	var b strings.Builder
-	b.WriteString(d.Outcome)
-	b.WriteByte('|')
-	b.WriteString(d.Route)
-	b.WriteByte('|')
-	b.WriteString(strconv.Itoa(d.Rule))
+func decisionSig(d builtin.Decision, withLocation bool) string {
+	buf := make([]byte, 0, 128)
+	buf = append(buf, d.Outcome...)
+	buf = append(buf, '|')
+	buf = append(buf, d.Route...)
+	buf = append(buf, '|')
+	buf = strconv.AppendInt(buf, int64(d.Rule), 10)
 	for _, w := range d.Backends {
-		fmt.Fprintf(&b, "|%s:%d", w.Key, w.Weight)
+		buf = append(buf, '|')
+		buf = append(buf, w.Key...)
+		buf = append(buf, ':')
+		buf = strconv.AppendInt(buf, int64(w.Weight), 10)
 	}
-	b.WriteByte('|')
-	b.WriteString(strconv.Itoa(d.Status))
-	b.WriteString(d.Location)
+	buf = append(buf, '|')
+	buf = strconv.AppendInt(buf, int64(d.Status), 10)
+	if withLocation {
+		buf = append(buf, d.Location...)
+	}
 	if d.HeaderDependent {
-		b.WriteString("|hdr:" + strings.Join(d.HeaderRoutes, ","))
+		buf = append(buf, "|hdr:"...)
+		for i, r := range d.HeaderRoutes {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = append(buf, r...)
+		}
 	}
-	return b.String()
+	buf = append(buf, '|')
+	buf = append(buf, d.Kind...)
+	buf = append(buf, '|')
+	buf = append(buf, d.Retry...)
+	buf = append(buf, '|')
+	buf = append(buf, d.Timeout...)
+	buf = append(buf, '|')
+	for i, m := range d.Mirrors {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = append(buf, m...)
+	}
+	return string(buf)
 }
 
 func backendKeys(d builtin.Decision) string {
@@ -192,7 +263,7 @@ func hasBackends(d builtin.Decision) bool {
 // classifyReplay lists the change classes between two decisions.
 func classifyReplay(b, a builtin.Decision, ignoreWeights bool) []string {
 	if b.HeaderDependent || a.HeaderDependent {
-		if decisionSig(b) == decisionSig(a) {
+		if decisionSig(b, true) == decisionSig(a, true) {
 			return nil
 		}
 		return []string{classUnknown}
@@ -209,6 +280,14 @@ func classifyReplay(b, a builtin.Decision, ignoreWeights bool) []string {
 	}
 	if !ignoreWeights && hasBackends(b) && hasBackends(a) && backendKeys(b) == backendKeys(a) && !sameDistribution(b, a) {
 		out = append(out, classWeights)
+	}
+	if hasBackends(b) && hasBackends(a) {
+		if b.Retry != a.Retry || b.Timeout != a.Timeout {
+			out = append(out, classPolicy)
+		}
+		if strings.Join(b.Mirrors, ",") != strings.Join(a.Mirrors, ",") {
+			out = append(out, classMirror)
+		}
 	}
 	return out
 }
@@ -264,7 +343,34 @@ func segShape(s string) string {
 	case len(s) >= 20 && alnum == len(s) && digits > 0:
 		return ":id"
 	}
-	return s
+	return collapseDigitRuns(s)
+}
+
+// collapseDigitRuns turns runs of five or more digits inside a segment into
+// ":n", so cache-busted names such as app.839201.js share one shape.
+func collapseDigitRuns(s string) string {
+	var out []byte
+	last := 0 // s[:last] is already in out
+	for i := 0; i < len(s); {
+		if s[i] < '0' || s[i] > '9' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j-i >= 5 {
+			out = append(out, s[last:i]...)
+			out = append(out, ":n"...)
+			last = j
+		}
+		i = j
+	}
+	if last == 0 && out == nil {
+		return s
+	}
+	return string(append(out, s[last:]...))
 }
 
 // replayLines streams newline separated lines. Overlong lines are reported
@@ -363,60 +469,215 @@ func Replay(o ReplayOptions, stdin io.Reader) (*ReplayReport, error) {
 	return replayStream(rd, o, before, after)
 }
 
+// ratePolicy normalises "100/s,burst=20,key=route" the way the gateway's
+// limiter reads it, so two spellings of one policy compare equal.
+func ratePolicy(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	parts := strings.Split(v, ",")
+	rate, per, err := builtin.ParseRate(parts[0])
+	if err != nil {
+		return "", userErrorf("rate limit: %v", err)
+	}
+	cfg := builtin.RateLimitConfig{Rate: rate, Per: per, Key: "ip"}
+	for _, p := range parts[1:] {
+		k, val, _ := strings.Cut(strings.TrimSpace(p), "=")
+		switch k {
+		case "burst":
+			if cfg.Burst, err = strconv.Atoi(val); err != nil || cfg.Burst < 0 {
+				return "", userErrorf("rate limit burst %q is not a number", val)
+			}
+		case "key":
+			cfg.Key = val
+		default:
+			return "", userErrorf("rate limit option %q: want burst=N or key=ip|route|header:NAME", p)
+		}
+	}
+	perSec := cfg.Rate / cfg.Per.Seconds()
+	burst := cfg.Burst
+	if burst <= 0 {
+		burst = int(math.Max(1, math.Ceil(perSec)))
+	}
+	return fmt.Sprintf("%g/s burst %d key %s", perSec, burst, cfg.Key), nil
+}
+
+type beStat struct{ n, errs int64 }
+
 func replayStream(rd io.Reader, o ReplayOptions, before, after *builtin.Table) (*ReplayReport, error) {
 	rep := &ReplayReport{Schema: "setura.replay/v1", Log: o.Log, Before: o.Before, After: o.After, IgnoreWeights: o.IgnoreWeights}
+	rep.Input.Formats = map[string]int64{}
+	bRate, err := ratePolicy(o.BeforeRate)
+	if err != nil {
+		return nil, err
+	}
+	aRate, err := ratePolicy(o.AfterRate)
+	if err != nil {
+		return nil, err
+	}
+	rateChanged := bRate != aRate
+	if rateChanged || bRate != "" {
+		rep.RateLimit = &ReplayRateLimit{Before: bRate, After: aRate}
+	}
 	groups := map[string]*ReplayGroup{}
 	cache := map[string]*ReplayGroup{}
-	var ln replayLine
-	err := replayLines(rd, func(line []byte, tooLong bool) {
+	stats := map[string]*beStat{}
+	var in interner
+	var rec logRec
+	var key []byte
+	err = replayLines(rd, func(line []byte, tooLong bool) {
 		rep.Input.Lines++
 		line = bytes.TrimSpace(line)
-		if tooLong || len(line) == 0 || line[0] != '{' {
+		if tooLong || len(line) == 0 || !in.parseLogLine(line, &rec, o.DefaultHost) {
 			rep.Input.SkippedNonJSON++
 			return
 		}
-		ln = replayLine{}
-		if json.Unmarshal(line, &ln) != nil {
-			rep.Input.SkippedNonJSON++
-			return
-		}
-		if ln.Host == "" || ln.Path == "" {
+		rep.Input.Formats[rec.format]++
+		tls := rec.method == "TLS" && len(rec.path) == 0
+		if len(rec.host) == 0 || (len(rec.path) == 0 && !tls) {
 			rep.Input.SkippedIncomplete++
 			return
 		}
-		method := strings.ToUpper(ln.Method)
+		method := rec.method
 		if method == "" {
 			method = "GET"
+		} else if !tls && !isUpper(method) {
+			method = strings.ToUpper(method)
 		}
 		rep.Input.Requests++
-		exact := ln.Listener + "\x00" + ln.Host + "\x00" + method + "\x00" + ln.Path
-		g := cache[exact]
+		if rec.status == 429 && rep.RateLimit != nil {
+			rep.RateLimit.Logged++
+		}
+		if rec.backend != "" {
+			st := stats[rec.backend]
+			if st == nil {
+				if len(stats) >= 100000 {
+					st = &beStat{} // detached: a log with that many backends is not a real gateway
+				} else {
+					st = &beStat{}
+					stats[rec.backend] = st
+				}
+			}
+			st.n++
+			if rec.status >= 500 {
+				st.errs++
+			}
+		}
+		grpc := !tls && isGRPCLog(&rec)
+		key = append(key[:0], rec.listener...)
+		key = append(key, 0)
+		key = append(key, rec.host...)
+		key = append(key, 0)
+		key = append(key, method...)
+		key = append(key, 0)
+		key = append(key, rec.path...)
+		if grpc {
+			key = append(key, 0, 'g')
+		}
+		g := cache[string(key)]
 		if g == nil {
-			spec := builtin.ReqSpec{Port: before.ListenerPort(ln.Listener), Host: ln.Host, Method: method, Path: ln.Path}
+			host, path := string(rec.host), string(rec.path)
+			spec := builtin.ReqSpec{Port: before.ListenerPort(rec.listener), Host: host, Method: method, Path: path, GRPC: grpc}
+			if tls {
+				spec.SNI, spec.Host, spec.Method, spec.Path = host, "", "", ""
+			}
 			b, a := before.Resolve(spec), after.Resolve(spec)
-			host := strings.ToLower(ln.Host)
-			shape := pathShape(ln.Path)
-			key := host + "\x00" + method + "\x00" + shape + "\x00" + decisionSig(b) + "\x00" + decisionSig(a)
-			g = groups[key]
+			lhost := strings.ToLower(host)
+			shape := pathShape(path)
+			sigs := decisionSig(b, false) + "\x00" + decisionSig(a, false) + "\x00" + strconv.FormatBool(b.Location == a.Location)
+			gkey := lhost + "\x00" + method + "\x00" + shape + "\x00" + sigs
+			g = groups[gkey]
+			if g == nil && len(groups) >= replayGroupLimit {
+				lhost, shape = "(other)", "(many shapes)"
+				gkey = lhost + "\x00" + method + "\x00" + shape + "\x00" + sigs
+				g = groups[gkey]
+				rep.Input.MergedShapes++
+			}
 			if g == nil {
-				g = &ReplayGroup{Host: host, Method: method, Shape: shape, Example: method + " " + ln.Host + ln.Path,
+				ex := method + " " + host + path
+				if tls {
+					ex = "TLS " + host
+				}
+				g = &ReplayGroup{Host: lhost, Method: method, Shape: shape, Example: ex,
 					Before: b, After: a, Classes: classifyReplay(b, a, o.IgnoreWeights)}
-				groups[key] = g
+				if rateChanged && b.Kind == "" && !b.HeaderDependent && (b.Route != "" || a.Route != "") {
+					g.Classes = append(g.Classes, classRate)
+				}
+				groups[gkey] = g
 			}
 			if len(cache) < replayCacheLimit {
-				cache[exact] = g
+				cache[string(key)] = g
 			}
 		}
 		g.Requests++
-		if ln.Route != "" && ln.Route != g.Before.Route {
+		switch g.Before.Kind {
+		case "grpc":
+			rep.Input.GRPC++
+		case "tls":
+			rep.Input.TLS++
+		}
+		if rep.RateLimit != nil && g.Before.Kind == "" && (g.Before.Route != "" || g.After.Route != "") {
+			rep.RateLimit.Requests++
+		}
+		if rec.route != "" && rec.route != g.Before.Route {
 			rep.Input.LoggedRouteMismatch++
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
+	flagUnhealthy(rep, groups, stats)
 	summarizeReplay(rep, groups, o)
 	return rep, nil
+}
+
+func isUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'a' && s[i] <= 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// flagUnhealthy lists the backends the log shows failing and marks groups the
+// after config newly sends to one of them. It flags; it never changes a verdict.
+func flagUnhealthy(rep *ReplayReport, groups map[string]*ReplayGroup, stats map[string]*beStat) {
+	bad := map[string]bool{}
+	for k, st := range stats {
+		if st.n >= healthMinReqs && st.errs*2 >= st.n {
+			bad[k] = true
+			rep.BackendHealth = append(rep.BackendHealth, ReplayBackendHealth{Backend: k, Requests: st.n, Errors: st.errs, Percent: round1(float64(st.errs) * 100 / float64(st.n))})
+		}
+	}
+	sort.Slice(rep.BackendHealth, func(i, j int) bool {
+		a, b := rep.BackendHealth[i], rep.BackendHealth[j]
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		return a.Backend < b.Backend
+	})
+	if len(bad) == 0 {
+		return
+	}
+	for _, g := range groups {
+		if g.Before.HeaderDependent || g.After.HeaderDependent {
+			continue
+		}
+		had := map[string]bool{}
+		for _, w := range g.Before.Backends {
+			had[w.Key] = true
+		}
+		for _, w := range g.After.Backends {
+			if bad[w.Key] && !had[w.Key] {
+				g.Suspect = append(g.Suspect, w.Key)
+			}
+		}
+		if len(g.Suspect) > 0 {
+			g.Classes = append(g.Classes, classHealth)
+		}
+	}
 }
 
 func summarizeReplay(rep *ReplayReport, groups map[string]*ReplayGroup, o ReplayOptions) {
@@ -533,9 +794,63 @@ func summarizeReplay(rep *ReplayReport, groups map[string]*ReplayGroup, o Replay
 	if len(rep.WeightShifts) > limit {
 		rep.WeightShifts = rep.WeightShifts[:limit]
 	}
+	rep.PolicyChanges = policyChanges(all, limit)
+	if len(rep.BackendHealth) > limit {
+		rep.BackendHealth = rep.BackendHealth[:limit]
+	}
 	if rep.TopGroups == nil {
 		rep.TopGroups = []ReplayGroup{}
 	}
+}
+
+// policyChanges aggregates retry, timeout and mirror changes per route.
+func policyChanges(all []*ReplayGroup, limit int) []ReplayPolicy {
+	acc := map[string]*ReplayPolicy{}
+	add := func(g *ReplayGroup, field, b, a string) {
+		route := g.Before.Route
+		k := route + "\x00" + field + "\x00" + b + "\x00" + a
+		p := acc[k]
+		if p == nil {
+			p = &ReplayPolicy{Route: route, Field: field, Before: b, After: a}
+			acc[k] = p
+		}
+		p.Requests += g.Requests
+	}
+	none := func(s string) string {
+		if s == "" {
+			return "none"
+		}
+		return s
+	}
+	for _, g := range all {
+		if g.Before.HeaderDependent || g.After.HeaderDependent || !hasBackends(g.Before) || !hasBackends(g.After) {
+			continue
+		}
+		if g.Before.Retry != g.After.Retry {
+			add(g, "retry", none(g.Before.Retry), none(g.After.Retry))
+		}
+		if g.Before.Timeout != g.After.Timeout {
+			add(g, "timeout", none(g.Before.Timeout), none(g.After.Timeout))
+		}
+		if bm, am := strings.Join(g.Before.Mirrors, ", "), strings.Join(g.After.Mirrors, ", "); bm != am {
+			add(g, "mirror", none(bm), none(am))
+		}
+	}
+	var out []ReplayPolicy
+	for _, p := range acc {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		return a.Route+a.Field+a.After < b.Route+b.Field+b.After
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func hasStr(s []string, v string) bool {
@@ -561,12 +876,12 @@ func parseFailOn(v string) ([]string, error) {
 					out = append(out, c)
 				}
 			}
-		case classRoute, classBackend, classOutcome, classWeights, classUnknown:
+		case classRoute, classBackend, classOutcome, classWeights, classUnknown, classPolicy, classMirror, classRate, classHealth:
 			if !hasStr(out, p) {
 				out = append(out, p)
 			}
 		default:
-			return nil, userErrorf("--fail-on must be route, backend, outcome, weights, unknown or any, got %q", p)
+			return nil, userErrorf("--fail-on must be route, backend, outcome, weights, unknown, policy, mirror, ratelimit, health or any, got %q", p)
 		}
 	}
 	return out, nil
@@ -588,7 +903,10 @@ func runReplay(fs *flag.FlagSet, rest []string, u *ui, tty bool, stdin io.Reader
 	format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty, json or github")
 	limit := fs.Int("limit", 10, "show this many top routes, groups and shifts")
 	ignoreW := fs.Bool("ignore-weights", false, "do not report weight-only distribution changes")
-	failOn := fs.String("fail-on", "", "exit 1 when impact of this kind is found: route, backend, outcome, weights, unknown or any (comma separated)")
+	failOn := fs.String("fail-on", "", "exit 1 when impact of this kind is found: route, backend, outcome, weights, unknown, policy, mirror, ratelimit, health or any (comma separated)")
+	defHost := fs.String("default-host", "", "Host for Common Log Format lines, which do not record one")
+	beforeRate := fs.String("before-rate-limit", "", "the before gateway's --rate-limit, as 100/s[,burst=N][,key=ip|route|header:NAME]")
+	afterRate := fs.String("after-rate-limit", "", "the after gateway's --rate-limit, same syntax")
 	pos, err := parse(fs, rest)
 	if err != nil {
 		return 2, err
@@ -614,7 +932,8 @@ func runReplay(fs *flag.FlagSet, rest []string, u *ui, tty bool, stdin io.Reader
 			return bad(err.Error())
 		}
 	}
-	rep, err := Replay(ReplayOptions{Log: *logPath, Before: *beforeP, After: *afterP, Limit: *limit, IgnoreWeights: *ignoreW}, stdin)
+	rep, err := Replay(ReplayOptions{Log: *logPath, Before: *beforeP, After: *afterP, Limit: *limit, IgnoreWeights: *ignoreW,
+		DefaultHost: *defHost, BeforeRate: *beforeRate, AfterRate: *afterRate}, stdin)
 	if err != nil {
 		return 2, err
 	}
@@ -657,6 +976,10 @@ var replayClassText = map[string]string{
 	classOutcome: "outcome changed",
 	classWeights: "weight distribution shifted",
 	classUnknown: "unknown, depends on headers",
+	classPolicy:  "retry/timeout policy changed",
+	classMirror:  "mirror/shadow-diff changed",
+	classRate:    "rate-limit policy changed",
+	classHealth:  "routed to a failing backend",
 }
 
 // ReplayPretty renders the report for a terminal.
@@ -682,7 +1005,7 @@ func (u *ui) ReplayPretty(r *ReplayReport) string {
 		sym := u.okSym()
 		if c.Requests > 0 {
 			sym = u.failSym()
-			if c.Class == classUnknown || c.Class == classWeights {
+			if c.Class == classUnknown || c.Class == classWeights || c.Class == classPolicy || c.Class == classMirror || c.Class == classRate || c.Class == classHealth {
 				sym = u.warnSym()
 			}
 		}
@@ -721,6 +1044,30 @@ func (u *ui) ReplayPretty(r *ReplayReport) string {
 				p("      %s  %s %s %s\n", pad(bk.Backend, 28), pad(fmt.Sprintf("%.1f%%", bk.BeforePercent), 7), u.arrow(), fmt.Sprintf("%.1f%%", bk.AfterPercent))
 			}
 		}
+	}
+	if len(r.PolicyChanges) > 0 {
+		p("\n  %s\n", u.blue("Policy changes on logged routes"))
+		for _, c := range r.PolicyChanges {
+			p("    %s  %s %s: %s %s %s\n", pad(commas(c.Requests), 10), c.Route, c.Field, c.Before, u.arrow(), c.After)
+		}
+	}
+	if rl := r.RateLimit; rl != nil && rl.Before != rl.After {
+		show := func(s string) string {
+			if s == "" {
+				return "none"
+			}
+			return s
+		}
+		p("\n  %s\n    rate limit %s %s %s  %s\n", u.blue("Rate limit"), show(rl.Before), u.arrow(), show(rl.After), u.gray(commas(rl.Requests)+" replayed requests; "+commas(rl.Logged)+" were logged as 429"))
+	}
+	if len(r.BackendHealth) > 0 {
+		p("\n  %s\n", u.blue("Backends failing in the log (flagged, not modelled)"))
+		for _, h := range r.BackendHealth {
+			p("    %s  %s  %s\n", pad(h.Backend, 32), pad(fmt.Sprintf("%.1f%% 5xx", h.Percent), 10), u.gray(fmt.Sprintf("of %s logged requests; ejected, down or a bad deploy, the log cannot tell", commas(h.Requests))))
+		}
+	}
+	if in := r.Input; in.GRPC+in.TLS > 0 {
+		p("\n  %s\n", u.gray(fmt.Sprintf("%s requests replayed as gRPC calls, %s as TLS passthrough connections", commas(in.GRPC), commas(in.TLS))))
 	}
 	if len(r.TopGroups) > 0 {
 		p("\n  %s\n", u.blue("Top changed request groups"))

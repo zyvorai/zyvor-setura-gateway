@@ -23,19 +23,34 @@ a dead collector or a flood of clients never stalls a request.
 | `--rate-key ip\|route\|header:NAME` | `ip` | What one bucket belongs to. |
 | `--rate-limit-share N` | 1 | Divide the rate by the declared replica count (see below). |
 | `--trusted-proxies CIDR[,..]` | none | Peers whose `X-Forwarded-For` is believed. |
+| `--log-query` | off | Keep query strings in logged paths. By default they are stripped. |
+| `--conn-history N` | `500` | Recent requests kept for `/connections` and the dashboard (`0` = off). |
 
 ## Access logs
 
 One line per request, including gateway-generated 404, 429, 5xx answers.
 
 ```json
-{"time":"2026-11-22T10:00:00.123456789Z","listener":"t/gw/web","host":"x.test","method":"GET","path":"/ok?q=1","status":200,"bytes":212,"duration_ms":1.4,"route":"t/r","rule":0,"backend":"t/a:80","remote":"127.0.0.1:51234","request_id":"9f1c...","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"b7ad6b7169203331"}
+{"time":"2026-11-22T10:00:00.123456789Z","listener":"t/gw/web","host":"x.test","method":"GET","path":"/ok","status":200,"bytes":212,"duration_ms":1.4,"route":"t/r","rule":0,"backend":"t/a:80","remote":"127.0.0.1:51234","request_id":"9f1c...","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"b7ad6b7169203331"}
 ```
 
 `client_ip` is the original client address (see Trusted proxies): the TCP peer unless the
 peer is a trusted proxy. `route`, `backend` and `rule` are omitted when nothing matched. `error` is set
 for upstream failures and rate limiting. With `--access-log-format text` the
 same fields are written as `key="value"` pairs (logfmt style), one line each.
+
+Each line also carries the client (`client_ip`, `client_port`), the listener port,
+`protocol`, TLS details (`tls_version`, `tls_cipher`, `tls_sni`, `tls_alpn`), the
+exact upstream endpoint with connect and first-byte timings, retries and the
+attempt list, byte counts, the matched rule and match index, the chosen backend
+weight, the endpoint health state and, for gRPC, service, method and status.
+See [connections.md](connections.md) for every field.
+
+The path in a log line has its query string removed (`/ok`, not `/ok?q=1`)
+unless `--log-query` is set. The `user_agent` and `x_forwarded_for` fields are
+header values copied as received (200 bytes at most); treat the log as sensitive
+like any access log. The same records are served at `/connections` on the admin
+endpoint and in the dashboard.
 
 Writing is asynchronous: lines go into a buffered queue (4096) drained by one
 goroutine. When the queue is full the line is dropped and counted in
@@ -160,7 +175,7 @@ IPv4-mapped; bracketed and `ip:port` entries are accepted. `X-Forwarded-Proto` a
 ## Metrics
 
 The admin endpoint (default `127.0.0.1:19000`) serves Prometheus text at
-`/metrics`:
+`/metrics` (and recent connections as JSON at `/connections`):
 
 ```
 setura_gateway_requests_total

@@ -23,17 +23,22 @@ const DefaultAdmin = "127.0.0.1:19000"
 
 // Options configures a Server.
 type Options struct {
-	Bind       string      // listener bind address, default 127.0.0.1
-	PortMap    map[int]int // spec port -> bound port (0 asks the OS for a free port)
-	PortOffset int         // added to spec ports below 1024 that PortMap does not name
-	Admin      string      // admin address; "off" disables, empty means DefaultAdmin
-	Force      bool        // apply configs that have lint errors
-	AccessLog  io.Writer   // JSON-lines access log, nil to disable
-	Diag       io.Writer   // human diagnostics, nil to discard
-	Rand       func(n int) int
-	Obs        ObsOptions        // access log format, tracing export, rate limiting
-	ShadowDiff int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
-	Resilience ResilienceOptions // retries, outlier ejection, circuit breaking, default health checks
+	Bind        string      // listener bind address, default 127.0.0.1
+	PortMap     map[int]int // spec port -> bound port (0 asks the OS for a free port)
+	PortOffset  int         // added to spec ports below 1024 that PortMap does not name
+	Admin       string      // admin address; "off" disables, empty means DefaultAdmin
+	Force       bool        // apply configs that have lint errors
+	AccessLog   io.Writer   // JSON-lines access log, nil to disable
+	Diag        io.Writer   // human diagnostics, nil to discard
+	Rand        func(n int) int
+	ConnHistory int        // recent request records kept for /connections (0 = 500, negative disables)
+	Obs         ObsOptions // access log format, tracing export, rate limiting
+	ShadowDiff  int        // default shadow comparison sample percent (0 = only annotated mirrors compare)
+	// ShadowState is a file the shadow results are snapshotted to every
+	// ShadowStateInterval (default 10s) and reloaded from at start; "" disables.
+	ShadowState         string
+	ShadowStateInterval time.Duration
+	Resilience          ResilienceOptions // retries, outlier ejection, circuit breaking, default health checks
 	// HistoryInterval is the dashboard history sampling period (default 1s;
 	// negative disables the sampler goroutine, for tests that sample by hand).
 	HistoryInterval time.Duration
@@ -67,10 +72,12 @@ type boundPort struct {
 
 // Server is the built-in gateway data plane.
 type Server struct {
-	opts  Options
-	table atomic.Pointer[Table]
-	stats *Stats
-	obs   *obs
+	opts     Options
+	table    atomic.Pointer[Table]
+	stats    *Stats
+	obs      *obs
+	conns    *connTable   // nil when connection history is disabled
+	inflight atomic.Int64 // requests inside the data-plane handler, until their log line is queued
 
 	mu       sync.Mutex
 	ports    map[int]*boundPort
@@ -81,8 +88,10 @@ type Server struct {
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
 	shadow   shadowState
-	hist     *history
+	hist     *rateHistory
 	trusted  trustedNets
+	shadowP  *shadowPersist
+	latency  latencyStats
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -103,8 +112,14 @@ func New(opts Options) *Server {
 			MaxIdleConns: 256, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}}
 	}
-	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
-		hist: newHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
+	hist := opts.ConnHistory
+	if hist == 0 {
+		hist = DefaultConnHistory
+	}
+	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
+		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
+	s.shadowP = s.startShadowPersist()
+	return s
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -170,7 +185,11 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		return nil
 	}
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.serveHTTP(w, r, spec) })}
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.inflight.Add(1)
+			defer s.inflight.Add(-1)
+			s.serveHTTP(w, r, spec)
+		})}
 	enableH2C(srv, pg.TLS)
 	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
 	s.ports[spec] = bp
@@ -419,6 +438,29 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		}
 	}
 	write()
+	wake := make(chan struct{}, 1)
+	if bg, ok := src.(Background); ok {
+		if resync := bg.Start(ctx, func() {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}); resync > 0 {
+			interval = resync // events drive reloads; the ticker is only a safety net
+		}
+		defer bg.Wait() // runs before s.Close; releases a held lease
+	}
+	tick := func() {
+		switch changed, err := s.Reload(ctx, src); {
+		case err != nil:
+			if ctx.Err() == nil {
+				s.diag("reload rejected, keeping previous configuration: %v", err)
+			}
+		case changed:
+			s.diag("configuration applied (generation %d)", s.Status().Generation)
+		}
+		write()
+	}
 	tk := time.NewTicker(interval)
 	defer tk.Stop()
 	for {
@@ -426,15 +468,18 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		case <-ctx.Done():
 			return nil
 		case <-tk.C:
-			switch changed, err := s.Reload(ctx, src); {
-			case err != nil:
-				if ctx.Err() == nil {
-					s.diag("reload rejected, keeping previous configuration: %v", err)
-				}
-			case changed:
-				s.diag("configuration applied (generation %d)", s.Status().Generation)
+			tick()
+		case <-wake:
+			select { // coalesce a burst of events into one reload
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return nil
 			}
-			write()
+			select {
+			case <-wake:
+			default:
+			}
+			tick()
 		}
 	}
 }
@@ -459,6 +504,7 @@ func (s *Server) Close() {
 	s.mirrorWG.Wait()
 	s.hist.close()
 	s.res.closeTransports()
+	s.shadowP.close()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()
@@ -499,6 +545,7 @@ func (s *Server) startAdmin() error {
 		}
 	}
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.metrics(w, r); s.WriteMetrics(w) })
+	mux.HandleFunc("/connections", s.connectionsHandler)
 	mux.HandleFunc("/shadow", jsonOut(func() any { return s.shadow.Summary() }))
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {

@@ -21,7 +21,7 @@ func seriesByName(series []map[string]any) map[string][]float64 {
 }
 
 func TestHistoryRingRequestsErrorsAndP95(t *testing.T) {
-	h := newHistory()
+	h := newRateHistory()
 	// Second 1: 20 requests, 2 server errors, 18 fast and 2 slow: p95 falls in the slow bucket.
 	for i := 0; i < 18; i++ {
 		h.observe("t/r", 200, 800*time.Microsecond)
@@ -55,7 +55,7 @@ func TestHistoryRingRequestsErrorsAndP95(t *testing.T) {
 }
 
 func TestHistoryRingKeepsOnlyTheLastWindowAndForgetsIdleRoutes(t *testing.T) {
-	h := newHistory()
+	h := newRateHistory()
 	for i := 1; i <= historySize+30; i++ {
 		h.observe("busy", 200, time.Millisecond)
 		h.sample()
@@ -75,7 +75,7 @@ func TestHistoryRingKeepsOnlyTheLastWindowAndForgetsIdleRoutes(t *testing.T) {
 }
 
 func TestHistoryDrawsOnlyTheBusiestRoutes(t *testing.T) {
-	h := newHistory()
+	h := newRateHistory()
 	for i, name := range []string{"a", "b", "c", "d", "e"} {
 		for j := 0; j <= i; j++ {
 			h.observe(name, 200, time.Millisecond)
@@ -92,7 +92,7 @@ func TestHistoryDrawsOnlyTheBusiestRoutes(t *testing.T) {
 			t.Errorf("missing %q in %v", want, names)
 		}
 	}
-	if (&history{routes: map[string]*routeHist{}}).series() != nil {
+	if (&rateHistory{routes: map[string]*routeHist{}}).series() != nil {
 		t.Error("no samples, no series")
 	}
 	h.observe("", 200, time.Millisecond) // unmatched requests are not a route
@@ -102,7 +102,7 @@ func TestHistoryDrawsOnlyTheBusiestRoutes(t *testing.T) {
 }
 
 func TestHistorySamplerRunsAndStopsWithTheServer(t *testing.T) {
-	h := newHistory()
+	h := newRateHistory()
 	h.start(5 * time.Millisecond)
 	h.observe("r", 200, time.Millisecond)
 	eventually(t, func() bool { return len(h.series()) > 0 })

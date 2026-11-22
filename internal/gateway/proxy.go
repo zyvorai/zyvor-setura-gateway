@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,7 +25,11 @@ type recorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int64
+	open   *openConn // set for streams listed in the open connection table
 }
+
+// bytesOut is the number of body bytes written to the client so far.
+func (r *recorder) bytesOut() int64 { return atomic.LoadInt64(&r.bytes) }
 
 func (r *recorder) WriteHeader(code int) {
 	if r.status == 0 {
@@ -38,7 +43,10 @@ func (r *recorder) Write(p []byte) (int, error) {
 		r.status = 200
 	}
 	n, err := r.ResponseWriter.Write(p)
-	r.bytes += int64(n)
+	atomic.AddInt64(&r.bytes, int64(n))
+	if r.open != nil {
+		r.open.out.Add(int64(n))
+	}
 	return n, err
 }
 
@@ -117,6 +125,55 @@ type reqState struct {
 	rule                             *int
 	reqID                            string
 	trace                            traceInfo
+
+	match       int // index of the matching match within the rule
+	matched     bool
+	weight      int // weight of the chosen backendRef
+	rateLimited bool
+	grpcSvc     string
+	grpcMethod  string
+	in          *countReader
+	open        *openConn
+	up          upInfo
+}
+
+// countBody makes the request body count the bytes it delivers.
+func (st *reqState) countBody(r *http.Request) {
+	if r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	st.in = &countReader{rc: r.Body}
+	r.Body = st.in
+}
+
+// noteUpstream mirrors the chosen upstream into the open connection entry.
+func (st *reqState) noteUpstream() {
+	if st.open != nil {
+		addr := st.up.addr
+		st.open.set(func(v *OpenView) { v.UpstreamAddr = addr })
+	}
+}
+
+// trackOpen lists a WebSocket or gRPC stream until the handler returns.
+func (s *Server) trackOpen(rec *recorder, r *http.Request, st *reqState, kind string) func() {
+	ip, port := splitRemote(r.RemoteAddr)
+	o, done := s.conns.register(OpenView{Kind: kind, ClientIP: ip, ClientPort: port, ListenerPort: localPort(r),
+		Protocol: protocolOf(r), Host: r.Host, Path: s.logPath(r)})
+	if o != nil {
+		rec.open, st.open = o, o
+		if st.in != nil {
+			st.in.mirror = &o.in
+		}
+	}
+	return done
+}
+
+// markRoute fills the open entry once routing is known.
+func (st *reqState) markRoute() {
+	if st.open != nil {
+		l, rt, b := st.listener, st.route, st.backend
+		st.open.set(func(v *OpenView) { v.Listener, v.Route, v.Backend = l, rt, b })
+	}
 }
 
 func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start time.Time) {
@@ -126,6 +183,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 	}
 	s.stats.record(st.route, st.backend, status)
 	s.hist.observe(st.route, status, time.Since(start))
+	s.latency.observe(st.route, st.backend, time.Since(start))
 	s.observe(rec, r, st, start, status)
 }
 
@@ -152,7 +210,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}
 	s.beginTrace(rec, r, st)
+	st.countBody(r)
 	defer func() { s.logRequest(rec, r, st, start) }()
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		defer s.trackOpen(rec, r, st, "websocket")()
+	}
 	t := s.table.Load()
 	var pg *PortGroup
 	if t != nil {
@@ -178,6 +240,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
+	st.match, st.matched = e.MatchIdx, true
+	st.markRoute()
 	if s.rateLimited(rec, r, st) {
 		return
 	}
@@ -204,7 +268,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	ep := ref.B.choose(s.res.now(), nil)
-	st.backend = ref.B.Key
+	st.backend, st.weight = ref.B.Key, ref.Weight
+	st.markRoute()
 
 	timeout := rule.Timeout
 	if bt := ref.B.Timeout; bt > 0 && (timeout == 0 || bt < timeout) {
@@ -222,9 +287,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		replay, canReplay = bufferBody(r, s.res.opt().RetryBodyLimit)
 	}
 	rt := s.newTransport(rule, ref, ep, rule.Retry, replay, canReplay)
-	var pristine *http.Request
+	rt.st = st
+	var pristine, inbound *http.Request
 
 	var body []byte
+	var sp *bodySpool
 	mirrors := rule.Mirrors
 	if len(mirrors) > 0 {
 		var err error
@@ -234,8 +301,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			return
 		}
 		if len(body) > maxMirrorBody {
-			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-			mirrors = nil
+			mirrors, sp = s.bigBody(r, body, mirrors)
 		} else {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
@@ -243,6 +309,14 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 
 	sc := s.shadowStart(r, rule.RouteKey, ref.B.Key, mirrors)
 	defer sc.finish()
+	if sp != nil {
+		defer sp.release()
+		sp.onOver = func() {
+			if sc != nil {
+				s.shadow.skip(rule.RouteKey)
+			}
+		}
+	}
 
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
@@ -250,17 +324,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			pr.Out.Host = pr.In.Host
-			s.setForwarded(pr)
-			if pg.TLS {
-				pr.Out.Header.Set("X-Forwarded-Proto", "https")
-			}
-			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
-			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
-			pristine = pr.Out.Clone(pr.Out.Context()) // before filters, for retries on another backendRef
-			applyRefFilters(pr.Out, rule, ref, e.Match)
+			pristine, inbound = pr.Out.Clone(pr.Out.Context()), pr.In // before filters, for retries on another backendRef
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false)
+			s.chainForwardedFor(pr.In, pr.Out)
 			injectTrace(pr.Out, st)
-			s.fireMirrors(pr.Out, body, mirrors, sc)
+			s.fireMirrorsOrSpool(pr.Out, body, mirrors, sc, sp)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			ref := rt.ref // a retry may have moved to another backendRef
@@ -268,8 +336,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			resp.Header.Set(BackendHeader, ref.Name)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
-			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
-			for _, f := range filters {
+			for _, f := range requestFilters(rule, ref) {
 				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
 					applyHeaderMod(resp.Header, f.ResponseHeaderModifier)
 				}
@@ -297,7 +364,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	}
 	rt.rebuild = func(ctx context.Context, nr *CRef) *http.Request {
 		out := pristine.Clone(ctx)
-		applyRefFilters(out, rule, nr, e.Match)
+		shapeUpstream(out, inbound, remoteIP(inbound), pg.TLS, requestFilters(rule, nr), e.Match, false)
+		s.chainForwardedFor(inbound, out)
 		injectTrace(out, st)
 		return out
 	}

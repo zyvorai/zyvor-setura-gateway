@@ -31,6 +31,7 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET012", SeverityWarning, "ReferenceGrant has an empty from or to list and permits nothing"},
 	{"SET013", SeverityError, "listener allowedRoutes (namespaces or kinds) does not admit the attaching route"},
 	{"SET014", SeverityError, "route rule has a negative or overflowing backendRef weight, or mixes Service and non-Service backendRefs"},
+	{"SET015", SeverityError, "shadow-diff block (RequestMirror extension or setura.zyvor.dev/shadow-diff annotation) is invalid or targets no RequestMirror"},
 }
 
 func ruleSeverity(id string) string {
@@ -212,6 +213,7 @@ func Lint(snapshot obj) (obj, error) {
 	}
 
 	findings = append(findings, extraRules(snapshot, specs, ns)...)
+	findings = append(findings, shadowRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

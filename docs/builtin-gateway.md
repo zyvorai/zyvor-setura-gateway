@@ -126,7 +126,7 @@ returns 500; no match returns 404.
 | Filters: RequestHeaderModifier, ResponseHeaderModifier | Supported (rule and backendRef level) |
 | Filter: RequestRedirect (scheme, hostname, port, path, statusCode) | Supported |
 | Filter: URLRewrite (hostname, ReplaceFullPath, ReplacePrefixMatch) | Supported |
-| Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB (GRPCRoute: unary calls only) |
+| Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB (GRPCRoute: see [shadow](shadow.md#grpc)) |
 | `timeouts.request` | Supported |
 | `retry` (codes, attempts, backoff, jitter, perTryTimeout, crossBackend) | Supported; budgeted, idempotent-safe (POST/PATCH only on connect errors, deliberately), see [resilience](resilience.md) |
 | Circuit breaking (max requests, pending, connections, failure threshold, half-open probing) | Supported per backend, see [resilience](resilience.md) |
@@ -134,11 +134,12 @@ returns 500; no match returns 404.
 | ReferenceGrant for backendRefs and certificateRefs | Supported |
 | Status: Accepted, Programmed, ResolvedRefs, Conflicted, observedGeneration, attachedRoutes | Supported |
 | Filter: ExtensionRef, CORS, ExternalAuth; BackendTLSPolicy | Not implemented (route marked Accepted=False, UnsupportedValue; ExtensionRef says why) |
-| GRPCRoute (service/method match, h2c and h2, streaming, trailers, grpc-timeout, unary retries and mirroring, gRPC health checks) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
+| GRPCRoute (service/method match, h2c and h2, streaming, trailers, grpc-timeout, unary retries, mirroring, gRPC health checks) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
 | TLSRoute with TLS passthrough (SNI routing, wildcards, weights) | Supported |
 | TLSRoute with TLS Terminate to TCP backends, ALPN-based routing (Setura extension) | Supported |
 | TCPRoute, UDPRoute | Not implemented |
-| Gateway `addresses`, per-Gateway load balancer provisioning | Not implemented |
+| Gateway status `addresses` (from the install Service) | Supported, see Kubernetes controller mode |
+| Gateway `spec.addresses`, per-Gateway load balancer provisioning | Not implemented |
 
 ## Kubernetes controller mode
 
@@ -151,9 +152,45 @@ references, and reads ReferenceGrants and namespace labels when RBAC allows. Sta
 back through the `status` subresource with merge patches: GatewayClass `Accepted`,
 Gateway conditions and listeners, HTTPRoute `parents` (other controllers' entries are
 kept). Patches are sent only when the status differs from what the API holds, so a
-converged cluster sees no writes and drift is repaired on the next poll.
+converged cluster sees no writes and drift is repaired on the next event or resync.
 
-`setura gateway install` prints the manifests; this tool never applies them. The default
+* **Watches.** Each collection (GatewayClasses, Gateways, HTTPRoutes, GRPCRoutes,
+  TLSRoutes, Services, EndpointSlices, ReferenceGrants, Namespaces) is listed once for its
+  `resourceVersion`, then followed with a chunked `?watch=1&resourceVersion=...&allowWatchBookmarks=true`
+  stream over plain `net/http`. Bookmarks advance the version, events trigger one coalesced
+  reload, a `410 Gone` (HTTP or in-stream) forces a relist, dropped streams reconnect with
+  jittered backoff (500 ms up to 30 s), and a collection whose API refuses watches is
+  polled every 5 s while the watch is retried. Secrets are fetched, not watched, so a
+  safety relist runs every `--resync` (default 1 m). `--poll` restores the old behaviour
+  (reload every `--interval`, default 5 s) and uses no watch requests.
+* **Leader election.** With `--leader-elect` the replicas contend for a
+  `coordination.k8s.io/v1` Lease (`--lease-name`, `--lease-namespace`, `--lease-duration`
+  15 s, `--lease-renew-deadline` 10 s, `--lease-retry-period` 2 s). Only the holder writes
+  status and patches the Service; every replica keeps serving traffic. A leader that cannot
+  renew for the renew deadline, or sees another holder, steps down; on shutdown it releases
+  the Lease so another replica takes over at once. Expiry is judged on the local clock, as
+  client-go does. `install` enables this by default.
+* **Status cleanup.** When a route stops naming one of our Gateways (parentRef changed,
+  Gateway moved to another class), the leader removes this controller's entries from
+  its `status.parents` and leaves other controllers' entries alone. A deleted route takes its
+  status with it. `attachedRoutes` is recomputed from the live table on every reload.
+* **Addresses.** The Service `--service-name` (default `setura-gateway`, in
+  `--service-namespace`, default the pod's namespace) is the gateway's front door: its
+  LoadBalancer ingress IPs and hostnames, else its ClusterIP, become every served Gateway's
+  `status.addresses`.
+* **Ports.** `--expose-gateway-ports` makes the leader add a Service port `gw-N` for every
+  HTTP, HTTPS and TLS listener port of the Gateways it serves (target `N`, plus
+  `--port-offset` below 1024 or the `--port-map` value) and remove the `gw-N` ports it added
+  once nothing uses them. Other ports are never touched. `install --expose-gateway-ports`
+  passes the flag and grants `patch` on that one Service by name.
+* **Listener status.** Reasons are the spec's: `Accepted`, `ResolvedRefs`, `RefNotPermitted`,
+  `InvalidCertificateRef`, `InvalidRouteKinds` (an `allowedRoutes.kinds` entry the protocol
+  cannot carry), `InvalidKind` and `BackendNotFound` on routes; `supportedKinds` is per
+  listener; `observedGeneration` follows `metadata.generation`; a backendRef that does not
+  resolve gets a 500 in proportion to its weight.
+
+`setura gateway install` prints the manifests (ClusterRole with `watch`, a namespaced Role
+for Leases, optional Service patch); this tool never applies them. The default
 image is `ghcr.io/zyvorai/zyvor-setura-gateway:VERSION`; override with `--image`.
 
 ## Shadow diffing
@@ -172,12 +209,13 @@ without touching what the client sees: see [shadow.md](shadow.md), the
 * Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, and TLS
   passthrough by SNI. No HTTP/3, no client-certificate authentication.
   Upstreams are spoken to with HTTP/1.1 (HTTP/2 only for https upstreams).
-* Kubernetes mode polls (default 5 s); it does not use watches, so changes take up to one
-  interval. There is no leader election: replicas each serve traffic and write the same
-  status. Status of a deleted or detached route is not cleaned up.
-* The Service created by `install` exposes ports 80 and 443; add ports for any other
-  listener port, and remember `--port-offset 8000` maps spec ports below 1024. All Gateways
-  of the class share one process, so listeners with the same port merge into one socket.
+* Kubernetes mode: Secrets are not watched (picked up by the `--resync` relist), and a
+  leader that loses the API for longer than the renew deadline steps down, so status can
+  lag during an API outage while traffic keeps flowing. `install` generates one
+  Service with ports 80 and 443; use `--expose-gateway-ports` (or add ports yourself) for
+  other listener ports, and remember `--port-offset 8000` maps spec ports below 1024. All
+  Gateways of the class share one process, so listeners with the same port merge into one
+  socket. Gateway `spec.addresses` (static addresses) is not honoured.
 * One status `generation` in file mode is the reload counter (snapshot files have no
   metadata generation).
 * Selector namespaces support `matchLabels` only; `matchExpressions` fail closed.

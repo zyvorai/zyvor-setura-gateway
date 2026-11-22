@@ -83,10 +83,9 @@ GRPCRoutes are considered for such requests and only HTTPRoutes for everything e
   the same backend when there is one, share the retry budget with HTTP retries
   (`--retry-budget`) and are bounded by the call's deadline. `--retry-header` adds
   `X-Setura-Retries`. Retries are not moved to another `backendRef` for gRPC.
-* **Mirroring.** `RequestMirror` (backendRef, `percent`) copies unary calls, in the same
-  sense, to the mirror backend, fire-and-forget (answers are discarded, failures never reach
-  the caller). Streaming calls and messages above 1 MiB are not mirrored. `shadow-diff` is
-  not supported on a GRPCRoute and is rejected.
+* **Mirroring.** `RequestMirror` on a rule (with an optional shadow-diff block) is described in
+  [shadow.md](shadow.md#grpc); it works together with `retry` (the mirror copy is taken from
+  the call the client sends, not from retries).
 * **Health.** Besides the passive ejection every backend gets, a backend may use gRPC health
   checking: `healthCheck: {"protocol": "grpc", "service": "pkg.Orders"}` (see
   [resilience.md](resilience.md)).
@@ -110,10 +109,10 @@ GRPCRoutes are considered for such requests and only HTTPRoutes for everything e
   Access logs and `/stats` record those with the HTTP-equivalent status (404 or 5xx),
   so they do not look like successes.
 
-Not implemented for GRPCRoute: mirroring or retrying streaming calls (they cannot be replayed
-without buffering them whole, which would break streaming), retries across `backendRef`s,
-circuit breaking, and `ExtensionRef` (refused, see above). The 50 ms wait that tells a unary
-call from a stream only applies to rules that have `retry` or `RequestMirror`.
+Not implemented for GRPCRoute: retrying streaming calls (they cannot be replayed without
+buffering them whole, which would break streaming), retries across `backendRef`s, circuit
+breaking, and `ExtensionRef` (refused, see above). The 50 ms wait that tells a unary call
+from a stream only applies to rules that have `retry`.
 
 ## TLSRoute (passthrough and terminate)
 

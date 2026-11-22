@@ -182,11 +182,11 @@ func TestExplainCreationTimeTie(t *testing.T) {
 	}
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	tr := explain(t, tableOf(t, mk(), setTimes(t0.Add(time.Hour), t0)), "GET", "http://x.test:8080/")
-	if winnerName(tr) != "old" || !anyReason(tr, "the oldest route wins") {
+	if winnerName(tr) != "old" || !anyReason(tr, "the oldest creationTimestamp wins") {
 		t.Fatalf("older route should win\n%s", dumpTrace(tr))
 	}
 	tr = explain(t, tableOf(t, mk(), setTimes(t0, t0)), "GET", "http://x.test:8080/")
-	if winnerName(tr) != "new" || !anyReason(tr, "name sorts first") {
+	if winnerName(tr) != "new" || !anyReason(tr, "name order") {
 		t.Fatalf("equal times: name order\n%s", dumpTrace(tr))
 	}
 }

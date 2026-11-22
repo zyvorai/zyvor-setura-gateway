@@ -9,7 +9,7 @@ shape of a report; it is not a result.
 
 ```
 scripts/run-conformance.sh --dry-run                      # print the plan, change nothing
-scripts/run-conformance.sh --context CTX [--k3s-container NAME] [--patch-addresses]
+scripts/run-conformance.sh --context CTX [--k3s-container NAME] [--loadbalancer]
 ```
 
 Use a disposable cluster only: the script installs CRDs, a GatewayClass `setura` and a
@@ -36,15 +36,28 @@ must match; to move to another release, change both and use a new directory here
 * `supportedFeatures` is what Setura claims, from `conformance/conformance_test.go`.
   Tests needing an unclaimed feature are not run and are not failures. `skippedTests` lists
   tests skipped by name; the reasons are in the comments next to `skipTests` in that file.
-* Only the `GATEWAY-HTTP` profile is run. `GATEWAY-GRPC` (no GRPCRoute), `GATEWAY-TLS` (no
-  TLSRoute or passthrough) and the mesh profiles are not supported yet and are not run.
+* Profiles run: `GATEWAY-HTTP`, `GATEWAY-GRPC` and `GATEWAY-TLS` (passthrough only; the
+  Terminate and Mixed TLSRoute modes are not claimed). TCP, UDP and the mesh profiles are not
+  supported. The GRPC and TLS profiles have not been run yet; expect gaps in extended GRPC
+  features (`GRPCRouteNamedRouteRule`, `GRPCRouteRequestHeaderModifier` are not claimed).
 * A failed core test is a bug or a gap to fix, not something to hide by adding it to the
   skip list. Do not edit `report.yaml` by hand.
 
-## Harness shims
+## Controller behaviour the suite depends on
 
-`--patch-addresses` is a test-harness shim: the controller does not yet write
-`Gateway.status.addresses`, which the suite needs to find where to send traffic, so the
-script copies the node IP into that field and exposes the Service as a LoadBalancer. A report
-produced with it must say so when shared. Without it the suite cannot reach the gateway
-and most tests fail at setup.
+The controller now writes `Gateway.status.addresses` from the Service `install` creates, adds
+Service ports for the Gateways' listener ports (`--expose-gateway-ports`, which the script
+passes, so `GatewayPort8080` is claimed), uses watches, and cleans up its route status
+entries. These are covered by unit tests against a fake API server, not yet by a real run.
+
+`--loadbalancer` only rewrites the install Service to `type: LoadBalancer` so a K3s node gives
+it an IP the controller can publish; no status is patched by the script any more. Without it
+the suite cannot reach the gateway from outside the cluster.
+
+## What is still unknown
+
+* No upstream result has been produced; the first real run decides which of the claimed
+  features pass. Tests that fail go in the report, not into the skip list.
+* `GatewayStaticAddresses`, `GatewayAddressEmpty`, `GatewayHTTPListenerIsolation`,
+  `GatewayInfrastructure`, `BackendTLSPolicy*`, CORS, `HTTPRouteBackendTimeout`, H2C and
+  WebSocket backend protocols are not implemented and stay skipped or unclaimed.

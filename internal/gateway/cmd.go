@@ -32,7 +32,14 @@ Flags for run and up:
   --port-map A=B[,..]   serve spec port A on port B (0 = any free port); repeatable
   --port-offset N       add N to spec ports below 1024 (unprivileged remapping)
   --admin ADDR|off      admin endpoint (default 127.0.0.1:19000)
-  --interval DUR        poll interval for config changes (default 1s; 5s with --kubernetes)
+  --interval DUR        poll interval for config changes (default 1s; with --kubernetes only used by --poll, default 5s)
+  --poll                with --kubernetes: poll instead of using watches
+  --resync DUR          with --kubernetes: safety relist while watching (default 1m)
+  --leader-elect        with --kubernetes: only the holder of a coordination.k8s.io Lease writes status
+  --lease-name N, --lease-namespace NS, --lease-duration D (15s), --lease-renew-deadline D (10s),
+  --lease-retry-period D (2s), --lease-identity ID   Lease settings for --leader-elect
+  --service-name N, --service-namespace NS   Service whose address becomes Gateway status.addresses
+  --expose-gateway-ports   with --kubernetes: add a Service port for every Gateway listener port
   --force               apply configurations that have lint errors
   --access-log FILE|-|off   access log (default "-", stdout)
   --access-log-format json|text   access log format (default json)
@@ -65,8 +72,12 @@ Flags for run and up:
   --health-path PATH    active-check every backend without its own healthCheck (default off)
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
                         (a backend healthCheck with protocol "grpc" probes grpc.health.v1)
+  --log-query           keep query strings in logged and dashboard paths (default: stripped)
+  --conn-history N      recent requests kept for /connections and the dashboard (default 500, 0 = off)
   --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
                         a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
+  --shadow-state FILE   snapshot shadow results (counters, recent mismatches) to FILE every 10s and
+                        reload them at start (default off)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -87,6 +98,7 @@ type runFlags struct {
 	outlier    int
 	rotate     RotateOptions
 	rotateSize string
+	connHist   int
 	uiAddr     string
 	uiToken    string
 }
@@ -122,7 +134,9 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&f.rotateSize, "access-log-max-size", "", "rotate the access log file past this size (100, 64k, 10MB, 1g)")
 	fs.IntVar(&f.rotate.Keep, "access-log-keep", 0, "rotated access log files to keep (default all)")
 	fs.BoolVar(&f.rotate.Gzip, "access-log-gzip", false, "gzip rotated access log files")
+	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
+	fs.StringVar(&f.opts.ShadowState, "shadow-state", "", "persist shadow results to FILE (atomic snapshots, reloaded at start)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -166,6 +180,13 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	if f.rotate.Keep < 0 {
 		return nil, fmt.Errorf("--access-log-keep %d: want 0 or more", f.rotate.Keep)
+	}
+	if f.connHist < 0 {
+		return nil, fmt.Errorf("--conn-history %d: want 0 (off) or a positive count", f.connHist)
+	}
+	f.opts.ConnHistory = f.connHist
+	if f.connHist == 0 {
+		f.opts.ConnHistory = -1
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
@@ -249,6 +270,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 			if interval == 0 {
 				interval = 5 * time.Second
 			}
+			kopts.ctl.portOffsetFn = func() (int, map[int]int) { return rf.opts.PortOffset, rf.opts.PortMap }
 			ks, err := kopts.source(stderr)
 			if err != nil {
 				return fail(err)
@@ -291,6 +313,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		fs.StringVar(&io.Image, "image", "", "container image (default ghcr.io/zyvorai/zyvor-setura-gateway:VERSION)")
 		fs.StringVar(&io.ClassName, "class", "setura", "GatewayClass name")
 		fs.IntVar(&io.Replicas, "replicas", 1, "controller replicas")
+		fs.BoolVar(&io.ExposePorts, "expose-gateway-ports", false, "run the controller with --expose-gateway-ports and grant it patch on its own Service")
 		if _, err := parseInterleaved(fs, rest); err != nil {
 			return fail(err)
 		}

@@ -36,6 +36,7 @@ var helpGroups = []helpGroup{
 		{"snapshot", "", "capture Gateway and HTTPRoute specs"},
 		{"map", "", "render the declared route topology"},
 		{"ui", "[--listen ADDR]", "live read-only web dashboard: route map, lint, traffic, feed"},
+		{"connections", "[--admin ADDR] [--follow]", "who connected to which listener, over what protocol, and where the gateway sent it"},
 		{"impact", "TARGET", "query what a resource change would affect"},
 	}},
 	{"Analyze", []helpEntry{
@@ -47,7 +48,7 @@ var helpGroups = []helpGroup{
 	}},
 	{"Publish", []helpEntry{
 		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
-		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
+		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored HTTP and gRPC responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
@@ -68,11 +69,12 @@ var cmdExamples = map[string][]string{
 	"why": {"setura why GET https://orders.example.test/api/v1 -H 'x-canary: 1' --config gateway.json",
 		"setura why POST http://x.test:8080/ --admin 127.0.0.1:19000 --format json",
 		"setura why GET http://x.test:8080 --grpc helloworld.Greeter/SayHello --config gateway.json",
-		"setura why GET tls://db.secure.test:8443 --sni db.secure.test --config gateway.json"},
+		"setura why GET tls://db.secure.test:8443 --sni db.secure.test --config gateway.json",
+		"setura why GET http://x.test:8080/ --config gateway.json --rate-limit 100/s --rate-key route --client-ip 10.1.2.3"},
 	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},
-	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json --steps 10,50,100", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
+	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json [--steps 10,50,100|--no-steps] [--max-error-rate 0.01 --max-p95 300ms]", "setura gateway run --config routes.json --shadow-diff 10 --shadow-state shadow.json", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
 	"gate":      {"setura gate orders http://127.0.0.1:8080/ --gateway dev --backend orders-v2 -n demo"},
 	"compare":   {"setura compare https://orders.example.test/ --target dns --target 10.0.0.5"},
 	"snapshot":  {"setura snapshot -n demo > before.json", "setura --context prod-eu,prod-us snapshot -n demo"},
@@ -85,13 +87,15 @@ var cmdExamples = map[string][]string{
 	"watch":     {"setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\" --alert-cooldown 5m"},
 	"doctor":    {"setura doctor -n demo"},
 	"replay": {"setura replay --log access.jsonl --before old.json --after new.json",
-		"zcat access.jsonl.gz | setura replay --log - --before old.json --after new.json --fail-on any --format github"},
+		"zcat access.jsonl.gz | setura replay --log - --before old.json --after new.json --fail-on any --format github",
+		"setura replay --log /var/log/nginx/access.log --default-host shop.example.test --before old.json --after new.json --fail-on route,policy"},
 	"migrate": {"setura migrate check --ingress ingress.yaml --routes routes.yaml --services services.yaml --objects objects.yaml",
 		"setura migrate check -n shop --ingress-class nginx",
 		"setura migrate check -n shop --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --format github",
 		"setura migrate check --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --probe-extra"},
-	"ai": {"setura ai report.json --model llama3"},
-	"ui": {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
+	"ai":          {"setura ai report.json --model llama3"},
+	"connections": {"setura connections", "setura connections --follow --filter status=5xx --filter route=orders", "setura connections --admin 127.0.0.1:19000 --format json | jq '.history[0]'"},
+	"ui":          {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
 }
 
 func writeHelp(w io.Writer, u *ui) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the upstream Gateway API conformance suite (GATEWAY-HTTP profile) against
+# Runs the upstream Gateway API conformance suite (GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS profiles) against
 # `setura gateway run --kubernetes` on a disposable cluster such as K3s.
 #
 # It installs CRDs, a GatewayClass and a Deployment into the cluster behind the
@@ -11,9 +11,9 @@
 #   --k3s-container NAME  docker container running K3s; the image is imported into it
 #   --skip-build          do not build the image (use --image as is)
 #   --image REF           image reference (default setura-conformance:local)
-#   --patch-addresses     HARNESS SHIM: write the node IP into Gateway status.addresses
-#                         because the controller does not publish addresses yet, and expose
-#                         the Service as a LoadBalancer. Say so when you share a report.
+#   --loadbalancer        rewrite the install Service to type LoadBalancer (K3s ServiceLB then
+#                         gives it the node IP, which the controller publishes as Gateway
+#                         status.addresses). --patch-addresses is the old name for this flag.
 #   --version-label V     implementation version recorded in the report (default: git describe)
 # Environment: GATEWAY_API_VERSION (default below), SETURA_CONFORMANCE_SKIP (extra skips),
 #   NAMESPACE (default setura-system), GATEWAY_CLASS (default setura).
@@ -32,11 +32,10 @@ BUILD=1
 PATCH_ADDR=0
 VERSION_LABEL=""
 
-# Profiles. GATEWAY-GRPC (no GRPCRoute) and GATEWAY-TLS (no TLSRoute, no
-# passthrough) are NOT supported yet and are not run. The authoritative
+# Profiles. TCP, UDP and mesh are not supported. The authoritative
 # supported-features and skip lists live in conformance/conformance_test.go.
-PROFILES="GATEWAY-HTTP"
-UNSUPPORTED_PROFILES="GATEWAY-GRPC GATEWAY-TLS MESH"
+PROFILES="GATEWAY-HTTP GATEWAY-GRPC GATEWAY-TLS"
+UNSUPPORTED_PROFILES="GATEWAY-TCP GATEWAY-UDP MESH"
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -45,7 +44,7 @@ while [ $# -gt 0 ]; do
     --k3s-container) K3S_CONTAINER=${2:?}; shift 2 ;;
     --skip-build) BUILD=0; shift ;;
     --image) IMAGE=${2:?}; shift 2 ;;
-    --patch-addresses) PATCH_ADDR=1; shift ;;
+    --loadbalancer|--patch-addresses) PATCH_ADDR=1; shift ;;
     --version-label) VERSION_LABEL=${2:?}; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -73,9 +72,7 @@ run() {
 kc() { run kubectl --context "${CONTEXT:-CONTEXT}" "$@"; }
 
 tmp=""
-shim=""
 cleanup() {
-  if [ -n "$shim" ]; then kill "$shim" 2>/dev/null || true; fi
   if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
 }
 trap cleanup EXIT
@@ -87,11 +84,11 @@ kube context        : ${CONTEXT:-<required>}
 image               : $IMAGE (build: $BUILD)
 namespace / class   : $NAMESPACE / $GATEWAY_CLASS
 profiles run        : $PROFILES
-profiles NOT run    : $UNSUPPORTED_PROFILES (GRPC and TLS exist in the gateway but are not wired into this harness yet)
+profiles NOT run    : $UNSUPPORTED_PROFILES
 feature/skip lists  : $ROOT/conformance/conformance_test.go
 extra skips         : ${SETURA_CONFORMANCE_SKIP:-<none>}
 report directory    : $OUT
-address shim        : $PATCH_ADDR
+LoadBalancer Service: $PATCH_ADDR
 PLAN
 
 step "Check the pinned version matches conformance/go.mod"
@@ -126,40 +123,18 @@ step "Deploy the Setura controller (manifests from 'setura gateway install')"
 if [ "$DRY" = 0 ]; then
   tmp=$(mktemp -d)
   (cd "$ROOT" && go build -o "$tmp/setura" ./cmd/setura)
-  "$tmp/setura" gateway install --namespace "$NAMESPACE" --image "$IMAGE" --class "$GATEWAY_CLASS" >"$tmp/install.yaml"
+  "$tmp/setura" gateway install --namespace "$NAMESPACE" --image "$IMAGE" --class "$GATEWAY_CLASS" --expose-gateway-ports >"$tmp/install.yaml"
   if [ "$PATCH_ADDR" = 1 ]; then
     sed 's/type: ClusterIP/type: LoadBalancer/' "$tmp/install.yaml" >"$tmp/install-lb.yaml"
     mv "$tmp/install-lb.yaml" "$tmp/install.yaml"
   fi
   kubectl --context "$CONTEXT" apply -f "$tmp/install.yaml"
 else
-  echo "+ setura gateway install --namespace $NAMESPACE --image $IMAGE --class $GATEWAY_CLASS | kubectl --context CONTEXT apply -f -"
+  echo "+ setura gateway install --namespace $NAMESPACE --image $IMAGE --class $GATEWAY_CLASS --expose-gateway-ports | kubectl --context CONTEXT apply -f -"
   if [ "$PATCH_ADDR" = 1 ]; then echo "  (Service type rewritten to LoadBalancer)"; fi
 fi
 kc -n "$NAMESPACE" rollout status deploy/setura-gateway --timeout=180s
 kc wait --for=condition=Accepted gatewayclass/"$GATEWAY_CLASS" --timeout=120s
-
-if [ "$PATCH_ADDR" = 1 ]; then
-  step "Harness shim: publish the node IP as Gateway status.addresses (background loop)"
-  echo "The suite reads status.addresses; the controller does not write them yet."
-  if [ "$DRY" = 0 ]; then
-    node_ip=$(kubectl --context "$CONTEXT" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-    (
-      while true; do
-        gws=$(kubectl --context "$CONTEXT" get gateways -A \
-          -o jsonpath='{range .items[?(@.spec.gatewayClassName=="'"$GATEWAY_CLASS"'")]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-        for g in $gws; do
-          kubectl --context "$CONTEXT" -n "${g%%/*}" patch gateway "${g##*/}" --subresource=status --type=merge \
-            -p '{"status":{"addresses":[{"type":"IPAddress","value":"'"$node_ip"'"}]}}' >/dev/null 2>&1 || true
-        done
-        sleep 1
-      done
-    ) &
-    shim=$!
-  else
-    echo "+ loop: kubectl patch gateway <each of class $GATEWAY_CLASS> --subresource=status -p {status.addresses=[node InternalIP]}"
-  fi
-fi
 
 step "Run the conformance suite (profile $PROFILES)"
 run mkdir -p "$OUT"
