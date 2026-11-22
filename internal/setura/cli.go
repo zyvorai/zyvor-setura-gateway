@@ -242,6 +242,8 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "check":
 		junit := fs.String("junit", "", "also write JUnit XML to FILE")
+		sarifOut := fs.String("sarif", "", "also write SARIF 2.1.0 to FILE")
+		checkFormat := fs.String("format", "json", "json or github (workflow annotations)")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -258,8 +260,25 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				return 0, err
 			}
 		}
-		if err := out(rows); err != nil {
-			return 0, err
+		if *sarifOut != "" {
+			b, err := CheckSARIF(rows, pos[0])
+			if err == nil {
+				err = writeFile(*sarifOut, b)
+			}
+			if err != nil {
+				return 0, err
+			}
+		}
+		switch *checkFormat {
+		case "json":
+			if err := out(rows); err != nil {
+				return 0, err
+			}
+		case "github":
+			fmt.Fprint(stdout, CheckAnnotations(rows, pos[0]))
+		default:
+			fmt.Fprintln(stderr, "setura check: --format must be json or github")
+			return 2, usageError{"format"}
 		}
 		failed := false
 		for _, r := range rows {
@@ -437,7 +456,13 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		return 0, out(graph)
 
 	case "lint":
-		format := fs.String("format", "text", "text or json")
+		format := fs.String("format", "text", "text, json, sarif or github")
+		manifestDir := fs.String("manifest-dir", "", "directory of YAML/JSON manifests used to add file:line to sarif/github findings")
+		baselineFile := fs.String("baseline", "", "ignore findings recorded in this baseline FILE")
+		writeBaseline := fs.String("write-baseline", "", "record current findings to FILE and ignore them")
+		var disable, overrides stringList
+		fs.Var(&disable, "disable", "comma-separated rule IDs to disable, e.g. SET004,SET009; repeatable")
+		fs.Var(&overrides, "severity-override", "RULE=error|warning; repeatable")
 		snap := fs.String("snapshot", "", "read a Setura snapshot instead of querying Kubernetes")
 		strict := fs.Bool("strict", false, "exit 1 on warnings as well as errors")
 		rules := fs.Bool("rules", false, "list the lint rules and exit")
@@ -451,9 +476,30 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			}
 			return 0, nil
 		}
-		if *format != "text" && *format != "json" {
-			fmt.Fprintln(stderr, "setura lint: --format must be text or json")
+		if *format != "text" && *format != "json" && *format != "sarif" && *format != "github" {
+			fmt.Fprintln(stderr, "setura lint: --format must be text, json, sarif or github")
 			return 2, usageError{"format"}
+		}
+		var lopts LintOptions
+		var locs ManifestIndex
+		{
+			var err error
+			if lopts.Disable, err = ParseDisable(disable); err != nil {
+				return 2, err
+			}
+			if lopts.Override, err = ParseOverrides(overrides); err != nil {
+				return 2, err
+			}
+			if *baselineFile != "" {
+				if lopts.Baseline, err = ReadBaseline(*baselineFile); err != nil {
+					return 2, err
+				}
+			}
+			if *manifestDir != "" {
+				if locs, err = ScanManifests(*manifestDir); err != nil {
+					return 2, err
+				}
+			}
 		}
 		var snapshot obj
 		if *snap != "" {
@@ -471,12 +517,30 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err != nil {
 			return 0, err
 		}
-		if *format == "json" {
+		if *writeBaseline != "" {
+			all := ApplyLintOptions(report, LintOptions{Disable: lopts.Disable, Override: lopts.Override})
+			if err := WriteBaseline(all, *writeBaseline); err != nil {
+				return 0, err
+			}
+			lopts.Baseline = fingerprintSet(all)
+		}
+		report = ApplyLintOptions(report, lopts)
+		switch *format {
+		case "json":
 			if err := out(report); err != nil {
 				return 0, err
 			}
-		} else {
+		case "sarif":
+			b, err := LintSARIF(report, locs)
+			if err != nil {
+				return 0, err
+			}
+			stdout.Write(b)
+		case "github":
+			fmt.Fprint(stdout, LintAnnotations(report, locs))
+		default:
 			fmt.Fprint(stdout, LintText(report))
+			fmt.Fprint(stdout, lintSummary(report))
 		}
 		failed := report["ok"] != true
 		if w, _ := num(report["warnings"]); *strict && w > 0 {
