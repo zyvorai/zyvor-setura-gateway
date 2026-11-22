@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("? complex\n: value\n[1, 2, {a: b}]: x\n")

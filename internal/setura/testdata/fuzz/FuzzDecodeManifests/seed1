@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("---\nkind: Ingress\nmetadata: {name: a, labels: {k: v}}\n---\n# empty\n---\n")

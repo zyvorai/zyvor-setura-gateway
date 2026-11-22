@@ -24,12 +24,32 @@ jobs:
         run: |
           bin/setura gateway up examples/builtin-demo.json > gateway.log 2>&1 &
           GW=$!
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:19000/ready >/dev/null && break; sleep 1; done
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:19000/ready >/dev/null && break; sleep 1; done
           bin/setura explain http://orders.mactra.test:8080/checkout --address 127.0.0.1
           bin/setura bench http://orders.mactra.test:8080/checkout --address 127.0.0.1 --requests 100 --concurrency 5
           bin/setura lint --snapshot examples/builtin-demo.json
           kill $GW || true
           cat gateway.log
+  # Flake hunting, fuzz seed regression and a benchmark/load smoke. No performance thresholds:
+  # shared CI runners are too noisy to gate on; numbers belong in docs/performance.md.
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Gateway tests under the race detector, three times (flakes)
+        run: go test -race -count=3 ./internal/gateway
+      - name: Fuzz seed regression (every seed and testdata/fuzz corpus file runs as a test)
+        run: go test -count=1 -run '^Fuzz' -v ./internal/gateway ./internal/setura
+      - name: Benchmark smoke (compile and run each once, no thresholds)
+        run: go test ./internal/gateway -run '^$' -bench . -benchtime 1x
+      - name: Load generator smoke (real binaries on loopback, no thresholds)
+        run: |
+          make build
+          scripts/loadtest.sh --duration 3s --warmup 1s --concurrency 16
   k3s:
     runs-on: ubuntu-latest
     steps:
@@ -42,7 +62,7 @@ jobs:
         run: |
           docker run --privileged --name setura-k3s -d -p 127.0.0.1:6443:6443 rancher/k3s:v1.35.6-k3s1 server --disable=traefik
           mkdir -p ~/.kube
-          for i in {1..90}; do
+          for _ in {1..90}; do
             if docker cp setura-k3s:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && [ -n "$(kubectl get nodes -o name 2>/dev/null)" ]; then break; fi
             sleep 2
           done
