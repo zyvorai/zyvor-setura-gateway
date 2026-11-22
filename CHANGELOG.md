@@ -17,7 +17,12 @@ The built-in gateway grows up, and Setura gets a dashboard and a migration check
 - **Conformance harness.** A separate module and weekly workflow that run the upstream Gateway API conformance suite (v1.7.0, GATEWAY-HTTP) against the built-in gateway. No results are published yet and the gateway makes no conformance claim.
 - **Toolchain.** Go 1.27 and current GitHub Actions.
 
-Known limits: retries move between endpoints of one Service only; ejection state resets on reload; rate limits are per process; no circuit breaking, TCPRoute or UDPRoute.
+- **Connection detail.** Access-log lines now carry client IP and port, listener and protocol, TLS version, cipher, SNI and ALPN, the exact upstream address, upstream timings and reuse, retry attempts, and gRPC service, method and status. A bounded connection history and the open connections are served on the admin `/connections` endpoint, in a dashboard Connections panel, and by `setura connections`. Query strings are removed from logged paths unless `--log-query` is set. See `docs/connections.md`.
+- **Resilience and operations.** Cross-backend retries, per-try timeouts and jitter, circuit breaking, health state that survives reloads, a `resilience` config block, OTLP export retries, access-log rotation, trusted proxies, `--rate-limit-share`, gRPC deadlines, retries and health checks, and TLS termination on `TLS` listeners.
+- **Kubernetes controller.** Watch streams instead of polling (with `--poll` as the fallback), Lease-based leader election, status cleanup for detached routes, Gateway `status.addresses`, and `--expose-gateway-ports`.
+- **Replay, why and shadow, deeper.** `why` models retry, rate-limit and trace behaviour; `replay` reads text and Common Log Format logs and models gRPC, SNI and policy changes; shadow diff works through a Kubernetes annotation, compares gRPC calls and large bodies, and can persist results; rollout recovers stale locks and judges gateway metrics. New lint rule `SET015`.
+
+Known limits: rate limits are per process; gRPC streaming calls are not retried or circuit-broken; the controller and the conformance harness have not been run against a real cluster; no TCPRoute or UDPRoute.
 
 ## 0.5.1
 

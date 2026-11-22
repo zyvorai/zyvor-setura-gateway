@@ -229,15 +229,15 @@ setura gateway install --namespace setura-system | kubectl apply -f -   # you de
 | --- | --- |
 | Listeners | HTTP and HTTPS, TLS termination with SNI certificate selection, HTTP/2 via ALPN, WebSocket upgrade, wildcard hostnames, `allowedRoutes` |
 | Matching | Path (exact, prefix, regex), headers, query parameters and method, with the spec's precedence rules |
-| Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, outlier ejection, retries with a budget, request timeouts |
+| Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, outlier ejection, retries with a budget, request timeouts, cross-backend retries, health state that survives reloads |
 | Protocols | HTTPRoute, GRPCRoute (h2c and h2, streaming, trailers) and TLSRoute (TLS passthrough by SNI) |
-| Protection | Local token-bucket rate limiting (by IP, route or header) |
+| Protection | Local token-bucket rate limiting (by IP, route or header), circuit breaking, trusted-proxy client IPs |
 | Filters | Request and response header modification, redirects, URL rewrite, request mirroring |
 | Errors | 404 for no match, 500 for no valid backend, 502 and 504 for upstream failures; `X-Setura-Backend` always names the backend that answered |
 | Operations | Hot reload with zero dropped connections, lint-gated config (a config with lint errors is refused and the old one keeps serving), JSON or text access log, W3C trace propagation with optional OTLP export, admin `/ready`, `/config`, `/stats`, `/status` and Prometheus `/metrics` |
 | Kubernetes | Reads Gateways, HTTPRoutes, Services, EndpointSlices, Secrets and ReferenceGrants with the service account, writes Accepted, ResolvedRefs and Programmed status back |
 
-**Honest limits.** Not implemented: TCPRoute, UDPRoute and TLS termination on TLS listeners; session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, circuit breaking, shared rate limits across replicas and authentication. It has not passed the upstream Gateway API conformance suite and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The Kubernetes mode polls instead of watching, has no leader election, and has only been tested against a fake API server so far. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
+**Honest limits.** Not implemented: TCPRoute and UDPRoute; session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, authentication, and rate limits shared across replicas (use `--rate-limit-share` to approximate). TLS termination on `TLS` listeners forwards plain TCP to the backend. Kubernetes mode uses watches, leader election and status cleanup, but has only been tested against a fake API server, and Secrets are refreshed on a resync interval. It has not passed the upstream Gateway API conformance suite (a harness is in `conformance/`) and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
 
 ## Change it without guessing
 

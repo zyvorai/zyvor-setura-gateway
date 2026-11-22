@@ -12,7 +12,7 @@
 - [Built-in gateway](builtin-gateway.md): listeners, matching, filters, hot reload, Kubernetes mode, honest limits.
 - [GRPCRoute and TLSRoute](grpc-tls-routes.md): gRPC over h2c and h2, TLS passthrough by SNI.
 - [Resilience](resilience.md): retries, outlier ejection, health checks.
-- [Observability](observability.md): access logs, tracing, OTLP, rate limiting, `/metrics`.
+- [Observability](observability.md): access logs, rotation, tracing, OTLP, rate limiting, `/metrics`.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
 - [Conformance](conformance/): the upstream Gateway API conformance harness.
