@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0-rc3
+
+Third release candidate. rc2 shipped and its signatures and provenance verify, but it exposed two release-pipeline bugs: the container image build failed (the Dockerfile did not copy the new `grafana` package that the monitoring rules import), and the binaries were stamped `+dirty` because the release notes were written into the work tree before the build. Both are fixed. Otherwise identical to the 0.7.0 list below.
+
 ## 0.7.0-rc2
 
 Second release candidate. rc1 could not ship: a golden-frame test for `setura top` printed a percentile that differed by one millisecond between Apple-silicon and Linux (fused multiply-add), so the release job failed its tests. Fixed by snapping quantiles to a fixed precision; the suite now passes on both architectures. Otherwise identical to the 0.7.0 list below.

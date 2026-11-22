@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
+COPY grafana ./grafana
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH

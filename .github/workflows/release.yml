@@ -27,7 +27,17 @@ jobs:
           go-version: stable
       - name: Test
         run: make test
+      - name: Archives
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+      - name: Packages (deb, rpm)
+        run: sh scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - name: Helm chart
+        run: helm package packaging/helm/setura --version "${GITHUB_REF_NAME#v}" --app-version "${GITHUB_REF_NAME#v}" --destination dist
+      - name: SBOMs
+        run: sh scripts/sbom-dist.sh dist
       - name: Release notes from CHANGELOG.md
+        # Written after the build: an untracked file in the work tree makes Go stamp every
+        # binary "+dirty".
         run: |
           # Fails the release when CHANGELOG.md has no section for this tag.
           sh scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > release-notes.md
@@ -38,14 +48,6 @@ jobs:
           Verify a download: \`cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity ${SIGNER}${GITHUB_REF_NAME} --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt\`, then \`sha256sum -c --ignore-missing checksums.txt\`.
           Build provenance: \`gh attestation verify FILE --repo ${GITHUB_REPOSITORY}\`.
           EOF
-      - name: Archives
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
-      - name: Packages (deb, rpm)
-        run: sh scripts/package.sh "${GITHUB_REF_NAME#v}"
-      - name: Helm chart
-        run: helm package packaging/helm/setura --version "${GITHUB_REF_NAME#v}" --app-version "${GITHUB_REF_NAME#v}" --destination dist
-      - name: SBOMs
-        run: sh scripts/sbom-dist.sh dist
       - name: checksums.txt over every asset
         working-directory: dist
         run: |
