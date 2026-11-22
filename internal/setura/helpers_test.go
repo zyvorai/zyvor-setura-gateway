@@ -131,3 +131,17 @@ func is(t *testing.T, got, want any) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// decode round-trips a value through JSON into generic data.
+func decode(t *testing.T, v any) any {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

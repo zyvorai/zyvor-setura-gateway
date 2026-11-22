@@ -28,6 +28,7 @@ var helpGroups = []helpGroup{
 	{"Inspect", []helpEntry{
 		{"inspect", "ROUTE", "show route conditions and backend inventory"},
 		{"listeners", "GATEWAY", "show listener attachment and conditions"},
+		{"certs", "HOST:PORT", "show and verify the presented TLS certificate chain"},
 		{"snapshot", "", "capture Gateway and HTTPRoute specs"},
 		{"map", "", "render the declared route topology"},
 		{"impact", "TARGET", "query what a resource change would affect"},

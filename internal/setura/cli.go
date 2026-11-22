@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // Version is the release version, overridden at build time with -ldflags.
@@ -199,6 +200,11 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		fs.Var(&headers, "header", `require a response header, "Name: value" or "Name: *" for presence; repeatable`)
 		body := fs.String("body-contains", "", "require this text in the first 1 MiB of the response body")
 		maxMS := fs.Float64("max-ms", 0, "fail when the whole probe takes longer than this many milliseconds")
+		cert := fs.String("cert", "", "PEM client certificate for mTLS (requires --key)")
+		key := fs.String("key", "", "PEM client private key for mTLS (requires --cert)")
+		sni := fs.String("tls-server-name", "", "TLS SNI and verification name (default: URL host)")
+		minTLS := fs.String("min-tls", "", "minimum TLS version, 1.2 or 1.3")
+		warnDays := fs.Int("warn-expiry-days", 0, "add expiry_warning when the server certificate expires sooner than N days")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -207,7 +213,8 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			return 2, err
 		}
 		o := ProbeOptions{URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
-			BodyContains: *body, MaxMS: *maxMS}
+			BodyContains: *body, MaxMS: *maxMS,
+			Cert: *cert, Key: *key, ServerName: *sni, MinTLS: *minTLS, WarnExpiryDays: *warnDays}
 		for _, h := range headers {
 			name, value, ok := strings.Cut(h, ":")
 			if !ok || strings.TrimSpace(name) == "" {
@@ -230,6 +237,35 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			fmt.Fprint(stdout, u.ExplainPretty(r))
 		}
 		return boolExit(!r.OK), nil
+
+	case "certs":
+		ca := fs.String("ca", "", "trusted PEM CA bundle (default: system roots)")
+		sni := fs.String("sni", "", "TLS SNI and verification name (default: host)")
+		cert := fs.String("cert", "", "PEM client certificate (requires --key)")
+		key := fs.String("key", "", "PEM client private key (requires --cert)")
+		warn := fs.Int("warn-expiry-days", 0, "exit 1 when any chain certificate expires sooner than N days")
+		timeout := fs.Float64("timeout", 5, "timeout in seconds")
+		asJSON := fs.Bool("json", false, "print JSON")
+		pos, err := parse(fs, rest)
+		if err != nil {
+			return 2, err
+		}
+		if err := need(pos, 1, "HOST:PORT"); err != nil {
+			return 2, err
+		}
+		rep, err := Certs(CertsOptions{Address: pos[0], CA: *ca, SNI: *sni, Timeout: time.Duration(*timeout * float64(time.Second)),
+			tlsOpts: tlsOpts{Cert: *cert, Key: *key, WarnExpiryDays: *warn}})
+		if err != nil {
+			return 0, err
+		}
+		if *asJSON {
+			if err := out(rep); err != nil {
+				return 0, err
+			}
+		} else {
+			fmt.Fprint(stdout, rep.Text())
+		}
+		return boolExit(!rep.OK), nil
 
 	case "check":
 		junit := fs.String("junit", "", "also write JUnit XML to FILE")
@@ -591,6 +627,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		model := fs.String("model", "", "installed Ollama model name; enables local inference")
 		port := fs.Int("port", 11434, "Ollama port on 127.0.0.1")
 		ask := fs.String("ask", "", "question for the model")
+		provider := fs.String("provider", "ollama", "ollama or openai-compatible")
+		endpoint := fs.String("endpoint", "", "model server base URL (loopback or RFC1918 unless --allow-remote); key from SETURA_AI_KEY")
+		allowRemote := fs.Bool("allow-remote", false, "allow a non-local --endpoint")
+		redact := fs.Bool("redact", false, "mask IPs, hostnames, namespaces and header values before sending evidence")
+		suggest := fs.Bool("suggest", false, "ask for read-only next-step commands and print only allowlisted ones")
+		maxEvidence := fs.Int("max-evidence", 0, "send at most N evidence facts (failures first, deterministic); 0 = all")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -598,8 +640,11 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err := need(pos, 1, "REPORT"); err != nil {
 			return 2, err
 		}
-		if *ask != "" && *model == "" {
-			return 0, userError("--ask requires --model")
+		if *model == "" && (*ask != "" || *endpoint != "" || *redact || *suggest || *provider != "ollama") {
+			return 0, userError("--ask, --provider, --endpoint, --redact and --suggest require --model")
+		}
+		if *maxEvidence < 0 {
+			return 0, userError("--max-evidence must not be negative")
 		}
 		raw, err := os.ReadFile(pos[0])
 		if err != nil {
@@ -613,17 +658,28 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err != nil {
 			return 0, err
 		}
+		facts, omitted := LimitEvidence(facts, *maxEvidence)
 		diagnosis := obj{"mode": "evidence", "evidence": facts}
+		if omitted > 0 {
+			diagnosis["evidence_omitted"] = omitted
+		}
 		if *model != "" {
 			question := *ask
 			if question == "" {
 				question = "What does this evidence show, and what should I check next?"
 			}
-			findings, err := Interpret(facts, question, *model, *port)
+			res, err := InterpretWith(facts, question, AIConfig{Provider: *provider, Endpoint: *endpoint, Model: *model, Port: *port,
+				AllowRemote: *allowRemote, Suggest: *suggest, Redact: *redact, Namespaces: ReportNamespaces(report)})
 			if err != nil {
 				return 0, err
 			}
-			diagnosis["mode"], diagnosis["model"], diagnosis["findings"] = "local-model", *model, findings
+			diagnosis["mode"], diagnosis["model"], diagnosis["findings"] = "local-model", *model, res.Findings
+			if *redact {
+				diagnosis["redacted"] = true
+			}
+			if *suggest {
+				diagnosis["suggested_commands"], diagnosis["rejected_suggestions"] = nonNil(res.Suggestions), nonNil(res.Rejected)
+			}
 		}
 		return 0, out(diagnosis)
 	}
@@ -654,6 +710,9 @@ func Check(path string) ([]*Report, error) {
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
 		"headers": true, "body_contains": true, "max_ms": true}
+	for _, k := range mtlsCheckKeys {
+		allowed[k] = true
+	}
 	rows := []*Report{}
 	for _, c := range cases {
 		m := asMap(c)
@@ -702,6 +761,9 @@ func Check(path string) ([]*Report, error) {
 			}
 			o.MaxMS = f
 		}
+		if err := applyCheckTLS(m, &o); err != nil {
+			return nil, err
+		}
 		r, err := Probe(o)
 		if err != nil {
 			return nil, err
@@ -727,4 +789,11 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

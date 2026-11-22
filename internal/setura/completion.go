@@ -20,6 +20,7 @@ var commandNames = []string{
 	"impact",
 	"lint",
 	"ai",
+	"certs",
 	"doctor",
 	"capabilities",
 	"exposure",
