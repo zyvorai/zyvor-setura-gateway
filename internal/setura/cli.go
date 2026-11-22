@@ -13,31 +13,6 @@ import (
 // Version is the release version, overridden at build time with -ldflags.
 var Version = "0.4.0"
 
-const usage = `setura - publish and diagnose a local Envoy gateway
-
-Usage: setura [--context NAME] COMMAND [flags]
-
-Commands:
-  publish GATEWAY --listener NAME   forward an Envoy listener to IPv4 loopback
-  explain URL                       probe a URL from this host
-  check FILE [--junit FILE]         run a JSON file of route assertions
-  inspect ROUTE                     show route conditions and backend inventory
-  listeners GATEWAY                 show listener attachment and conditions
-  gate ROUTE URL                    require current parent status and a probe streak
-  compare URL --target dns|IP       probe the same URL via DNS and/or IPs
-  snapshot / diff BEFORE AFTER      capture and compare Gateway and HTTPRoute specs
-  map / impact TARGET               render or query the declared route topology
-  lint                              statically analyze Gateway and HTTPRoute specs (offline)
-  completion bash|zsh|fish          print a shell completion script
-  man                               print the manual page (roff)
-  ai REPORT [--model NAME]          explain saved evidence, optionally with local Ollama
-  doctor / capabilities / exposure  check permissions, controllers and Service exposure
-  watch URL... [--file FILE]        re-probe on an interval, print state changes, serve metrics
-  version                           print the version
-
-Run "setura COMMAND -h" for a command's flags.
-`
-
 type stringList []string
 
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
@@ -93,6 +68,13 @@ func (e usageError) Error() string { return e.msg }
 
 func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error) {
 	var context string
+	args, topts, terr := extractTermFlags(args)
+	if terr != nil {
+		fmt.Fprintf(stderr, "setura: %s\n", terr)
+		return 2, usageError{"color"}
+	}
+	u := newUI(isTTY(stdout), topts, os.Getenv)
+	stdoutTTY := isTTY(stdout)
 	for len(args) > 0 {
 		switch a := args[0]; {
 		case a == "--context" || a == "-context":
@@ -109,7 +91,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		break
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Fprint(stdout, usage)
+		if len(args) == 2 && args[0] == "help" {
+			if _, ok := commandSummary(args[1]); ok {
+				return run(injected, []string{args[1], "-h"}, stdout, stderr)
+			}
+		}
+		writeHelp(stdout, u)
 		if len(args) == 0 {
 			return 2, usageError{"missing command"}
 		}
@@ -123,6 +110,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setCommandUsage(fs, cmd, newUI(isTTY(stderr), topts, os.Getenv))
 	var ns string
 	nsFlag := func() {
 		fs.StringVar(&ns, "n", "default", "namespace")
@@ -131,6 +119,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	need := func(pos []string, n int, what string) error {
 		if len(pos) != n {
 			fmt.Fprintf(stderr, "setura %s: expected %s\n", cmd, what)
+			exampleHint(stderr, cmd)
 			return usageError{what}
 		}
 		return nil
@@ -139,6 +128,14 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	switch cmd {
 	case "version":
+		verbose := fs.Bool("verbose", false, "print build information")
+		if _, err := parse(fs, rest); err != nil {
+			return 2, err
+		}
+		if *verbose {
+			versionVerbose(stdout, u)
+			return 0, nil
+		}
 		fmt.Fprintln(stdout, "setura", Version)
 		return 0, nil
 
@@ -159,6 +156,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		if *listener == "" {
 			fmt.Fprintln(stderr, "setura publish: --listener is required")
+			exampleHint(stderr, "publish")
 			return 2, usageError{"listener"}
 		}
 		command, err := cluster.Publication(ns, pos[0], *listener, *proxyNS, *port, *service, *servicePort)
@@ -229,27 +227,27 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				return 0, err
 			}
 		} else {
-			for _, name := range stages {
-				step := r.Step(name)
-				line := fmt.Sprintf("%-8s %-12s", name, step.State())
-				for _, p := range step[1:] {
-					line += fmt.Sprintf(" %s=%s", p.K, pyFormat(p.V))
-				}
-				fmt.Fprintln(stdout, line)
-			}
+			fmt.Fprint(stdout, u.ExplainPretty(r))
 		}
 		return boolExit(!r.OK), nil
 
 	case "check":
 		junit := fs.String("junit", "", "also write JUnit XML to FILE")
 		sarifOut := fs.String("sarif", "", "also write SARIF 2.1.0 to FILE")
-		checkFormat := fs.String("format", "json", "json or github (workflow annotations)")
+		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty, json or github (workflow annotations)")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
 		}
 		if err := need(pos, 1, "FILE"); err != nil {
 			return 2, err
+		}
+		pretty := false
+		if *format != "github" {
+			var ferr error
+			if pretty, ferr = wantPretty(*format, stdoutTTY); ferr != nil {
+				return 2, ferr
+			}
 		}
 		rows, err := Check(pos[0])
 		if err != nil {
@@ -269,16 +267,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				return 0, err
 			}
 		}
-		switch *checkFormat {
-		case "json":
-			if err := out(rows); err != nil {
-				return 0, err
-			}
-		case "github":
+		if *format == "github" {
 			fmt.Fprint(stdout, CheckAnnotations(rows, pos[0]))
-		default:
-			fmt.Fprintln(stderr, "setura check: --format must be json or github")
-			return 2, usageError{"format"}
+		} else if pretty {
+			fmt.Fprint(stdout, u.CheckPretty(rows))
+		} else if err := out(rows); err != nil {
+			return 0, err
 		}
 		failed := false
 		for _, r := range rows {
@@ -288,13 +282,22 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "doctor":
 		proxyNS := fs.String("proxy-namespace", "envoy-gateway-system", "namespace of the Envoy proxy Services")
+		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")
 		nsFlag()
 		if _, err := parse(fs, rest); err != nil {
 			return 2, err
 		}
+		pretty, ferr := wantPretty(*format, stdoutTTY)
+		if ferr != nil {
+			return 2, ferr
+		}
 		res, err := Doctor(cluster, ns, *proxyNS)
 		if err != nil {
 			return 0, err
+		}
+		if pretty {
+			fmt.Fprint(stdout, u.DoctorPretty(res))
+			return boolExit(res["ok"] != true), nil
 		}
 		return boolExit(res["ok"] != true), out(res)
 
@@ -345,6 +348,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		fs.IntVar(&g.Attempts, "attempts", 5, "maximum attempts")
 		fs.IntVar(&g.Streak, "streak", 2, "consecutive passes required")
 		fs.Float64Var(&g.Interval, "interval", 1, "seconds between attempts")
+		gformat := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")
 		nsFlag()
 		pos, err := parse(fs, rest)
 		if err != nil {
@@ -355,12 +359,21 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		if g.Backend == "" || g.Gateway == "" {
 			fmt.Fprintln(stderr, "setura gate: --backend and --gateway are required")
+			exampleHint(stderr, "gate")
 			return 2, usageError{"required"}
+		}
+		pretty, ferr := wantPretty(*gformat, stdoutTTY)
+		if ferr != nil {
+			return 2, ferr
 		}
 		g.Route, g.URL, g.Namespace = pos[0], pos[1], ns
 		res, err := Gate(cluster, g)
 		if err != nil {
 			return 0, err
+		}
+		if pretty {
+			fmt.Fprint(stdout, u.GatePretty(g.Route, g.Streak, res))
+			return boolExit(res["ok"] != true), nil
 		}
 		return boolExit(res["ok"] != true), out(res)
 
@@ -370,6 +383,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		backend := fs.String("backend", "", "expected backend identity")
 		ca := fs.String("ca", "", "trusted PEM CA bundle")
 		status := fs.Int("status", 200, "expected HTTP status")
+		cformat := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -377,13 +391,22 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err := need(pos, 1, "URL"); err != nil {
 			return 2, err
 		}
+		pretty, ferr := wantPretty(*cformat, stdoutTTY)
+		if ferr != nil {
+			return 2, ferr
+		}
 		if len(targets) == 0 {
 			fmt.Fprintln(stderr, "setura compare: at least one --target is required")
+			exampleHint(stderr, "compare")
 			return 2, usageError{"target"}
 		}
 		res, err := Compare(pos[0], targets, *backend, *ca, *status)
 		if err != nil {
 			return 0, err
+		}
+		if pretty {
+			fmt.Fprint(stdout, u.ComparePretty(pos[0], targets, res))
+			return boolExit(res["ok"] != true), nil
 		}
 		return boolExit(res["ok"] != true), out(res)
 
@@ -539,7 +562,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		case "github":
 			fmt.Fprint(stdout, LintAnnotations(report, locs))
 		default:
-			fmt.Fprint(stdout, LintText(report))
+			fmt.Fprint(stdout, u.LintPretty(report))
 			fmt.Fprint(stdout, lintSummary(report))
 		}
 		failed := report["ok"] != true
@@ -604,7 +627,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		return 0, out(diagnosis)
 	}
-	fmt.Fprintf(stderr, "setura: unknown command %q\n\n%s", cmd, usage)
+	unknownCommand(stderr, cmd)
 	return 2, usageError{"unknown command"}
 }
 

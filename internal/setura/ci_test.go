@@ -149,7 +149,8 @@ func TestBaselineRoundTripAndOptions(t *testing.T) {
 	contains(t, out, "suppressed by baseline")
 	code, out, _ = cli(t, nil, "lint", "--snapshot", snap, "--baseline", base)
 	is(t, code, 0)
-	contains(t, out, "0 error(s), 0 warning(s)")
+	contains(t, out, "No findings") // the pretty renderer's clean-result line
+	contains(t, out, "suppressed by baseline")
 	// a new finding is not covered by the baseline
 	code, _, _ = cli(t, nil, "lint", "--snapshot", snap, "--baseline", base, "--severity-override", "SET004=error")
 	is(t, code, 0) // same message, same fingerprint: severity is not part of identity

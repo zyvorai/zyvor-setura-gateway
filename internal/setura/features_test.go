@@ -138,7 +138,8 @@ func TestLintCLIExitCodesAndFormats(t *testing.T) {
 	os.WriteFile(path, raw, 0o600)
 	code, out, _ := cli(t, nil, "lint", "--snapshot", path)
 	is(t, code, 0)
-	contains(t, out, "WARNING SET004")
+	contains(t, out, "SET004")
+	contains(t, out, "1 warning")
 	is(t, func() int { c, _, _ := cli(t, nil, "lint", "--snapshot", path, "--strict"); return c }(), 1)
 	code, out, _ = cli(t, nil, "lint", "--snapshot", path, "--format", "json")
 	var rep obj

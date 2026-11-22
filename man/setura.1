@@ -10,20 +10,11 @@ forwards Kubernetes Gateway API listeners to IPv4 loopback and verifies
 routes from the client side.
 .SH COMMANDS
 .TP
-.B publish GATEWAY \-\-listener NAME
-forward an Envoy listener to IPv4 loopback
-.TP
 .B explain URL
-probe a URL from this host
+probe a URL from this host, stage by stage
 .TP
-.B check FILE [\-\-junit FILE]
+.B check FILE
 run a JSON file of route assertions
-.TP
-.B inspect ROUTE
-show route conditions and backend inventory
-.TP
-.B listeners GATEWAY
-show listener attachment and conditions
 .TP
 .B gate ROUTE URL
 require current parent status and a probe streak
@@ -31,14 +22,44 @@ require current parent status and a probe streak
 .B compare URL \-\-target dns|IP
 probe the same URL via DNS and/or IPs
 .TP
-.B snapshot / diff BEFORE AFTER
-capture and compare Gateway and HTTPRoute specs
+.B watch URL... [\-\-file FILE]
+re\-probe on an interval, print state changes, serve metrics
 .TP
-.B map / impact TARGET
-render or query the declared route topology
+.B inspect ROUTE
+show route conditions and backend inventory
+.TP
+.B listeners GATEWAY
+show listener attachment and conditions
+.TP
+.B snapshot
+capture Gateway and HTTPRoute specs
+.TP
+.B map
+render the declared route topology
+.TP
+.B impact TARGET
+query what a resource change would affect
 .TP
 .B lint
-statically analyze Gateway and HTTPRoute specs (offline)
+statically analyze specs (offline)
+.TP
+.B diff BEFORE AFTER
+compare two snapshots
+.TP
+.B ai REPORT [\-\-model NAME]
+explain saved evidence, optionally with local Ollama
+.TP
+.B publish GATEWAY \-\-listener NAME
+forward an Envoy listener to IPv4 loopback
+.TP
+.B doctor
+check permissions needed by setura
+.TP
+.B capabilities
+list GatewayClasses and controller features
+.TP
+.B exposure
+show Service exposure
 .TP
 .B completion bash|zsh|fish
 print a shell completion script
@@ -46,17 +67,8 @@ print a shell completion script
 .B man
 print the manual page (roff)
 .TP
-.B ai REPORT [\-\-model NAME]
-explain saved evidence, optionally with local Ollama
-.TP
-.B doctor / capabilities / exposure
-check permissions, controllers and Service exposure
-.TP
-.B watch URL... [\-\-file FILE]
-re\-probe on an interval, print state changes, serve metrics
-.TP
-.B version
-print the version
+.B version [\-\-verbose]
+print the version and build info
 .PP
 Run \fBsetura COMMAND \-h\fR for the flags of a command.
 .SH EXIT STATUS

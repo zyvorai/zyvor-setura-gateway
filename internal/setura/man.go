@@ -16,32 +16,18 @@ func roff(s string) string {
 	return s
 }
 
-// Man writes the setura(1) manual page in roff, derived from the usage text
+// Man writes the setura(1) manual page in roff, derived from the help groups
 // so the page cannot drift from the command list.
 func Man(w io.Writer) error {
 	var cmds [][2]string
-	in := false
-	for _, line := range strings.Split(usage, "\n") {
-		if line == "Commands:" {
-			in = true
-			continue
-		}
-		if !in {
-			continue
-		}
-		if !strings.HasPrefix(line, "  ") {
-			if len(cmds) > 0 {
-				break
+	for _, g := range helpGroups {
+		for _, e := range g.entries {
+			name := e.name
+			if e.args != "" {
+				name += " " + e.args
 			}
-			continue
+			cmds = append(cmds, [2]string{name, e.summary})
 		}
-		body := strings.TrimSpace(line)
-		// Usage columns are separated by two or more spaces.
-		i := strings.Index(body, "  ")
-		if i < 0 {
-			continue
-		}
-		cmds = append(cmds, [2]string{body[:i], strings.TrimSpace(body[i:])})
 	}
 	var b strings.Builder
 	p := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
