@@ -26,6 +26,7 @@ var commandNames = []string{
 	"certs",
 	"grpc-health",
 	"bench",
+	"why",
 	"doctor",
 	"capabilities",
 	"exposure",
@@ -51,6 +52,8 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout"}
 
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
+// whyFlags are offered after "setura why".
+var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header"}
 
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.
@@ -62,6 +65,7 @@ var flagSets = []struct {
 	{"replay", replayFlags},
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
+	{"why", whyFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

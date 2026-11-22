@@ -28,6 +28,9 @@ re\-probe on an interval; metrics, \-\-history, \-\-alert\-webhook/\-\-alert\-sl
 .B history FILE [\-\-since 24h]
 summarize watch history: uptime, p50/p95, last failure, regressions
 .TP
+.B why METHOD URL [\-\-config F|\-\-admin ADDR]
+explain why the built\-in gateway routes a request the way it does
+.TP
 .B bench URL
 repeat probes and report latency percentiles and budgets
 .TP
@@ -105,13 +108,15 @@ Run \fBsetura COMMAND \-h\fR for the flags of a command.
 \fBcheck\fR, \fBsnapshot\fR, \fBgate\fR and \fBlint\fR accept a comma separated list of kube contexts, or \fB\-\-all\-contexts\fR, and merge the results with a per\-context field. The exit status is unchanged.
 .SH ALERTING
 \fBsetura watch\fR can post failure and recovery transitions with \fB\-\-alert\-webhook\fR and \fB\-\-alert\-slack\fR. The URLs are secrets and are never printed. \fBsetura history\fR summarizes the file written by \fB\-\-history\fR.
+.SH ROUTING DECISIONS
+\fBsetura why\fR METHOD URL explains which listener, route, rule and backend the built\-in gateway picks for a request and why every other candidate lost. It evaluates a gateway config (\fB\-\-config\fR, \fB\-\-snapshot\fR) or asks a running gateway (\fB\-\-admin\fR ADDR, endpoint /why) and sends no traffic. \fB\-H\fR adds request headers, \fB\-\-grpc\fR service/method explains a gRPC call, \fB\-\-sni\fR host a TLSRoute connection, \fB\-\-format\fR json prints the trace. It exits 0 when routed, 1 when no route matches and 2 on a usage error.
 .SH EXIT STATUS
 .TP
 .B 0
 success
 .TP
 .B 1
-the check, gate, lint, replay or migrate check failed or found differences
+the check, gate, lint, replay or migrate check failed or found differences, or why found no route
 .TP
 .B 2
 usage or input error

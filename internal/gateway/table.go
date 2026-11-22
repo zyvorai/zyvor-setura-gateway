@@ -223,35 +223,7 @@ func intersect(routeHost, listenerHost string) (string, bool) {
 }
 
 func (c *Config) allowedNamespace(kind string, l *RTListener, routeNS string) bool {
-	if !l.allowsKind(kind) {
-		return false
-	}
-	var ns *RouteNamespaces
-	if l.L.AllowedRoutes != nil {
-		ns = l.L.AllowedRoutes.Namespaces
-	}
-	from := "Same"
-	if ns != nil && ns.From != "" {
-		from = ns.From
-	}
-	switch from {
-	case "All":
-		return true
-	case "Same":
-		return routeNS == l.GW.NS
-	case "Selector":
-		if ns.Selector == nil || len(ns.Selector.MatchExpressions) > 0 {
-			return false // matchExpressions are not evaluated; fail closed
-		}
-		labels := c.Namespaces[routeNS]
-		for k, v := range ns.Selector.MatchLabels {
-			if labels[k] != v {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return c.allowedWhy(kind, l, routeNS) == ""
 }
 
 func (c *Config) granted(fromKind, fromNS, toGroup, toKind, toNS, name string) bool {
@@ -624,26 +596,21 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 		candidates, notAllowed, noHost := 0, 0, 0
 		attached := false
 		for _, l := range t.Listeners {
-			if l.GW != gw || (p.SectionName != "" && l.L.Name != p.SectionName) || (p.Port != 0 && l.L.Port != p.Port) {
+			hosts, fit, _ := t.parentFit(kind, routeNS, p, gw, hostnames, l)
+			if fit == fitSkip {
 				continue
 			}
 			candidates++
-			if !l.Serving {
+			switch fit {
+			case fitNotAllowed:
 				notAllowed++
-				continue
-			}
-			if !t.Cfg.allowedNamespace(kind, l, routeNS) {
-				notAllowed++
-				continue
-			}
-			hosts := effectiveHosts(hostnames, l.Host)
-			if len(hosts) == 0 {
+			case fitNoHost:
 				noHost++
-				continue
+			default:
+				attached = true
+				l.Attached++
+				add(l, hosts)
 			}
-			attached = true
-			l.Attached++
-			add(l, hosts)
 		}
 		switch {
 		case attached:
