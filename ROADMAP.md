@@ -21,8 +21,8 @@ a Helm chart. See `CHANGELOG.md`.
 Things we know are missing, in the order we would take them:
 
 1. **Prove it.** Run the upstream Gateway API conformance suite on K3s and publish the
-   report; automate a real controller-mode smoke test (the existing `cluster-smoke.sh`
-   covers the Envoy Gateway path, not Setura's controller); run ACME against Let's Encrypt
+   report; watch the new controller-mode smoke (`scripts/controller-smoke.sh`, in the cluster-smoke job)
+   go green for the first time; run ACME against Let's Encrypt
    staging end to end.
 2. **GRPCRoute auth and filters.** gRPC routes currently get identity-header stripping and
    client-certificate headers only; add the JWT, API key and CORS-equivalent policies.

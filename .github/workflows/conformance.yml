@@ -70,6 +70,8 @@ jobs:
           docker build -t ghcr.io/zyvorai/zyvor-setura-gateway:latest .
           docker save ghcr.io/zyvorai/zyvor-setura-gateway:latest | docker exec -i setura-k3s-smoke ctr -n k8s.io images import -
       - run: scripts/cluster-smoke.sh bin/setura
+      - name: Setura controller-mode smoke (its own controller, not Envoy)
+        run: SETURA_IMAGE=ghcr.io/zyvorai/zyvor-setura-gateway:latest scripts/controller-smoke.sh bin/setura
       - name: Cluster state on failure
         if: failure()
         run: |
