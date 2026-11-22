@@ -1,0 +1,59 @@
+{
+  "schema": "setura.route-specs/v1",
+  "namespace": "setura-demo",
+  "resources": {
+    "gateways.gateway.networking.k8s.io/dev": {
+      "gatewayClassName": "setura-envoy",
+      "infrastructure": {
+        "parametersRef": {
+          "group": "gateway.envoyproxy.io",
+          "kind": "EnvoyProxy",
+          "name": "local"
+        }
+      },
+      "listeners": [
+        {
+          "name": "web",
+          "protocol": "HTTP",
+          "port": 8080,
+          "hostname": "orders.mactra.test"
+        }
+      ]
+    },
+    "httproutes.gateway.networking.k8s.io/orders": {
+      "parentRefs": [
+        {
+          "name": "dev",
+          "sectionName": "web"
+        }
+      ],
+      "hostnames": [
+        "orders.mactra.test"
+      ],
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/checkout"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "orders",
+              "port": 80,
+              "weight": 90
+            },
+            {
+              "name": "orders-canary",
+              "port": 80,
+              "weight": 10
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

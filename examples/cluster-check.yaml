@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: setura-internal-checks
+  namespace: setura-demo
+data:
+  checks.json: |
+    [
+      {"url":"http://orders.setura-demo.svc.cluster.local/checkout","backend":"orders-v1"}
+    ]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: setura-internal-checks
+  namespace: setura-demo
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 90
+      template:
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: check
+              image: setura:local
+              imagePullPolicy: IfNotPresent
+              args: ["check", "/checks/checks.json"]
+              resources:
+                requests: {cpu: 10m, memory: 24Mi}
+                limits: {cpu: 200m, memory: 64Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: checks, mountPath: /checks, readOnly: true}
+          volumes:
+            - name: checks
+              configMap: {name: setura-internal-checks}

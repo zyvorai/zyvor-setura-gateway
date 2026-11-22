@@ -1,0 +1,7 @@
+/bin/
+/dist/
+/setura
+*.test
+*.out
+coverage.txt
+.DS_Store

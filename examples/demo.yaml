@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: setura-demo
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: setura-envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: local
+  namespace: setura-demo
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: dev
+  namespace: setura-demo
+spec:
+  gatewayClassName: setura-envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: local
+  listeners:
+    - name: web
+      protocol: HTTP
+      port: 8080
+      hostname: orders.mactra.test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: setura-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: orders}
+  template:
+    metadata:
+      labels: {app: orders}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: orders
+          image: python:3.12-alpine
+          command: ["python3", "-B", "-u", "-c"]
+          args:
+            - |
+              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+              class Orders(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      self.send_response(200)
+                      self.send_header("X-Setura-Backend", "orders-v1")
+                      self.end_headers()
+                      self.wfile.write(b"orders-v1\n")
+              ThreadingHTTPServer(("", 8080), Orders).serve_forever()
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: "/", port: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: setura-demo
+spec:
+  selector: {app: orders}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders
+  namespace: setura-demo
+spec:
+  parentRefs: [{name: dev, sectionName: web}]
+  hostnames: [orders.mactra.test]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /checkout}
+      backendRefs: [{name: orders, port: 80}]
