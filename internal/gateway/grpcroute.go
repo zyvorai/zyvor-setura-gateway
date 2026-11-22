@@ -391,6 +391,8 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
+			w.Header().Del(RequestIDHeader) // see serveHTTP: the proxy Adds upstream headers on top of the pre-set id
+			resp.Header.Set(RequestIDHeader, st.reqID)
 			if rt.retries > 0 && s.res.opt().RetryHeader {
 				resp.Header.Set(RetryHeaderName, strconv.Itoa(rt.retries))
 			}

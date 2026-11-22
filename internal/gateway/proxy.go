@@ -334,6 +334,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			ref := rt.ref // a retry may have moved to another backendRef
 			st.backend = ref.B.Key
 			resp.Header.Set(BackendHeader, ref.Name)
+			// beginTrace pre-sets the id on the writer so gateway-made errors carry it; the
+			// proxy then Adds the upstream headers on top, so drop ours or an upstream that
+			// echoes X-Request-Id would produce two.
+			w.Header().Del(RequestIDHeader)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
 			for _, f := range requestFilters(rule, ref) {
