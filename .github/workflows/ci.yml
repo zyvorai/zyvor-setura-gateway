@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  host:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make vet
+      - run: make test
+      - run: make build && bin/setura version
+  k3s:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make build
+      - name: Start a disposable K3s cluster
+        run: |
+          docker run --privileged --name setura-k3s -d -p 127.0.0.1:6443:6443 rancher/k3s:v1.35.6-k3s1 server --disable=traefik
+          mkdir -p ~/.kube
+          for i in {1..90}; do
+            if docker cp setura-k3s:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && kubectl get nodes; then break; fi
+            sleep 2
+          done
+          kubectl wait --for=condition=Ready node --all --timeout=180s
+      - name: Install Envoy Gateway
+        run: helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.8.6 -n envoy-gateway-system --create-namespace --wait --timeout 5m
+      - run: scripts/cluster-smoke.sh bin/setura
+      - name: Run a probe from inside K3s
+        run: |
+          docker build -t setura:local .
+          docker save setura:local | docker exec -i setura-k3s k3s ctr images import -
+          kubectl apply -f examples/cluster-check.yaml
+          kubectl -n setura-demo create job setura-ci-check --from=cronjob/setura-internal-checks
+          kubectl -n setura-demo wait job/setura-ci-check --for=condition=complete --timeout=150s
+          kubectl -n setura-demo logs job/setura-ci-check
