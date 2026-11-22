@@ -344,6 +344,9 @@ func BuildTable(cfg *Config) *Table {
 }
 
 func (c *Config) resolveCerts(l *RTListener) {
+	if c.skipCerts {
+		return
+	}
 	if l.L.TLS == nil || len(l.L.TLS.CertificateRefs) == 0 {
 		l.Resolved = fact{false, "InvalidCertificateRef", "HTTPS listener has no certificateRefs"}
 		return

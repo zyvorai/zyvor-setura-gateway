@@ -41,6 +41,7 @@ var helpGroups = []helpGroup{
 		{"lint", "", "statically analyze specs (offline)"},
 		{"diff", "BEFORE AFTER", "compare two snapshots"},
 		{"migrate", "check [--ingress F] [--routes F] [--services F] [--objects F] [--ingress-class C]", "compare Ingress rules with their converted HTTPRoute, GRPCRoute and TLSRoute rules"},
+		{"replay", "--log F --before OLD --after NEW", "replay an access log through two gateway configs and report the routing impact"},
 		{"ai", "REPORT [--model NAME]", "explain saved evidence, optionally with local Ollama"},
 	}},
 	{"Publish", []helpEntry{
@@ -75,6 +76,8 @@ var cmdExamples = map[string][]string{
 	"history":   {"setura history probes.jsonl --since 24h --route orders", "setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\""},
 	"watch":     {"setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\" --alert-cooldown 5m"},
 	"doctor":    {"setura doctor -n demo"},
+	"replay": {"setura replay --log access.jsonl --before old.json --after new.json",
+		"zcat access.jsonl.gz | setura replay --log - --before old.json --after new.json --fail-on any --format github"},
 	"migrate": {"setura migrate check --ingress ingress.yaml --routes routes.yaml --services services.yaml --objects objects.yaml",
 		"setura migrate check -n shop --ingress-class nginx",
 		"setura migrate check -n shop --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --format github",
