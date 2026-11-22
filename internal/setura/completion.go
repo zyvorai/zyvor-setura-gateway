@@ -52,6 +52,7 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout"}
 
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
+
 // whyFlags are offered after "setura why".
 var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header"}
 
