@@ -1,0 +1,20 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Generated
+    Gateway    demo/nginx                            
+    HTTPRoute  demo/a-b-c                            
+    HTTPRoute  demo/a-b-c-2                          
+    HTTPRoute  demo/defaultonly-all-hosts            
+    HTTPRoute  demo/nohost-all-hosts                 
+    HTTPRoute  demo/wild-wildcard-wild-example-test  
+    Gateway    other/internal                        
+    HTTPRoute  other/a-b-c                           
+
+  Check  ✓ 6 rules equivalent to the original
+
+  ▲ HTTPRoute name "a-b-c" was taken in namespace "demo"; the new object is named "a-b-c-2"
+
+  equivalent  0 converted, 0 need a human, 8 resources
+  Next: run again with --out DIR to write one file per resource
+

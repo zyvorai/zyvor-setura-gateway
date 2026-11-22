@@ -1,0 +1,61 @@
+# An ingress-nginx setup as it runs today, for `setura migrate convert`
+# (docs/migrate-convert.md walks through it).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: https://app.example.test
+    nginx.ingress.kubernetes.io/whitelist-source-range: 10.0.0.0/8,192.168.0.0/16
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [shop.example.test]
+      secretName: shop-tls
+  rules:
+    - host: shop.example.test
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: {name: api, port: {number: 8080}}
+          - path: /web
+            pathType: Prefix
+            backend:
+              service: {name: web, port: {name: http}}
+---
+# A canary release of the API: 10 percent of the traffic.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-canary
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: shop.example.test
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: {name: api-v2, port: {number: 8080}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: demo}
+spec:
+  ports:
+    - {name: http, port: 8080}

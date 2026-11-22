@@ -1,0 +1,172 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: f-example-test-http
+      hostname: f.example.test
+      port: 80
+      protocol: HTTP
+    - name: g-example-test-http
+      hostname: g.example.test
+      port: 80
+      protocol: HTTP
+    - name: gs-example-test-http
+      hostname: gs.example.test
+      port: 80
+      protocol: HTTP
+    - name: h-example-test-http
+      hostname: h.example.test
+      port: 80
+      protocol: HTTP
+    - name: p-example-test-tls
+      hostname: p.example.test
+      port: 443
+      protocol: TLS
+      tls:
+        mode: Passthrough
+    - name: rx-example-test-http
+      hostname: rx.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) nginx.ingress.kubernetes.io/backend-protocol: FCGI -- the backend protocol FCGI has no Gateway API equivalent (supported: HTTP, HTTPS, GRPC, GRPCS)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fcgi-f-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - f.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: f-example-test-http
+  rules:
+    - backendRefs:
+        - name: php
+          port: 9000
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-h-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - h.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: h-example-test-http
+  rules:
+    - backendRefs:
+        - name: secure
+          port: 8443
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rx-rx-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - rx.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: rx-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      matches:
+        - path:
+            type: RegularExpression
+            value: /api/v[0-9]+/.*
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpc-g-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - g.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: g-example-test-http
+  rules:
+    - backendRefs:
+        - name: greeter
+          port: 50051
+      matches:
+        - method:
+            method: SayHello
+            service: helloworld.Greeter
+    - backendRefs:
+        - name: greeter
+          port: 50051
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpcs-gs-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - gs.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: gs-example-test-http
+  rules:
+    - backendRefs:
+        - name: secure
+          port: 50052
+      matches:
+        - method:
+            service: pkg.Svc
+---
+# TODO(setura) nginx.ingress.kubernetes.io/rewrite-target: /x -- the host is a TLS passthrough route: the gateway never sees the HTTP request, so this HTTP-level setting cannot apply
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: pass-p-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - p.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: p-example-test-tls
+  rules:
+    - backendRefs:
+        - name: tlsapp
+          port: 443
+---
+# TODO(setura) BackendTLSPolicy secure-backend-tls -- the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap secure-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: secure-backend-tls
+  namespace: demo
+spec:
+  targetRefs:
+    - kind: Service
+      name: secure
+      group: ""
+  validation:
+    caCertificateRefs:
+      - kind: ConfigMap
+        name: secure-ca
+        group: ""
+    hostname: greeter.internal

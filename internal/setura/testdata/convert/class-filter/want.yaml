@@ -1,0 +1,32 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: mine-example-test-http
+      hostname: mine.example.test
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mine-mine-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - mine.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: mine-example-test-http
+  rules:
+    - backendRefs:
+        - name: a
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /

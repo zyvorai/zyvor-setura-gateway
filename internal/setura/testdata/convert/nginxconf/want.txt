@@ -1,0 +1,36 @@
+
+  setura migrate convert  nginx-conf → Gateway API
+
+  Converted
+    ✓  nginx.conf nginx.conf  listen                                Gateway listener
+    ✓  nginx.conf nginx.conf  proxy_set_header Host                 default: the gateway preserves the Host header
+    ✓  nginx.conf nginx.conf  proxy_set_header X-Env                RequestHeaderModifier set
+    ✓  nginx.conf nginx.conf  add_header X-Frame-Options            ResponseHeaderModifier set
+    ✓  nginx.conf nginx.conf  proxy_pass                            backendRef
+    ✓  nginx.conf nginx.conf  proxy_read_timeout                    timeouts.backendRequest
+    ✓  nginx.conf nginx.conf  proxy_send_timeout                    timeouts.backendRequest
+    ✓  nginx.conf nginx.conf  allow/deny                            setura.zyvor.dev/auth ipAllow
+    ✓  nginx.conf nginx.conf  return 301                            RequestRedirect
+
+  Needs a human
+    ▲  nginx.conf nginx.conf  client_max_body_size                  Gateway API and the Setura gateway have no per-route request body limit
+    ▲  nginx.conf nginx.conf  ssl_certificate                       create a TLS Secret from the certificate and key files (kubectl create secret ...
+    ▲  nginx.conf nginx.conf  ssl_certificate_key                   create a TLS Secret from the certificate and key files (kubectl create secret ...
+    ▲  nginx.conf nginx.conf  BackendTLSPolicy backend-backend-tls  the original does not verify the backend certificate unless configured to, but...
+
+  3 settings ignored on purpose (see the report)
+
+  Generated
+    Gateway           default/nginx                      
+    HTTPRoute         default/nginx-secure-example-test    2 TODO
+    HTTPRoute         default/nginx-shop-example-test    
+    BackendTLSPolicy  default/backend-backend-tls          1 TODO
+    ReferenceGrant    prod/allow-default-httproutes      
+
+  Check  ✓ 5 rules equivalent to the original
+
+  ▲ testdata/convert/nginxconf/nginx.conf:42: client_max_body_size has no equivalent (Gateway API and the Setura gateway have no per-route request body limit)
+
+  needs review  9 converted, 4 need a human, 5 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

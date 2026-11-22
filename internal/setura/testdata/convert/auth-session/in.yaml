@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: a
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8, 192.168.1.0/24"
+    nginx.ingress.kubernetes.io/denylist-source-range: "203.0.113.0/24"
+    nginx.ingress.kubernetes.io/auth-type: "basic"
+    nginx.ingress.kubernetes.io/auth-secret: "htpasswd"
+    nginx.ingress.kubernetes.io/auth-realm: "Files"
+    nginx.ingress.kubernetes.io/auth-url: "http://authz.infra.svc.cluster.local:9000/verify"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-User, X-Email"
+    nginx.ingress.kubernetes.io/auth-signin: "https://login.example.test/start"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: "Lax"
+spec:
+  rules:
+  - host: a.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ext
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+    nginx.ingress.kubernetes.io/auth-type: "digest"
+    nginx.ingress.kubernetes.io/affinity: "ip"
+spec:
+  rules:
+  - host: e.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app
+            port:
+              number: 80

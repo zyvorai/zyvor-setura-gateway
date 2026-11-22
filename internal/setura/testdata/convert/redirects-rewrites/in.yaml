@@ -1,0 +1,136 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: r
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/v2"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/app-root: "/home"
+spec:
+  tls:
+  - hosts: [a.example.test]
+    secretName: a-tls
+  rules:
+  - host: a.example.test
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+      - path: /exact
+        pathType: Exact
+        backend:
+          service:
+            name: ex
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: moved
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: "https://new.example.test/landing"
+    nginx.ingress.kubernetes.io/permanent-redirect-code: "301"
+spec:
+  rules:
+  - host: old.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: old
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: temp
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/temporal-redirect: "https://tmp.example.test"
+spec:
+  rules:
+  - host: tmp.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: old
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nossl
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  tls:
+  - hosts: [plain.example.test]
+    secretName: plain-tls
+  rules:
+  - host: plain.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: plain
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: force
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  rules:
+  - host: force.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: plain
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: capture
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  rules:
+  - host: re.example.test
+    http:
+      paths:
+      - path: /svc(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api
+            port:
+              number: 80

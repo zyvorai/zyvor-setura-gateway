@@ -1,0 +1,259 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 6,
+    "ignored": 1,
+    "resources": 8,
+    "todo": 5
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "fcgi-f-example-test",
+      "todos": 1
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "https-h-example-test"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "rx-rx-example-test"
+    },
+    {
+      "kind": "GRPCRoute",
+      "namespace": "demo",
+      "name": "grpc-g-example-test"
+    },
+    {
+      "kind": "GRPCRoute",
+      "namespace": "demo",
+      "name": "grpcs-gs-example-test"
+    },
+    {
+      "kind": "TLSRoute",
+      "namespace": "demo",
+      "name": "pass-p-example-test",
+      "todos": 1
+    },
+    {
+      "kind": "BackendTLSPolicy",
+      "namespace": "demo",
+      "name": "secure-backend-tls",
+      "todos": 1
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/grpc",
+      "key": "nginx.ingress.kubernetes.io/backend-protocol",
+      "value": "GRPC",
+      "status": "converted",
+      "target": "GRPCRoute"
+    },
+    {
+      "source": "Ingress demo/grpcs",
+      "key": "nginx.ingress.kubernetes.io/backend-protocol",
+      "value": "GRPCS",
+      "status": "converted",
+      "target": "GRPCRoute and a BackendTLSPolicy for the Service"
+    },
+    {
+      "source": "Ingress demo/grpcs",
+      "key": "nginx.ingress.kubernetes.io/proxy-ssl-name",
+      "value": "greeter.internal",
+      "status": "converted",
+      "target": "BackendTLSPolicy validation.hostname"
+    },
+    {
+      "source": "Ingress demo/https",
+      "key": "nginx.ingress.kubernetes.io/backend-protocol",
+      "value": "HTTPS",
+      "status": "converted",
+      "target": "BackendTLSPolicy for the Service"
+    },
+    {
+      "source": "Ingress demo/https",
+      "key": "nginx.ingress.kubernetes.io/proxy-ssl-verify",
+      "value": "on",
+      "status": "ignored",
+      "reason": "BackendTLSPolicy always verifies; see the TODO on the policy"
+    },
+    {
+      "source": "Ingress demo/pass",
+      "key": "nginx.ingress.kubernetes.io/ssl-passthrough",
+      "value": "true",
+      "status": "converted",
+      "target": "TLSRoute with a TLS Passthrough listener"
+    },
+    {
+      "source": "Ingress demo/pass",
+      "key": "nginx.ingress.kubernetes.io/rewrite-target",
+      "value": "/x",
+      "status": "todo",
+      "reason": "the host is a TLS passthrough route: the gateway never sees the HTTP request, so this HTTP-level setting cannot apply"
+    },
+    {
+      "source": "Ingress demo/rx",
+      "key": "nginx.ingress.kubernetes.io/use-regex",
+      "value": "true",
+      "status": "converted",
+      "target": "path match type RegularExpression"
+    },
+    {
+      "source": "Ingress demo/badgrpc",
+      "key": "spec.rules path /not/a/grpc/path",
+      "value": "greeter",
+      "status": "todo",
+      "reason": "a gRPC rule needs a path of the form /package.Service or /package.Service/Method; /not/a/grpc/path cannot be turned into a GRPCRoute method match"
+    },
+    {
+      "source": "Ingress demo/badgrpc",
+      "key": "nginx.ingress.kubernetes.io/backend-protocol",
+      "value": "GRPC",
+      "status": "todo",
+      "reason": "no mechanical equivalent: set appProtocol on the Service port; HTTPS backends need BackendTLSPolicy, GRPC needs GRPCRoute"
+    },
+    {
+      "source": "Ingress demo/fcgi",
+      "key": "nginx.ingress.kubernetes.io/backend-protocol",
+      "value": "FCGI",
+      "status": "todo",
+      "reason": "the backend protocol FCGI has no Gateway API equivalent (supported: HTTP, HTTPS, GRPC, GRPCS)"
+    },
+    {
+      "source": "Ingress demo/grpcs",
+      "key": "BackendTLSPolicy secure-backend-tls",
+      "status": "todo",
+      "reason": "the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap secure-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname"
+    }
+  ],
+  "check": {
+    "ok": false,
+    "summary": {
+      "annotations_flagged": 4,
+      "different": 0,
+      "equivalent": 7,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 1,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "grpc",
+        "route": "grpc-g-example-test",
+        "expected_route": "grpc-g-example-test",
+        "host": "g.example.test",
+        "path": "/helloworld.Greeter/SayHello",
+        "path_type": "Exact",
+        "backend": "greeter:50051",
+        "kind": "GRPCRoute",
+        "route_kind": "GRPCRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "grpc",
+        "route": "grpc-g-example-test",
+        "expected_route": "grpc-g-example-test",
+        "host": "g.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "greeter:50051",
+        "kind": "GRPCRoute",
+        "route_kind": "GRPCRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "grpcs",
+        "route": "grpcs-gs-example-test",
+        "expected_route": "grpcs-gs-example-test",
+        "host": "gs.example.test",
+        "path": "/pkg.Svc",
+        "path_type": "Prefix",
+        "backend": "secure:50052",
+        "kind": "GRPCRoute",
+        "route_kind": "GRPCRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "https",
+        "route": "https-h-example-test",
+        "expected_route": "https-h-example-test",
+        "host": "h.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "secure:8443",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "pass",
+        "route": "pass-p-example-test",
+        "expected_route": "pass-p-example-test",
+        "host": "p.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "tlsapp:443",
+        "kind": "TLSRoute",
+        "route_kind": "TLSRoute",
+        "tls": true,
+        "details": [
+          "TLS passthrough routes on SNI only; the Ingress path is not compared"
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "rx",
+        "route": "rx-rx-example-test",
+        "expected_route": "rx-rx-example-test",
+        "host": "rx.example.test",
+        "path": "/api/v[0-9]+/.*",
+        "path_type": "ImplementationSpecific",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "pathType ImplementationSpecific is compared as a prefix match"
+        ]
+      },
+      {
+        "status": "missing-in-gateway",
+        "ingress": "badgrpc",
+        "expected_route": "badgrpc-bg-example-test",
+        "host": "bg.example.test",
+        "path": "/not/a/grpc/path",
+        "path_type": "Prefix",
+        "backend": "greeter:50051",
+        "kind": "GRPCRoute",
+        "details": [
+          "no GRPCRoute rule matches this host and path"
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "fcgi",
+        "route": "fcgi-f-example-test",
+        "expected_route": "fcgi-f-example-test",
+        "host": "f.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "php:9000",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      }
+    ]
+  }
+}

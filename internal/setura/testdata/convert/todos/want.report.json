@@ -1,0 +1,204 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 2,
+    "ignored": 1,
+    "resources": 3,
+    "todo": 13
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "t-t-example-test",
+      "todos": 12
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "t-t-example-test-redirect"
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/t",
+      "key": "spec.rules backend port web",
+      "value": "nosuch",
+      "status": "todo",
+      "reason": "named port \"web\" unresolved: no Service objects available (pass --services FILE or read from the cluster); set the port number on the backendRef by hand"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/ssl-redirect (default for hosts under spec.tls)",
+      "status": "converted",
+      "target": "RequestRedirect scheme https (301) on a route attached to the HTTP listener"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/auth-tls-secret",
+      "value": "demo/ca",
+      "status": "todo",
+      "reason": "client certificate verification belongs on the Gateway listener (tls.frontend validation), not on a route"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/configuration-snippet",
+      "value": "more_set_headers",
+      "status": "todo",
+      "reason": "arbitrary nginx configuration has no Gateway API equivalent; re-express each directive as a filter or policy by hand"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/enable-modsecurity",
+      "value": "true",
+      "status": "todo",
+      "reason": "no mechanical equivalent: WAF needs a controller or external WAF"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/limit-connections",
+      "value": "10",
+      "status": "todo",
+      "reason": "no per-route connection limit in Gateway API or the Setura gateway"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/limit-rpm",
+      "value": "100",
+      "status": "todo",
+      "reason": "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/m), not per route"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/limit-rps",
+      "value": "5",
+      "status": "todo",
+      "reason": "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s), not per route; set it there or leave rate limiting to the backend"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/load-balance",
+      "value": "ewma",
+      "status": "todo",
+      "reason": "no mechanical equivalent: controller policy (for example BackendTrafficPolicy loadBalancer)"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/server-snippet",
+      "value": "return 418;",
+      "status": "todo",
+      "reason": "arbitrary nginx configuration has no Gateway API equivalent; re-express each directive as a filter or policy by hand"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/service-upstream",
+      "value": "true",
+      "status": "todo",
+      "reason": "no mechanical equivalent: Gateway API always routes to Service endpoints; verify the controller's behavior"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/totally-unknown",
+      "value": "yes",
+      "status": "todo",
+      "reason": "not recognised by Setura's annotation table; check the ingress-nginx documentation for what it does and re-express it by hand"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "kubernetes.io/ingress.class",
+      "value": "nginx",
+      "status": "ignored",
+      "reason": "replaced by the Gateway parentRef"
+    },
+    {
+      "source": "Ingress demo/res",
+      "key": "spec.rules backend.resource",
+      "value": "/",
+      "status": "todo",
+      "reason": "the backend is a resource reference, not a Service; Gateway API routes only to Services (or a typed backendRef the controller supports)"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "spec.tls",
+      "value": "t.example.test",
+      "status": "todo",
+      "reason": "the tls block has no secretName (ingress-nginx serves its default certificate); add certificateRefs to listener t-example-test-https"
+    },
+    {
+      "source": "Ingress demo/t",
+      "key": "nginx.ingress.kubernetes.io/server-alias",
+      "value": "www.t.example.test,t2.example.test",
+      "status": "converted",
+      "target": "extra route hostnames and listeners"
+    }
+  ],
+  "check": {
+    "ok": false,
+    "summary": {
+      "annotations_flagged": 10,
+      "different": 0,
+      "equivalent": 1,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 1,
+      "unresolved": 1
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "t",
+        "route": "t-t-example-test",
+        "expected_route": "t-t-example-test",
+        "host": "t.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "api:80",
+        "ingress_class": "nginx",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true,
+        "details": [
+          "Ingress tls has no secretName (controller default certificate); listener certificate not compared"
+        ]
+      },
+      {
+        "status": "unresolved",
+        "ingress": "t",
+        "route": "t-t-example-test",
+        "expected_route": "t-t-example-test",
+        "host": "t.example.test",
+        "path": "/named",
+        "path_type": "Prefix",
+        "backend": "nosuch:web",
+        "ingress_class": "nginx",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true,
+        "details": [
+          "Ingress tls has no secretName (controller default certificate); listener certificate not compared",
+          "named port \"web\" unresolved: no Service objects available (pass --services FILE or read from the cluster)"
+        ]
+      },
+      {
+        "status": "missing-in-gateway",
+        "ingress": "res",
+        "expected_route": "res-res-example-test",
+        "host": "res.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "resource",
+        "kind": "HTTPRoute",
+        "details": [
+          "no HTTPRoute rule matches this host and path"
+        ]
+      }
+    ]
+  }
+}

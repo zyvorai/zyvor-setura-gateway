@@ -1,0 +1,229 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: a-example-test-http
+      hostname: a.example.test
+      port: 80
+      protocol: HTTP
+    - name: a-example-test-https
+      hostname: a.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: a-tls
+        mode: Terminate
+    - name: force-example-test-http
+      hostname: force.example.test
+      port: 80
+      protocol: HTTP
+    - name: old-example-test-http
+      hostname: old.example.test
+      port: 80
+      protocol: HTTP
+    - name: plain-example-test-http
+      hostname: plain.example.test
+      port: 80
+      protocol: HTTP
+    - name: plain-example-test-https
+      hostname: plain.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: plain-tls
+        mode: Terminate
+    - name: re-example-test-http
+      hostname: re.example.test
+      port: 80
+      protocol: HTTP
+    - name: tmp-example-test-http
+      hostname: tmp.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) nginx.ingress.kubernetes.io/rewrite-target: /$2 -- the target uses regex capture groups ($1, $2); URLRewrite has no capture groups, so rewrite by hand or restructure the path
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: capture-re-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - re.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: re-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      matches:
+        - path:
+            type: RegularExpression
+            value: /svc(/|$)(.*)
+---
+# TODO(setura) nginx.ingress.kubernetes.io/force-ssl-redirect: true -- the host has no entry under spec.tls, so there is no HTTPS listener to redirect to; add a tls block with a secretName (ingress-nginx would serve its default certificate)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: force-force-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - force.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: force-example-test-http
+  rules:
+    - backendRefs:
+        - name: plain
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: moved-old-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - old.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: old-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            hostname: new.example.test
+            path:
+              replaceFullPath: /landing
+              type: ReplaceFullPath
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nossl-plain-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - plain.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: plain-example-test-https
+    - name: nginx
+      sectionName: plain-example-test-http
+  rules:
+    - backendRefs:
+        - name: plain
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: r-a-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - a.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: a-example-test-https
+  rules:
+    - filters:
+        - requestRedirect:
+            path:
+              replaceFullPath: /home
+              type: ReplaceFullPath
+            statusCode: 302
+          type: RequestRedirect
+      matches:
+        - path:
+            type: Exact
+            value: /
+    - backendRefs:
+        - name: api
+          port: 80
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              replacePrefixMatch: /v2
+              type: ReplacePrefixMatch
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+    - backendRefs:
+        - name: ex
+          port: 80
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              replaceFullPath: /v2
+              type: ReplaceFullPath
+      matches:
+        - path:
+            type: Exact
+            value: /exact
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: r-a-example-test-redirect
+  namespace: demo
+spec:
+  hostnames:
+    - a.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: a-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: temp-tmp-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - tmp.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: tmp-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            hostname: tmp.example.test
+            scheme: https
+            statusCode: 302
+          type: RequestRedirect
+      matches:
+        - path:
+            type: PathPrefix
+            value: /

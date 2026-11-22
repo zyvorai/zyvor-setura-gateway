@@ -1,0 +1,173 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: traefik
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: plain-example-test-http
+      hostname: plain.example.test
+      port: 80
+      protocol: HTTP
+    - name: shop-example-test-http
+      hostname: shop.example.test
+      port: 80
+      protocol: HTTP
+    - name: shop-example-test-https
+      hostname: shop.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: shop-tls
+        mode: Terminate
+    - name: tls-example-test-tls
+      hostname: tls.example.test
+      port: 443
+      protocol: TLS
+      tls:
+        mode: Passthrough
+---
+# TODO(setura) spec.routes[0].priority: 10 -- Gateway API orders matches by specificity, not by an explicit priority; check which rule should win
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: plain-plain-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - plain.example.test
+  parentRefs:
+    - name: traefik
+      sectionName: plain-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+# TODO(setura) Middleware demo/sec-headers headers.sslRedirect -- no Gateway API equivalent (it changes redirects, host checks or proxy headers inside Traefik)
+# TODO(setura) Middleware demo/limit rateLimit -- the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s), not per route; this middleware allows 100 per 1s (--rate-limit 100/s)
+# TODO(setura) Middleware demo/files-auth basicAuth: htpasswd -- the basic auth block has no users: Traefik reads htpasswd entries from Secret htpasswd (bcrypt/apr1), Setura stores pbkdf2-sha256; create each user with `setura gateway hash --kind password`
+# TODO(setura) spec.routes[3].match: Host(`a.example.test`) || Host(`b.example.test`) -- the rule uses ||, ! or nested expressions; split it into one route per alternative; the route was not converted
+# TODO(setura) spec.routes[4].match: HostRegexp(`{sub:.+}.example.test`) -- the matcher HostRegexp has no Gateway API equivalent (supported: Host, PathPrefix, Path, PathRegexp, Headers, HeadersRegexp, Method); the route was not converted
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop-shop-example-test
+  namespace: demo
+  annotations:
+    setura.zyvor.dev/auth.rule-1: "{\"ipAllow\":[\"10.0.0.0/8\",\"192.168.0.0/16\"]}"
+    setura.zyvor.dev/auth.rule-2: "{\"basic\":{\"realm\":\"files\",\"users\":[]}}"
+spec:
+  hostnames:
+    - shop.example.test
+  parentRefs:
+    - name: traefik
+      sectionName: shop-example-test-https
+  rules:
+    - backendRefs:
+        - name: api
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              replacePrefixMatch: /
+              type: ReplacePrefixMatch
+        - responseHeaderModifier:
+            set:
+              - name: X-Content-Type-Options
+                value: nosniff
+              - name: X-Served-By
+                value: setura
+              - name: X-Frame-Options
+                value: DENY
+              - name: Strict-Transport-Security
+                value: max-age=31536000; includeSubDomains
+          type: ResponseHeaderModifier
+        - requestHeaderModifier:
+            remove:
+              - X-Drop
+            set:
+              - name: X-From
+                value: edge
+          type: RequestHeaderModifier
+        - cors:
+            allowMethods:
+              - GET
+              - POST
+            allowOrigins:
+              - https://app.example.test
+            maxAge: 100
+          type: CORS
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      retry:
+        attempts: 3
+        backoff: 100ms
+    - backendRefs:
+        - name: cart
+          port: 8080
+          weight: 3
+        - name: cart-beta
+          port: 8080
+          weight: 1
+      matches:
+        - headers:
+            - name: X-Beta
+              type: Exact
+              value: "1"
+          path:
+            type: Exact
+            value: /cart
+    - backendRefs:
+        - name: img
+          port: 8443
+      matches:
+        - method: GET
+          path:
+            type: PathPrefix
+            value: /img
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: pass-tls-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - tls.example.test
+  parentRefs:
+    - name: traefik
+      sectionName: tls-example-test-tls
+  rules:
+    - backendRefs:
+        - name: tlsapp
+          port: 443
+---
+# TODO(setura) BackendTLSPolicy img-backend-tls -- the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap img-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: img-backend-tls
+  namespace: demo
+spec:
+  targetRefs:
+    - kind: Service
+      name: img
+      group: ""
+  validation:
+    caCertificateRefs:
+      - kind: ConfigMap
+        name: img-ca
+        group: ""
+    hostname: img.demo.svc

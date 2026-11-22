@@ -1,0 +1,122 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: c-example-test-http
+      hostname: c.example.test
+      port: 80
+      protocol: HTTP
+    - name: off-example-test-http
+      hostname: off.example.test
+      port: 80
+      protocol: HTTP
+    - name: rx-example-test-http
+      hostname: rx.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) nginx.ingress.kubernetes.io/proxy-set-headers: missing-map -- the headers live in ConfigMap demo/missing-map, which is not in the inputs; pass it as an input file or add the headers by hand
+# TODO(setura) nginx.ingress.kubernetes.io/mirror-host: shadow.example.test -- RequestMirror cannot set the Host header of the mirrored request
+# TODO(setura) nginx.ingress.kubernetes.io/proxy-body-size: 8m -- Gateway API has no request body limit and the Setura gateway has none per route; enforce it in the backend or in front of the gateway
+# TODO(setura) nginx.ingress.kubernetes.io/proxy-connect-timeout: 5 -- HTTPRoute timeouts cover the request and the backend request only, not the connect phase
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: c-c-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - c.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: c-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            hostname: internal.example.test
+        - requestHeaderModifier:
+            set:
+              - name: X-Forwarded-Prefix
+                value: /shop
+          type: RequestHeaderModifier
+        - responseHeaderModifier:
+            set:
+              - name: Cache-Control
+                value: no-store
+              - name: X-Frame-Options
+                value: DENY
+          type: ResponseHeaderModifier
+        - requestMirror:
+            backendRef:
+              name: shadow
+              port: 8080
+          type: RequestMirror
+        - cors:
+            allowCredentials: false
+            allowHeaders:
+              - X-Token
+            allowMethods:
+              - GET
+              - POST
+            allowOrigins:
+              - https://app.example.test
+              - https://*.dev.example.test
+            exposeHeaders:
+              - X-Out
+            maxAge: 600
+          type: CORS
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      timeouts:
+        backendRequest: 120s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cors-off-off-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - off.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: off-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+# TODO(setura) nginx.ingress.kubernetes.io/cors-allow-origin: ^https://.*\.example\.test$ -- regular expression origins are not part of the CORS filter; list exact origins or *.example.com wildcards
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cors-regex-rx-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - rx.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: rx-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /

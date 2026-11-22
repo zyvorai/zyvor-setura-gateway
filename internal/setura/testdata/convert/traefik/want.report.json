@@ -1,0 +1,238 @@
+{
+  "source": "traefik",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 12,
+    "ignored": 0,
+    "resources": 5,
+    "todo": 7
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "traefik"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "plain-plain-example-test",
+      "todos": 1
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "shop-shop-example-test",
+      "todos": 5
+    },
+    {
+      "kind": "TLSRoute",
+      "namespace": "demo",
+      "name": "pass-tls-example-test"
+    },
+    {
+      "kind": "BackendTLSPolicy",
+      "namespace": "demo",
+      "name": "img-backend-tls",
+      "todos": 1
+    }
+  ],
+  "items": [
+    {
+      "source": "IngressRoute demo/shop",
+      "key": "spec.tls",
+      "value": "shop-tls",
+      "status": "converted",
+      "target": "HTTPS listener with certificateRefs"
+    },
+    {
+      "source": "Middleware demo/strip-api",
+      "key": "stripPrefix",
+      "value": "/api",
+      "status": "converted",
+      "target": "URLRewrite ReplacePrefixMatch /"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.contentTypeNosniff",
+      "value": "nosniff",
+      "status": "converted",
+      "target": "ResponseHeaderModifier set X-Content-Type-Options"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.customRequestHeaders",
+      "status": "converted",
+      "target": "RequestHeaderModifier"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.customResponseHeaders",
+      "status": "converted",
+      "target": "ResponseHeaderModifier"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.frameDeny",
+      "value": "DENY",
+      "status": "converted",
+      "target": "ResponseHeaderModifier set X-Frame-Options"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.sslRedirect",
+      "status": "todo",
+      "reason": "no Gateway API equivalent (it changes redirects, host checks or proxy headers inside Traefik)"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.stsSeconds",
+      "value": "max-age=31536000; includeSubDomains",
+      "status": "converted",
+      "target": "ResponseHeaderModifier set Strict-Transport-Security"
+    },
+    {
+      "source": "Middleware demo/sec-headers",
+      "key": "headers.accessControl*",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Middleware demo/office-only",
+      "key": "ipAllowList",
+      "value": "[10.0.0.0/8 192.168.0.0/16]",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth ipAllow"
+    },
+    {
+      "source": "Middleware demo/retry3",
+      "key": "retry",
+      "value": "3",
+      "status": "converted",
+      "target": "rule retry"
+    },
+    {
+      "source": "Middleware demo/limit",
+      "key": "rateLimit",
+      "status": "todo",
+      "reason": "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s), not per route; this middleware allows 100 per 1s (--rate-limit 100/s)"
+    },
+    {
+      "source": "Middleware demo/files-auth",
+      "key": "basicAuth",
+      "value": "htpasswd",
+      "status": "todo",
+      "reason": "the basic auth block has no users: Traefik reads htpasswd entries from Secret htpasswd (bcrypt/apr1), Setura stores pbkdf2-sha256; create each user with `setura gateway hash --kind password`"
+    },
+    {
+      "source": "IngressRoute demo/shop",
+      "key": "BackendTLSPolicy img-backend-tls",
+      "status": "todo",
+      "reason": "the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap img-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname"
+    },
+    {
+      "source": "IngressRoute demo/shop",
+      "key": "spec.routes[3].match",
+      "value": "Host(`a.example.test`) || Host(`b.example.test`)",
+      "status": "todo",
+      "reason": "the rule uses ||, ! or nested expressions; split it into one route per alternative; the route was not converted"
+    },
+    {
+      "source": "IngressRoute demo/shop",
+      "key": "spec.routes[4].match",
+      "value": "HostRegexp(`{sub:.+}.example.test`)",
+      "status": "todo",
+      "reason": "the matcher HostRegexp has no Gateway API equivalent (supported: Host, PathPrefix, Path, PathRegexp, Headers, HeadersRegexp, Method); the route was not converted"
+    },
+    {
+      "source": "IngressRoute demo/plain",
+      "key": "spec.routes[0].priority",
+      "value": "10",
+      "status": "todo",
+      "reason": "Gateway API orders matches by specificity, not by an explicit priority; check which rule should win"
+    },
+    {
+      "source": "Middleware demo/to-https",
+      "key": "redirectScheme",
+      "value": "https",
+      "status": "converted",
+      "target": "RequestRedirect"
+    },
+    {
+      "source": "IngressRouteTCP demo/pass",
+      "key": "spec.tls",
+      "status": "converted",
+      "target": "HTTPS listener with certificateRefs"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 0,
+      "different": 0,
+      "equivalent": 4,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "shop",
+        "route": "shop-shop-example-test",
+        "expected_route": "shop-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/api",
+        "path_type": "Prefix",
+        "backend": "api:8080",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "shop",
+        "route": "shop-shop-example-test",
+        "expected_route": "shop-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/cart",
+        "path_type": "Exact",
+        "backend": "cart:8080",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "shop",
+        "route": "shop-shop-example-test",
+        "expected_route": "shop-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/img",
+        "path_type": "Prefix",
+        "backend": "img:8443",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "pass",
+        "route": "pass-tls-example-test",
+        "expected_route": "pass-tls-example-test",
+        "host": "tls.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "tlsapp:443",
+        "kind": "TLSRoute",
+        "route_kind": "TLSRoute",
+        "tls": true,
+        "details": [
+          "TLS passthrough routes on SNI only; the Ingress path is not compared"
+        ]
+      }
+    ]
+  }
+}

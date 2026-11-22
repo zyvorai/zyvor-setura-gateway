@@ -1,0 +1,25 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Converted
+    ✓  Ingress demo/canary-weight  canary                  folded into the rule of the non-canary Ingress
+    ✓  Ingress demo/canary-weight  canary-weight           weighted backendRefs (80 to 20)
+    ✓  Ingress demo/canary-hdr     canary                  folded into the rule of the non-canary Ingress
+    ✓  Ingress demo/canary-hdr     canary-by-header        separate rule with a header match to the canary backend
+    ✓  Ingress demo/canary-hdr     canary-by-header-value  header match value
+
+  Needs a human
+    ▲  Ingress demo/canary-hdr     canary-by-cookie        HTTPRoute cannot match on cookies; route canary users by a header instead or u...
+    ▲  Ingress demo/lonely         canary                  no non-canary Ingress serves the same host and path in the inputs, so it was c...
+    ▲  Ingress demo/lonely         canary-weight           there is no main route to split traffic with; decide which route this canary s...
+
+  Generated
+    Gateway    demo/nginx                  
+    HTTPRoute  demo/lonely-x-example-test    2 TODO
+    HTTPRoute  demo/main-c-example-test      1 TODO
+
+  Check  ✓ 5 rules equivalent to the original
+
+  needs review  5 converted, 3 need a human, 3 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

@@ -1,0 +1,159 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: default
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: secure-example-test-http
+      hostname: secure.example.test
+      port: 80
+      protocol: HTTP
+    - name: secure-example-test-https
+      hostname: secure.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: secure-example-test-tls
+        mode: Terminate
+    - name: shop-example-test-http
+      hostname: shop.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) ssl_certificate: /etc/ssl/secure.crt -- create a TLS Secret from the certificate and key files (kubectl create secret tls NAME --cert=... --key=...) and name it in the listener certificateRefs
+# TODO(setura) ssl_certificate_key: /etc/ssl/secure.key -- create a TLS Secret from the certificate and key files (kubectl create secret tls NAME --cert=... --key=...) and name it in the listener certificateRefs
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nginx-secure-example-test
+  namespace: default
+spec:
+  hostnames:
+    - secure.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: secure-example-test-https
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 8443
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nginx-shop-example-test
+  namespace: default
+  annotations:
+    setura.zyvor.dev/auth.rule-2: "{\"ipAllow\":[\"10.0.0.0/8\"]}"
+spec:
+  hostnames:
+    - shop.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: shop-example-test-http
+  rules:
+    - backendRefs:
+        - name: web
+          port: 8080
+      filters:
+        - requestHeaderModifier:
+            set:
+              - name: X-Env
+                value: prod
+          type: RequestHeaderModifier
+        - responseHeaderModifier:
+            set:
+              - name: X-Frame-Options
+                value: DENY
+          type: ResponseHeaderModifier
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+    - backendRefs:
+        - name: api-a
+          port: 8080
+          weight: 3
+        - name: api-b
+          namespace: prod
+          port: 8080
+          weight: 1
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              replacePrefixMatch: /v2
+              type: ReplacePrefixMatch
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      timeouts:
+        backendRequest: 90s
+    - backendRefs:
+        - name: web
+          port: 8080
+      matches:
+        - path:
+            type: Exact
+            value: /health
+    - backendRefs:
+        - name: items
+          port: 80
+      matches:
+        - path:
+            type: RegularExpression
+            value: ^/v[0-9]+/items
+    - filters:
+        - requestRedirect:
+            hostname: shop.example.test
+            path:
+              replaceFullPath: /new
+              type: ReplaceFullPath
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect
+      matches:
+        - path:
+            type: PathPrefix
+            value: /old
+---
+# TODO(setura) BackendTLSPolicy backend-backend-tls -- the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap backend-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: backend-backend-tls
+  namespace: default
+spec:
+  targetRefs:
+    - kind: Service
+      name: backend
+      group: ""
+  validation:
+    caCertificateRefs:
+      - kind: ConfigMap
+        name: backend-ca
+        group: ""
+    hostname: backend.default.svc
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-default-httproutes
+  namespace: prod
+spec:
+  from:
+    - kind: HTTPRoute
+      namespace: default
+      group: gateway.networking.k8s.io
+  to:
+    - kind: Service
+      name: api-b
+      group: ""

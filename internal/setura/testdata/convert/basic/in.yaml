@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: demo
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts: [shop.example.test]
+    secretName: shop-tls
+  rules:
+  - host: shop.example.test
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 8080
+      - path: /cart
+        pathType: Exact
+        backend:
+          service:
+            name: cart
+            port:
+              number: 8080
+      - path: /web
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: blog
+  namespace: content
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: blog.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: blog
+            port:
+              number: 80
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: demo}
+spec:
+  ports:
+  - {name: http, port: 8080}

@@ -1,0 +1,233 @@
+{
+  "source": "nginx-conf",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 9,
+    "ignored": 3,
+    "resources": 5,
+    "todo": 4
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "default",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "default",
+      "name": "nginx-secure-example-test",
+      "todos": 2
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "default",
+      "name": "nginx-shop-example-test"
+    },
+    {
+      "kind": "BackendTLSPolicy",
+      "namespace": "default",
+      "name": "backend-backend-tls",
+      "todos": 1
+    },
+    {
+      "kind": "ReferenceGrant",
+      "namespace": "prod",
+      "name": "allow-default-httproutes"
+    }
+  ],
+  "items": [
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "worker_processes",
+      "value": "auto",
+      "status": "ignored",
+      "reason": "does not affect routing"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "access_log",
+      "value": "/var/log/nginx/access.log",
+      "status": "ignored",
+      "reason": "does not affect routing"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "listen",
+      "value": "80",
+      "status": "converted",
+      "target": "Gateway listener"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_set_header Host",
+      "value": "$host",
+      "status": "converted",
+      "target": "default: the gateway preserves the Host header"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_set_header X-Real-IP",
+      "value": "$remote_addr",
+      "status": "ignored",
+      "reason": "the gateway sets forwarding headers itself"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_set_header X-Env",
+      "value": "prod",
+      "status": "converted",
+      "target": "RequestHeaderModifier set"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "add_header X-Frame-Options",
+      "value": "DENY",
+      "status": "converted",
+      "target": "ResponseHeaderModifier set"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_pass",
+      "value": "http://web:8080",
+      "status": "converted",
+      "target": "backendRef"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_read_timeout",
+      "value": "90s",
+      "status": "converted",
+      "target": "timeouts.backendRequest"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "proxy_send_timeout",
+      "value": "30s",
+      "status": "converted",
+      "target": "timeouts.backendRequest"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "allow/deny",
+      "value": "10.0.0.0/8",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth ipAllow"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "return 301",
+      "value": "https://shop.example.test/new",
+      "status": "converted",
+      "target": "RequestRedirect"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "client_max_body_size",
+      "value": "10m",
+      "status": "todo",
+      "reason": "Gateway API and the Setura gateway have no per-route request body limit"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "ssl_certificate",
+      "value": "/etc/ssl/secure.crt",
+      "status": "todo",
+      "reason": "create a TLS Secret from the certificate and key files (kubectl create secret tls NAME --cert=... --key=...) and name it in the listener certificateRefs"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "ssl_certificate_key",
+      "value": "/etc/ssl/secure.key",
+      "status": "todo",
+      "reason": "create a TLS Secret from the certificate and key files (kubectl create secret tls NAME --cert=... --key=...) and name it in the listener certificateRefs"
+    },
+    {
+      "source": "nginx.conf nginx.conf",
+      "key": "BackendTLSPolicy backend-backend-tls",
+      "status": "todo",
+      "reason": "the original does not verify the backend certificate unless configured to, but BackendTLSPolicy always does; create ConfigMap backend-ca with the backend CA in ca.crt (or set wellKnownCACertificates: System) and check the hostname"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 0,
+      "different": 0,
+      "equivalent": 5,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "nginx",
+        "route": "nginx-shop-example-test",
+        "expected_route": "nginx-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "web:8080",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nginx",
+        "route": "nginx-shop-example-test",
+        "expected_route": "nginx-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/api",
+        "path_type": "Prefix",
+        "backend": "api-a:8080",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nginx",
+        "route": "nginx-shop-example-test",
+        "expected_route": "nginx-shop-example-test",
+        "host": "shop.example.test",
+        "path": "/health",
+        "path_type": "Exact",
+        "backend": "web:8080",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nginx",
+        "route": "nginx-secure-example-test",
+        "expected_route": "nginx-secure-example-test",
+        "host": "secure.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "backend:8443",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nginx-regex",
+        "route": "nginx-shop-example-test",
+        "expected_route": "nginx-regex-shop-example-test",
+        "host": "shop.example.test",
+        "path": "^/v[0-9]+/items",
+        "path_type": "Prefix",
+        "backend": "items:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "route name \"nginx-shop-example-test\" differs from the ingress2gateway convention \"nginx-regex-shop-example-test\""
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "testdata/convert/nginxconf/nginx.conf:42: client_max_body_size has no equivalent (Gateway API and the Setura gateway have no per-route request body limit)"
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "equivalent",
+  "ok": true,
+  "summary": {
+    "converted": 0,
+    "ignored": 0,
+    "resources": 8,
+    "todo": 0
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "a-b-c"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "a-b-c-2"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "defaultonly-all-hosts"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "nohost-all-hosts"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "wild-wildcard-wild-example-test"
+    },
+    {
+      "kind": "Gateway",
+      "namespace": "other",
+      "name": "internal"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "other",
+      "name": "a-b-c"
+    }
+  ],
+  "items": [],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 0,
+      "different": 0,
+      "equivalent": 6,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "a",
+        "route": "a-b-c",
+        "expected_route": "a-b-c",
+        "host": "b.c",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "one:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "a-b",
+        "route": "a-b-c-2",
+        "expected_route": "a-b-c",
+        "host": "c",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "two:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "route name \"a-b-c-2\" differs from the ingress2gateway convention \"a-b-c\""
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "a",
+        "route": "a-b-c",
+        "expected_route": "a-b-c",
+        "host": "b.c",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "three:80",
+        "ingress_class": "internal",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "wild",
+        "route": "wild-wildcard-wild-example-test",
+        "expected_route": "wild-wildcard-wild-example-test",
+        "host": "*.wild.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "w:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nohost",
+        "route": "nohost-all-hosts",
+        "expected_route": "nohost-all-hosts",
+        "host": "",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "dflt:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "defaultonly",
+        "route": "defaultonly-all-hosts",
+        "expected_route": "defaultonly-all-hosts",
+        "host": "",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "fallback:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "default backend"
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "HTTPRoute name \"a-b-c\" was taken in namespace \"demo\"; the new object is named \"a-b-c-2\""
+  ]
+}

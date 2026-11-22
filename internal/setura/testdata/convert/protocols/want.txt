@@ -1,0 +1,37 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Converted
+    ✓  Ingress demo/grpc     backend-protocol                     GRPCRoute
+    ✓  Ingress demo/grpcs    backend-protocol                     GRPCRoute and a BackendTLSPolicy for the Service
+    ✓  Ingress demo/grpcs    proxy-ssl-name                       BackendTLSPolicy validation.hostname
+    ✓  Ingress demo/https    backend-protocol                     BackendTLSPolicy for the Service
+    ✓  Ingress demo/pass     ssl-passthrough                      TLSRoute with a TLS Passthrough listener
+    ✓  Ingress demo/rx       use-regex                            path match type RegularExpression
+
+  Needs a human
+    ▲  Ingress demo/pass     rewrite-target                       the host is a TLS passthrough route: the gateway never sees the HTTP request, ...
+    ▲  Ingress demo/badgrpc  spec.rules path /not/a/grpc/path     a gRPC rule needs a path of the form /package.Service or /package.Service/Meth...
+    ▲  Ingress demo/badgrpc  backend-protocol                     no mechanical equivalent: set appProtocol on the Service port; HTTPS backends ...
+    ▲  Ingress demo/fcgi     backend-protocol                     the backend protocol FCGI has no Gateway API equivalent (supported: HTTP, HTTP...
+    ▲  Ingress demo/grpcs    BackendTLSPolicy secure-backend-tls  the original does not verify the backend certificate unless configured to, but...
+
+  1 setting ignored on purpose (see the report)
+
+  Generated
+    Gateway           demo/nginx                  
+    HTTPRoute         demo/fcgi-f-example-test      1 TODO
+    HTTPRoute         demo/https-h-example-test   
+    HTTPRoute         demo/rx-rx-example-test     
+    GRPCRoute         demo/grpc-g-example-test    
+    GRPCRoute         demo/grpcs-gs-example-test  
+    TLSRoute          demo/pass-p-example-test      1 TODO
+    BackendTLSPolicy  demo/secure-backend-tls       1 TODO
+
+  Check  ✗ differences from the original
+    ✗  missing-in-gateway bg.example.test /not/a/grpc/path
+         no GRPCRoute rule matches this host and path
+
+  needs review  6 converted, 5 need a human, 8 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

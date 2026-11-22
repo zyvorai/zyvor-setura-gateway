@@ -44,7 +44,8 @@ var commandNames = []string{
 
 // migrateFlags are offered after "setura migrate".
 var migrateFlags = []string{"--ingress", "--routes", "--services", "--objects", "--ingress-class", "--namespace", "-A", "--ingress-url", "--gateway-url",
-	"--probe-extra", "--address", "--ingress-address", "--gateway-address", "--ca", "--timeout", "--header", "--format"}
+	"--probe-extra", "--address", "--ingress-address", "--gateway-address", "--ca", "--timeout", "--header", "--format",
+	"check", "convert", "--from", "--gateway-class", "--out", "--force", "--report", "--no-check"}
 
 // replayFlags are offered after "setura replay".
 var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit", "--ignore-weights", "--fail-on", "--default-host", "--before-rate-limit", "--after-rate-limit"}

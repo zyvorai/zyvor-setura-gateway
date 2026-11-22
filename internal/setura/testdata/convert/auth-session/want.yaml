@@ -1,0 +1,98 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: a-example-test-http
+      hostname: a.example.test
+      port: 80
+      protocol: HTTP
+    - name: e-example-test-http
+      hostname: e.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) nginx.ingress.kubernetes.io/auth-type: basic -- the basic auth block was generated without users: the htpasswd entries in Secret htpasswd use bcrypt or apr1 hashes, while Setura stores pbkdf2-sha256; create each user with `setura gateway hash --kind password` and add it under basic.users
+# TODO(setura) nginx.ingress.kubernetes.io/auth-signin: https://login.example.test/start -- ExternalAuth answers 401/403 itself; redirecting unauthenticated users to a sign-in page needs a controller policy or an auth proxy
+# TODO(setura) nginx.ingress.kubernetes.io/session-cookie-samesite: Lax -- sessionPersistence cookies have no attribute for this; the gateway issues a signed session cookie with its own settings
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: a-a-example-test
+  namespace: demo
+  annotations:
+    setura.zyvor.dev/auth.rule-1: "{\"basic\":{\"realm\":\"Files\",\"users\":[]},\"ipAllow\":[\"10.0.0.0/8\",\"192.168.1.0/24\"],\"ipDeny\":[\"203.0.113.0/24\"]}"
+spec:
+  hostnames:
+    - a.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: a-example-test-http
+  rules:
+    - backendRefs:
+        - name: app
+          port: 80
+      filters:
+        - externalAuth:
+            backendRef:
+              name: authz
+              namespace: infra
+              port: 9000
+            http:
+              allowedResponseHeaders:
+                - X-User
+                - X-Email
+              path: /verify
+            protocol: HTTP
+          type: ExternalAuth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      sessionPersistence:
+        absoluteTimeout: 3600s
+        cookieConfig:
+          lifetimeType: Permanent
+        sessionName: route
+        type: Cookie
+---
+# TODO(setura) nginx.ingress.kubernetes.io/auth-type: digest -- only basic authentication on an HTTPRoute converts; digest has no equivalent
+# TODO(setura) nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/check -- the auth URL is not a Service of this cluster (name[.namespace][.svc]:port/path); ExternalAuth needs a backendRef
+# TODO(setura) nginx.ingress.kubernetes.io/affinity: ip -- only cookie affinity converts to sessionPersistence
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ext-e-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - e.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: e-example-test-http
+  rules:
+    - backendRefs:
+        - name: app
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-demo-httproutes
+  namespace: infra
+spec:
+  from:
+    - kind: HTTPRoute
+      namespace: demo
+      group: gateway.networking.k8s.io
+  to:
+    - kind: Service
+      name: authz
+      group: ""

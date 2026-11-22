@@ -1,0 +1,83 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: c
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.example.test, https://*.dev.example.test"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "get, post"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "X-Token"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "X-Out"
+    nginx.ingress.kubernetes.io/cors-max-age: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/upstream-vhost: "internal.example.test"
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: "/shop"
+    nginx.ingress.kubernetes.io/custom-headers: "demo/resp-headers"
+    nginx.ingress.kubernetes.io/proxy-set-headers: "missing-map"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    nginx.ingress.kubernetes.io/mirror-target: "http://shadow.demo.svc.cluster.local:8080/"
+    nginx.ingress.kubernetes.io/mirror-host: "shadow.example.test"
+spec:
+  rules:
+  - host: c.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cors-off
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://x.example.test"
+spec:
+  rules:
+  - host: off.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cors-regex
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "^https://.*\.example\.test$"
+spec:
+  rules:
+  - host: rx.example.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: resp-headers, namespace: demo}
+data:
+  X-Frame-Options: DENY
+  Cache-Control: no-store

@@ -1,0 +1,38 @@
+
+  setura migrate convert  traefik → Gateway API
+
+  Converted
+    ✓  IngressRoute demo/shop       spec.tls                          HTTPS listener with certificateRefs
+    ✓  Middleware demo/strip-api    stripPrefix                       URLRewrite ReplacePrefixMatch /
+    ✓  Middleware demo/sec-headers  headers.contentTypeNosniff        ResponseHeaderModifier set X-Content-Type-Options
+    ✓  Middleware demo/sec-headers  headers.customRequestHeaders      RequestHeaderModifier
+    ✓  Middleware demo/sec-headers  headers.customResponseHeaders     ResponseHeaderModifier
+    ✓  Middleware demo/sec-headers  headers.frameDeny                 ResponseHeaderModifier set X-Frame-Options
+    ✓  Middleware demo/sec-headers  headers.stsSeconds                ResponseHeaderModifier set Strict-Transport-Security
+    ✓  Middleware demo/sec-headers  headers.accessControl*            CORS filter
+    ✓  Middleware demo/office-only  ipAllowList                       setura.zyvor.dev/auth ipAllow
+    ✓  Middleware demo/retry3       retry                             rule retry
+    ✓  Middleware demo/to-https     redirectScheme                    RequestRedirect
+    ✓  IngressRouteTCP demo/pass    spec.tls                          HTTPS listener with certificateRefs
+
+  Needs a human
+    ▲  Middleware demo/sec-headers  headers.sslRedirect               no Gateway API equivalent (it changes redirects, host checks or proxy headers ...
+    ▲  Middleware demo/limit        rateLimit                         the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit...
+    ▲  Middleware demo/files-auth   basicAuth                         the basic auth block has no users: Traefik reads htpasswd entries from Secret ...
+    ▲  IngressRoute demo/shop       BackendTLSPolicy img-backend-tls  the original does not verify the backend certificate unless configured to, but...
+    ▲  IngressRoute demo/shop       spec.routes[3].match              the rule uses ||, ! or nested expressions; split it into one route per alterna...
+    ▲  IngressRoute demo/shop       spec.routes[4].match              the matcher HostRegexp has no Gateway API equivalent (supported: Host, PathPre...
+    ▲  IngressRoute demo/plain      spec.routes[0].priority           Gateway API orders matches by specificity, not by an explicit priority; check ...
+
+  Generated
+    Gateway           demo/traefik                   
+    HTTPRoute         demo/plain-plain-example-test    1 TODO
+    HTTPRoute         demo/shop-shop-example-test      5 TODO
+    TLSRoute          demo/pass-tls-example-test     
+    BackendTLSPolicy  demo/img-backend-tls             1 TODO
+
+  Check  ✓ 4 rules equivalent to the original
+
+  needs review  12 converted, 7 need a human, 5 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

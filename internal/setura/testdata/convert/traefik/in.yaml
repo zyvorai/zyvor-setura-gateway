@@ -1,0 +1,113 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: {name: shop, namespace: demo}
+spec:
+  entryPoints: [websecure]
+  routes:
+  - match: Host(`shop.example.test`) && PathPrefix(`/api`)
+    middlewares:
+    - {name: strip-api}
+    - {name: sec-headers}
+    - {name: office-only}
+    - {name: retry3}
+    services:
+    - {name: api, port: 8080}
+  - match: Host(`shop.example.test`) && Path(`/cart`) && Headers(`X-Beta`, `1`)
+    middlewares:
+    - {name: limit}
+    - {name: files-auth}
+    services:
+    - {name: cart, port: 8080, weight: 3}
+    - {name: cart-beta, port: 8080, weight: 1}
+  - match: Host(`shop.example.test`) && PathPrefix(`/img`) && Method(`GET`)
+    services:
+    - {name: img, port: http, scheme: https}
+  - match: Host(`a.example.test`) || Host(`b.example.test`)
+    services:
+    - {name: api, port: 80}
+  - match: HostRegexp(`{sub:.+}.example.test`)
+    services:
+    - {name: api, port: 80}
+  tls:
+    secretName: shop-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: {name: plain, namespace: demo}
+spec:
+  entryPoints: [web]
+  routes:
+  - match: Host(`plain.example.test`)
+    priority: 10
+    middlewares: [{name: to-https}]
+    services:
+    - {name: plain, port: 80}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata: {name: pass, namespace: demo}
+spec:
+  routes:
+  - match: HostSNI(`tls.example.test`)
+    services:
+    - {name: tlsapp, port: 443}
+  tls: {passthrough: true}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: strip-api, namespace: demo}
+spec:
+  stripPrefix: {prefixes: [/api]}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: sec-headers, namespace: demo}
+spec:
+  headers:
+    customRequestHeaders: {X-From: edge, X-Drop: ""}
+    customResponseHeaders: {X-Served-By: setura}
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    frameDeny: true
+    contentTypeNosniff: true
+    accessControlAllowOriginList: ["https://app.example.test"]
+    accessControlAllowMethods: [GET, POST]
+    accessControlMaxAge: 100
+    sslRedirect: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: office-only, namespace: demo}
+spec:
+  ipAllowList: {sourceRange: ["10.0.0.0/8", "192.168.0.0/16"]}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: retry3, namespace: demo}
+spec:
+  retry: {attempts: 3, initialInterval: 100ms}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: limit, namespace: demo}
+spec:
+  rateLimit: {average: 100, burst: 50}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: files-auth, namespace: demo}
+spec:
+  basicAuth: {secret: htpasswd, realm: files}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: to-https, namespace: demo}
+spec:
+  redirectScheme: {scheme: https, permanent: true}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: img, namespace: demo}
+spec:
+  ports:
+  - {name: http, port: 8443}

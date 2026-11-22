@@ -1,0 +1,152 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: all-hosts-http
+      port: 80
+      protocol: HTTP
+    - name: b-c-http
+      hostname: b.c
+      port: 80
+      protocol: HTTP
+    - name: c-http
+      hostname: c
+      port: 80
+      protocol: HTTP
+    - name: wildcard-wild-example-test-http
+      hostname: "*.wild.example.test"
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: a-b-c
+  namespace: demo
+spec:
+  hostnames:
+    - b.c
+  parentRefs:
+    - name: nginx
+      sectionName: b-c-http
+  rules:
+    - backendRefs:
+        - name: one
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: a-b-c-2
+  namespace: demo
+spec:
+  hostnames:
+    - c
+  parentRefs:
+    - name: nginx
+      sectionName: c-http
+  rules:
+    - backendRefs:
+        - name: two
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: defaultonly-all-hosts
+  namespace: demo
+spec:
+  parentRefs:
+    - name: nginx
+      sectionName: all-hosts-http
+  rules:
+    - backendRefs:
+        - name: fallback
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nohost-all-hosts
+  namespace: demo
+spec:
+  parentRefs:
+    - name: nginx
+      sectionName: all-hosts-http
+  rules:
+    - backendRefs:
+        - name: dflt
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wild-wildcard-wild-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - "*.wild.example.test"
+  parentRefs:
+    - name: nginx
+      sectionName: wildcard-wild-example-test-http
+  rules:
+    - backendRefs:
+        - name: w
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: internal
+  namespace: other
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: b-c-http
+      hostname: b.c
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: a-b-c
+  namespace: other
+spec:
+  hostnames:
+    - b.c
+  parentRefs:
+    - name: internal
+      sectionName: b-c-http
+  rules:
+    - backendRefs:
+        - name: three
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
