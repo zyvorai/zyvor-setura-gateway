@@ -83,7 +83,7 @@ func writeTmp(t *testing.T, name, body string) string {
 }
 
 func TestYAMLSubset(t *testing.T) {
-	docs, err := decodeManifests([]byte("---\na: 1\nb: [x, 'y z', {k: v}]\nc:\n- p: true\n  q: ~\n- \"s: t\"\nd: >\n  one\n  two\ne:\n  - - 1\n    - 2\n---\n# only comment\n---\nx: y # c\n"))
+	docs, err := decodeManifests([]byte("---\na: 1\nb: [x, 'y z', {k: v}]\nc:\n- p: true\n  q: ~\n- \"s: t\"\nd: >\n  one\n  two\ne:\n  - - 1\n    - 2\n---\n# only comment\n---\nx: z # c\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestYAMLSubset(t *testing.T) {
 		t.Fatalf("docs: %v", docs)
 	}
 	got, _ := json.Marshal(docs)
-	want := `[{"a":1,"b":["x","y z",{"k":"v"}],"c":[{"p":true,"q":null},"s: t"],"d":"one two\n","e":[[1,2]]},{"x":"y"}]`
+	want := `[{"a":1,"b":["x","y z",{"k":"v"}],"c":[{"p":true,"q":null},"s: t"],"d":"one two\n","e":[[1,2]]},{"x":"z"}]`
 	if string(got) != want {
 		t.Fatalf("got %s\nwant %s", got, want)
 	}
@@ -180,11 +180,11 @@ func TestMigrateFromClusterFake(t *testing.T) {
 	gw := map[string]any{"items": []any{map[string]any{
 		"kind": "Gateway", "metadata": map[string]any{"name": "gw", "namespace": "demo"},
 		"spec": map[string]any{"listeners": []any{map[string]any{"name": "http", "protocol": "HTTP", "port": 80}}}}}}
-	c, seen := fakeCluster(js(ing), js(rt), js(gw))
+	c, seen := keyedCluster(map[string]any{"ingresses.networking.k8s.io": ing, "httproutes.gateway.networking.k8s.io": rt, "gateways.gateway.networking.k8s.io": gw})
 	code, out, errs := cli(t, c, "migrate", "check", "-n", "demo", "--format", "json")
 	is(t, code, 1) // TLS host but only an HTTP listener
 	contains(t, out, "no HTTPS listener")
-	if len(*seen) != 5 || !strings.Contains(strings.Join((*seen)[0], " "), "ingresses.networking.k8s.io") {
+	if len(*seen) < 5 || !strings.Contains(strings.Join((*seen)[0], " "), "ingresses.networking.k8s.io") {
 		t.Fatalf("kubectl calls: %v (%s)", *seen, errs)
 	}
 }

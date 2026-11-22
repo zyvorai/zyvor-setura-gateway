@@ -390,7 +390,7 @@ func whyLost(w, o *Entry, ws, os score) string {
 	case ws.pathKind != os.pathKind:
 		return fmt.Sprintf("precedence rule 2, path type: %s loses to %s (Exact beats RegularExpression beats PathPrefix)", pathKindName(os.pathKind), pathKindName(ws.pathKind))
 	case ws.pathLen != os.pathLen:
-		return fmt.Sprintf("precedence rule 3, longest path prefix wins: %q (%d characters) loses to %q (%d)", o.Match.PathValue, os.pathLen, w.Match.PathValue, ws.pathLen)
+		return fmt.Sprintf("precedence rule 3, longest path prefix wins: %q (%d characters) loses to %q (%d characters)", o.Match.PathValue, os.pathLen, w.Match.PathValue, ws.pathLen)
 	case ws.method != os.method:
 		return "precedence rule 4, a rule with a method match beats one without"
 	case ws.headers != os.headers:

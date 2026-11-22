@@ -431,7 +431,10 @@ func TestAdminWhyEndpoint(t *testing.T) {
 	if tr.Verdict != VerdictRouted || tr.Winner.Backends[0].Name != "a" || tr.Winner.Backends[0].Endpoints[0].State != "up" {
 		t.Fatalf("%s", dumpTrace(&tr))
 	}
-	bad, _ := http.Get("http://" + s.AdminAddr() + "/why?url=ftp%3A%2F%2Fx")
+	bad, err := http.Get("http://" + s.AdminAddr() + "/why?url=ftp%3A%2F%2Fx")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer bad.Body.Close()
 	if bad.StatusCode != 400 {
 		t.Fatalf("bad request status %d", bad.StatusCode)

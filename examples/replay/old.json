@@ -1,0 +1,174 @@
+{
+  "schema": "setura.route-specs/v1",
+  "namespace": "shop",
+  "resources": {
+    "gateways.gateway.networking.k8s.io/dev": {
+      "gatewayClassName": "setura",
+      "listeners": [
+        {
+          "name": "web",
+          "protocol": "HTTP",
+          "port": 8080,
+          "hostname": "orders.example.test"
+        }
+      ]
+    },
+    "httproutes.gateway.networking.k8s.io/orders": {
+      "parentRefs": [
+        {
+          "name": "dev",
+          "sectionName": "web"
+        }
+      ],
+      "hostnames": [
+        "orders.example.test"
+      ],
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/checkout"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "orders-v1",
+              "port": 80,
+              "weight": 90
+            },
+            {
+              "name": "orders-v2",
+              "port": 80,
+              "weight": 10
+            }
+          ]
+        },
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/cart"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "cart-v1",
+              "port": 80
+            }
+          ]
+        },
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/legacy"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "legacy-v1",
+              "port": 80
+            }
+          ]
+        },
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/old"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "orders-v1",
+              "port": 80
+            }
+          ]
+        },
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/api"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "api-v1",
+              "port": 80
+            }
+          ]
+        },
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/health"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "name": "health",
+              "port": 80
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "backends": {
+    "orders-v1:80": {
+      "endpoints": [
+        "127.0.0.1:19100"
+      ]
+    },
+    "orders-v2:80": {
+      "endpoints": [
+        "127.0.0.1:19101"
+      ]
+    },
+    "cart-v1:80": {
+      "endpoints": [
+        "127.0.0.1:19102"
+      ]
+    },
+    "cart-v2:80": {
+      "endpoints": [
+        "127.0.0.1:19103"
+      ]
+    },
+    "legacy-v1:80": {
+      "endpoints": [
+        "127.0.0.1:19104"
+      ]
+    },
+    "api-v1:80": {
+      "endpoints": [
+        "127.0.0.1:19105"
+      ]
+    },
+    "api-v2:80": {
+      "endpoints": [
+        "127.0.0.1:19106"
+      ]
+    },
+    "health:80": {
+      "endpoints": [
+        "127.0.0.1:19107"
+      ]
+    }
+  }
+}
