@@ -331,3 +331,37 @@ func TestPageIsSelfContained(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionsEndpointAndBroadcast(t *testing.T) {
+	var gotLimit int
+	var gotSince int64
+	h := New(Options{State: state, Connections: func(limit int, since int64) any {
+		gotLimit, gotSince = limit, since
+		return map[string]any{"history": []any{}}
+	}})
+	w := get(t, h, "/api/connections?limit=7&since=3", nil)
+	if w.Code != 200 || gotLimit != 7 || gotSince != 3 {
+		t.Fatalf("code %d limit %d since %d", w.Code, gotLimit, gotSince)
+	}
+	if w := get(t, New(Options{State: state}), "/api/connections", nil); w.Code != 404 {
+		t.Errorf("without a provider: %d, want 404", w.Code)
+	}
+	if w := get(t, New(Options{State: state, Token: "t", Connections: func(int, int64) any { return 1 }}), "/api/connections", nil); w.Code != 401 {
+		t.Errorf("without a token: %d, want 401", w.Code)
+	}
+	hub := NewHub(5)
+	ch, cancel := hub.subscribe()
+	defer cancel()
+	hub.Broadcast(Event{Kind: "conns", Data: map[string]any{"n": 1}})
+	select {
+	case e := <-ch:
+		if e.Kind != "conns" || e.ID == 0 {
+			t.Errorf("event %+v", e)
+		}
+	default:
+		t.Fatal("subscriber got nothing")
+	}
+	if len(hub.Since(0)) != 0 {
+		t.Error("broadcast events must not enter the replay buffer")
+	}
+}
