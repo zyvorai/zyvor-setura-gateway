@@ -67,12 +67,16 @@ func BuildTopology(snapshot obj) (obj, error) {
 					"declared": true, "port": req(entry, "port"), "protocol": req(entry, "protocol"), "hostname": entry["hostname"]})
 				edge(gw, ln, "listens", nil)
 			}
-		case route:
+		case route, grpcRoute:
+			routeKind := "HTTPRoute"
+			if resource == grpcRoute {
+				routeKind = "GRPCRoute"
+			}
 			hostnames := spec["hostnames"]
 			if hostnames == nil {
 				hostnames = []any{}
 			}
-			rt := node("HTTPRoute", ns, name, obj{"declared": true, "hostnames": hostnames})
+			rt := node(routeKind, ns, name, obj{"declared": true, "hostnames": hostnames})
 			for _, p := range asList(spec["parentRefs"]) {
 				parent := asMap(p)
 				pns, pname := str(parent, "namespace", ns), asStr(req(parent, "name"))
@@ -171,7 +175,7 @@ func Impact(graph obj, target string) (obj, error) {
 			continue
 		}
 		up = append(up, k)
-		if strings.HasPrefix(k, "HTTPRoute/") {
+		if strings.HasPrefix(k, "HTTPRoute/") || strings.HasPrefix(k, "GRPCRoute/") {
 			routes = append(routes, k)
 		}
 	}

@@ -28,6 +28,8 @@ Commands:
   snapshot / diff BEFORE AFTER      capture and compare Gateway and HTTPRoute specs
   map / impact TARGET               render or query the declared route topology
   lint                              statically analyze Gateway and HTTPRoute specs (offline)
+  grpc-health HOST:PORT             call grpc.health.v1.Health/Check over TLS (HTTP/2)
+  bench URL                         repeat probes and report latency percentiles and budgets
   completion bash|zsh|fish          print a shell completion script
   ai REPORT [--model NAME]          explain saved evidence, optionally with local Ollama
   doctor / capabilities / exposure  check permissions, controllers and Service exposure
@@ -199,6 +201,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		fs.Var(&headers, "header", `require a response header, "Name: value" or "Name: *" for presence; repeatable`)
 		body := fs.String("body-contains", "", "require this text in the first 1 MiB of the response body")
 		maxMS := fs.Float64("max-ms", 0, "fail when the whole probe takes longer than this many milliseconds")
+		http2 := fs.Bool("http2", false, "negotiate ALPN h2 over TLS and speak HTTP/2")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -207,7 +210,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			return 2, err
 		}
 		o := ProbeOptions{URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
-			BodyContains: *body, MaxMS: *maxMS}
+			BodyContains: *body, MaxMS: *maxMS, HTTP2: *http2}
 		for _, h := range headers {
 			name, value, ok := strings.Cut(h, ":")
 			if !ok || strings.TrimSpace(name) == "" {
@@ -482,6 +485,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		return boolExit(failed), nil
 
+	case "grpc-health":
+		return runGRPCHealth(fs, rest, stdout, stderr)
+
+	case "bench":
+		return runBench(fs, rest, stdout, stderr)
+
 	case "completion":
 		pos, err := parse(fs, rest)
 		if err != nil {
@@ -558,7 +567,7 @@ func Check(path string) ([]*Report, error) {
 		return nil, userError("check file must be a nonempty JSON array")
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
-		"headers": true, "body_contains": true, "max_ms": true}
+		"headers": true, "body_contains": true, "max_ms": true, "http2": true}
 	rows := []*Report{}
 	for _, c := range cases {
 		m := asMap(c)
@@ -606,6 +615,13 @@ func Check(path string) ([]*Report, error) {
 				return nil, userError("max_ms must be a number")
 			}
 			o.MaxMS = f
+		}
+		if h, ok := m["http2"]; ok {
+			b, isBool := h.(bool)
+			if !isBool {
+				return nil, userError("http2 must be true or false")
+			}
+			o.HTTP2 = b
 		}
 		r, err := Probe(o)
 		if err != nil {

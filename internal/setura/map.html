@@ -9,7 +9,7 @@
 <script type="application/json" id="data">GRAPH_PAYLOAD</script><script>
 const data=JSON.parse(document.querySelector('#data').textContent);
 const svg=document.querySelector('#graph'), select=document.querySelector('#focus'), detail=document.querySelector('#detail');
-const layers=[['Gateway','Parent'],['Listener'],['HTTPRoute'],['Rule'],['Service','Backend']];
+const layers=[['Gateway','Parent'],['Listener'],['HTTPRoute','GRPCRoute'],['Rule'],['Service','Backend']];
 const titles=['Parents','Listeners','HTTP routes','Rules','Backends'];
 const pos=new Map(), groups=new Map(), lines=[], nodes=new Map(data.nodes.map(n=>[n.id,n]));
 function draw(tag,attrs,parent=svg){const el=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);parent.append(el);return el}
@@ -23,7 +23,7 @@ for(const e of data.edges){const [x,y]=pos.get(e.from),[u,v]=pos.get(e.to);
  const path=draw('path',{d:`M ${x+194} ${y+27} C ${x+217} ${y+27}, ${u-23} ${v+27}, ${u} ${v+27}`});
  if(e.weight===0)path.setAttribute('stroke-dasharray','4 3');lines.push([e,path]);}
 for(const [id,[x,y]] of pos){const n=nodes.get(id),g=draw('g',{class:'node',tabindex:0,role:'button','aria-label':id});groups.set(id,g);
- draw('rect',{x,y,width:194,height:55,rx:9,fill:n.kind==='HTTPRoute'?'#e6f2ff':'#f9fbfc',stroke:'#b7c6d3'},g);
+ draw('rect',{x,y,width:194,height:55,rx:9,fill:(n.kind==='HTTPRoute'||n.kind==='GRPCRoute')?'#e6f2ff':'#f9fbfc',stroke:'#b7c6d3'},g);
  words(g,x+10,y+23,n.name.length>21?n.name.slice(0,20)+'…':n.name,{'font-size':15,'font-weight':600});
  words(g,x+10,y+44,n.namespace,{'font-size':12,fill:'#526579'});g.onclick=()=>focusNode(id);
  g.onkeydown=ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();focusNode(id)}};select.add(new Option(id,id));}
