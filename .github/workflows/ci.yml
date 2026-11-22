@@ -33,7 +33,7 @@ jobs:
           docker run --privileged --name setura-k3s -d -p 127.0.0.1:6443:6443 rancher/k3s:v1.35.6-k3s1 server --disable=traefik
           mkdir -p ~/.kube
           for i in {1..90}; do
-            if docker cp setura-k3s:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && kubectl get nodes; then break; fi
+            if docker cp setura-k3s:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && [ -n "$(kubectl get nodes -o name 2>/dev/null)" ]; then break; fi
             sleep 2
           done
           kubectl wait --for=condition=Ready node --all --timeout=180s
