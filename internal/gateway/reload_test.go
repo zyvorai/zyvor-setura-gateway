@@ -49,7 +49,12 @@ func TestHotReloadUnderConcurrentLoad(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c := &http.Client{Timeout: 5 * time.Second} // keep-alive on: connections must survive swaps
+			// One transport per goroutine with one idle connection: eight long-lived
+			// keep-alive connections that must survive every swap (a shared default
+			// transport keeps only two idle conns per host and churns the rest).
+			tr := &http.Transport{MaxIdleConnsPerHost: 1}
+			defer tr.CloseIdleConnections()
+			c := &http.Client{Timeout: 5 * time.Second, Transport: tr}
 			for {
 				select {
 				case <-stop:
@@ -77,8 +82,10 @@ func TestHotReloadUnderConcurrentLoad(t *testing.T) {
 	}
 	for i := 0; i < 20; i++ {
 		name := []string{"b", "a"}[i%2]
-		writeFile(t, path, configFor(be, name, fmt.Sprintf("x%d", i)))
+		// Read the generation BEFORE writing: if the poller applies the write first,
+		// reading it afterwards would wait for a change that already happened.
 		gen := s.Status().Generation
+		writeFile(t, path, configFor(be, name, fmt.Sprintf("x%d", i)))
 		waitFor(t, "reload", func() bool { return s.Status().Generation > gen })
 	}
 	close(stop)
