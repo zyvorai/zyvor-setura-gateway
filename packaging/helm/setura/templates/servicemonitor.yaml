@@ -17,6 +17,8 @@ spec:
   endpoints:
     - port: admin
       path: /metrics
+      authorization:
+        credentials: {name: setura-gateway-admin, key: token}
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
 {{- end }}
