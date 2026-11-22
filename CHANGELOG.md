@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.5.0
+## 0.5.1
+
+The first release with everything below. `v0.5.0` was tagged but never released: its release build stopped at a flaky hot-reload test (a test race, not a gateway bug), so 0.5.1 carries the fixed test and no code changes to the gateway itself.
 
 - **Built-in gateway: no Envoy required.** `setura gateway run|up|install` is a Gateway API data plane in pure Go inside the same binary: HTTP/HTTPS listeners, TLS with SNI, weighted routing with the spec's match precedence, header, redirect, rewrite and mirror filters, hot reload, lint-gated config, Gateway API status, an admin API, and an in-cluster controller mode. See `docs/builtin-gateway.md` for what is and is not implemented.
 - **`echo`**: a tiny identity backend. The quickstart and the demo manifest no longer need Python.

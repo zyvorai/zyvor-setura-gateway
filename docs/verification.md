@@ -25,7 +25,9 @@ Also run by hand: the `linux/amd64` release binary (a static ELF) was copied to 
 
 Not covered: Windows (unsupported), `linux/arm64` and `darwin/amd64` execution (cross-compiled only), GatewayClasses other than Envoy Gateway, and HTTPS listeners against a live cluster.
 
-## Version 0.5.0
+## Version 0.5.1
+
+`v0.5.0` was tagged but never released: its release build failed on a racy hot-reload test. The test read the config generation after writing the file and shared a transport that discards connections; both are fixed, and the fixed test holds eight persistent keep-alive connections across every reload.
 
 Seven feature tracks were added and merged: the built-in gateway, `watch`, `bench`, HTTP/2 and gRPC health, mTLS and `certs`, lint rules `SET010` to `SET014` with SARIF, annotations and baselines, AI providers with redaction, a rewritten terminal UX, and distribution files. The Go suite passes under `go test -race`.
 
