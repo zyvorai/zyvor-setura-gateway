@@ -137,6 +137,12 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | `shadow` | Reads shadow-diff results from a running gateway; `--fail-under PCT` gates a rollout. |
 | `migrate check` | Compares Ingress rules with their converted HTTPRoutes (offline or live) and flags nginx annotations with no Gateway API equivalent. |
 | `history FILE` | Per-route uptime, p50/p95 and regressions from a `watch --history` file. |
+| `top` | A live terminal view of requests, errors, latency, ejections and connections per route and backend. |
+| `init` | Scaffolds a gateway config and checks file from `host=upstream` pairs or an OpenAPI JSON file, then lints it. |
+| `doctor gateway` | One verdict on ports, certificates, backends, config, lint, clock skew and admin auth. |
+| `migrate convert` | Converts Ingress, Envoy Gateway, Traefik or simple nginx configs to Gateway API YAML, with TODOs for anything that has no equivalent. |
+| `slo` | Availability and latency SLO burn rates from probe history or the gateway's metrics. |
+| `licence verify\|show` | Checks a signed licence key offline. Setura works without one. |
 | `lint` | Static analysis of Gateway, HTTPRoute, GRPCRoute and TLSRoute specs with stable rule IDs. Text, JSON, SARIF and GitHub output, baselines, offline. |
 | `gate ROUTE URL` | Requires current parent status and consecutive passing probes before a rollout proceeds. |
 | `compare URL --target dns --target IP` | Probes one URL through DNS and specific addresses to find the node that answers differently. |
@@ -235,6 +241,7 @@ setura gateway install --namespace setura-system | kubectl apply -f -   # you de
 | Matching | Path (exact, prefix, regex), headers, query parameters and method, with the spec's precedence rules |
 | Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, outlier ejection, retries with a budget, request timeouts, cross-backend retries, health state that survives reloads |
 | Protocols | HTTPRoute, GRPCRoute (h2c and h2, streaming, trailers) and TLSRoute (TLS passthrough by SNI) |
+| Certificates | ACME (Let's Encrypt) with staging by default, certificate and CA reload from watched Secrets, PROXY protocol, h2c upstreams |
 | Protection | BackendTLSPolicy (TLS and mTLS to backends), JWT, API key, basic auth, IP lists, client-certificate validation, Local token-bucket rate limiting (by IP, route or header), circuit breaking, trusted-proxy client IPs |
 | Filters | Request and response header modification, redirects, URL rewrite, request mirroring, CORS (with preflight), ExternalAuth |
 | Errors | 404 for no match, 500 for no valid backend, 502 and 504 for upstream failures; `X-Setura-Backend` always names the backend that answered |

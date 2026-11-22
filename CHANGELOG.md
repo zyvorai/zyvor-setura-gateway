@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+- **Gateway API 1.5 in the built-in gateway.** HTTPRoute `CORS` (with preflight) and `ExternalAuth` filters, `BackendTLSPolicy` (TLS and mTLS to backends), `timeouts.backendRequest`, session persistence, `ListenerSet`, static Gateway addresses, `matchExpressions` selectors, rule `name`, and basic `TCPRoute` and `UDPRoute`. See `docs/gateway-api-1-5.md`.
+- **Traffic security.** JWT validation (RS256, ES256, EdDSA, cached JWKS), API key and basic auth, IP allow and deny lists, client-certificate validation, OCSP stapling, and admin-endpoint authentication (`--admin-token`). `setura gateway hash` makes the stored hashes; lint rules `SET016` to `SET019`. Secrets are redacted everywhere. See `docs/security.md`.
+- **Certificates and protocols.** Built-in ACME (HTTP-01, TLS-ALPN-01, DNS-01 hook), certificate and CA reload from watched Secrets and files, PROXY protocol in and out, HTTP/2 to plaintext upstreams, and `--alt-svc`. HTTP/3 is deliberately not included; `docs/http3.md` explains why. See `docs/certificates.md`.
+- **Operator UX.** The dashboard paints real content on first load, gains a **Changes** page (what changed, rollout history, what a rollback would do), a command palette (Cmd or Ctrl K) and a theme toggle. New `setura top` (live terminal view), `setura init` (scaffold a gateway from `host=upstream` pairs or an OpenAPI file) and `setura doctor gateway`. Unknown flags now suggest the right one. See `docs/top-init-doctor.md`.
+- **`setura migrate convert`.** Turns Ingress, Envoy Gateway, Traefik and simple nginx configs into Gateway API YAML. What has no equivalent becomes an explicit TODO and a report entry, never a silent drop, and the result is round-trip checked. See `docs/migrate-convert.md`.
+- **Observability integrations.** A pinned metrics catalog with OpenMetrics exemplars, a Grafana dashboard, ten Prometheus alerts with runbooks (`setura gateway install --with-monitoring`), OTLP over gRPC, syslog and Loki log sinks, `setura slo` burn-rate reports, and a Netra scraping guide. See `docs/netra.md`, `docs/slo.md`, `docs/runbooks.md`.
+- **Performance and proof.** A pooled copy buffer cuts per-request memory by about two thirds; benchmarks, the `setura load` generator, `--pprof`, fuzz targets for every untrusted parser, and a CI stress job. Measured numbers and method in `docs/performance.md`.
+- **Distribution.** `setura licence verify` (offline `ZYV1.` keys; Setura works without one), cosign-signed releases with SLSA provenance and SBOMs, `.deb` and `.rpm` packages, a Helm chart, systemd units, and an `install.sh` that verifies signatures. See `docs/licensing.md`, `docs/release-process.md`.
+- **Fixes.** A data race on the leader-election pointer; `X-Request-Id` returned twice when the upstream echoes it; the dashboard counted a backend's requests once per referencing rule; several timing-dependent tests.
+
+Known limits: the gateway has not passed the upstream conformance suite; ACME has only run against a fake CA; TCPRoute and UDPRoute are basic; gRPC routes get no auth policies; Netra's collector shows mean latency but not percentiles.
+
 ## 0.6.0
 
 The built-in gateway grows up, and Setura gets a dashboard and a migration check.
