@@ -16,7 +16,7 @@ The expanded Linux suite passed 23 tests. New cases cover parent ambiguity, stal
 
 The CLI was rewritten in Go and `lint`, response assertions and shell completion were added. The Go suite passes under `go test -race` on macOS. It ports every Python case and adds cases for header, body and latency assertions, all nine lint rules, shadowed routes, deterministic evidence order and completion scripts. Socket tests use real loopback HTTP and TLS servers; the TLS test generates its own certificate. Kubernetes responses are fixtures.
 
-GitHub Actions run [44995886688](https://github.com/zyvorai/zyvor-setura-gateway/actions/runs/44995886688) passed all three jobs on commit `HEAD` of that run:
+GitHub Actions run [44995886688](https://github.com/zyvorai/zyvor-setura-gateway/actions/runs/44995886688) passed all three jobs on commit `980c30a`:
 
 - **Host, macOS and Ubuntu:** `make vet` and `make test` (race detector) and a built binary running `setura version`.
 - **K3s:** a disposable K3s v1.35.6 cluster with Envoy Gateway v1.8.6. `scripts/cluster-smoke.sh` applied the demo fixture and ran `publish`, `check`, `inspect`, `listeners`, `capabilities`, `exposure`, `doctor`, `lint` and `gate` against it; then the container image was built, imported into the cluster and run as a CronJob-derived Job that probed the demo Service from inside a pod.
