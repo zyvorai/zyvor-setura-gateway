@@ -27,6 +27,11 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 	format := fs.String("format", "pretty", "pretty or json")
 	grpc := fs.String("grpc", "", "explain a gRPC call to service/method (HTTP/2, application/grpc)")
 	sni := fs.String("sni", "", "explain a TLS passthrough connection with this server name (TLSRoute)")
+	clientIP := fs.String("client-ip", "", "client address for X-Forwarded-For and the rate-limit key (default: shown as <client-ip>)")
+	rateLimit := fs.String("rate-limit", "", "model the gateway's --rate-limit (N/s, N/m, N/h); offline only")
+	rateBurst := fs.Int("rate-burst", 0, "model the gateway's --rate-burst; offline only")
+	rateKey := fs.String("rate-key", "ip", "model the gateway's --rate-key: ip, route or header:NAME; offline only")
+	shadowDiff := fs.Int("shadow-diff", 0, "model the gateway's --shadow-diff default sample percent; offline only")
 	var headers stringList
 	fs.Var(&headers, "H", `request header, "Name: value"; repeatable`)
 	fs.Var(&headers, "header", `request header, "Name: value"; repeatable`)
@@ -61,6 +66,21 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 		return usage("--format must be pretty or json")
 	}
 	pretty := *format == "pretty"
+	var policy builtin.ExplainServer
+	if *rateLimit != "" {
+		if *admin != "" {
+			return usage("--rate-limit, --rate-burst, --rate-key and --shadow-diff model a gateway offline; --admin already reports the running gateway's policy")
+		}
+		rate, per, err := builtin.ParseRate(*rateLimit)
+		if err != nil {
+			return usage("--rate-limit: " + err.Error())
+		}
+		policy.RateLimit = builtin.RateLimitConfig{Rate: rate, Per: per, Burst: *rateBurst, Key: *rateKey}
+	}
+	if *shadowDiff < 0 || *shadowDiff > 100 {
+		return usage("--shadow-diff must be 0-100")
+	}
+	policy.ShadowDiff = *shadowDiff
 	req, err := builtin.ParseExplainRequest(method, target, headers, *grpc, *sni)
 	if err != nil {
 		return usage(err.Error())
@@ -68,7 +88,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 
 	var tr *builtin.Trace
 	if *admin != "" {
-		tr, err = whyRemote(*admin, method, target, headers, *grpc, *sni)
+		tr, err = whyRemote(*admin, method, target, headers, *grpc, *sni, *clientIP)
 		if err != nil {
 			return 0, err
 		}
@@ -89,6 +109,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 		if err != nil {
 			return 0, userErrorf("%s: %v", path, err)
 		}
+		req.Remote, req.Server = *clientIP, policy
 		tr = builtin.Explain(builtin.BuildTable(cfg), req)
 	}
 	if !pretty {
@@ -107,7 +128,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 func whyWidth() int { return 100 }
 
 // whyRemote asks a running gateway's admin /why endpoint.
-func whyRemote(addr, method, target string, headers []string, grpc, sni string) (*builtin.Trace, error) {
+func whyRemote(addr, method, target string, headers []string, grpc, sni, client string) (*builtin.Trace, error) {
 	base := addr
 	if !strings.Contains(base, "://") {
 		base = "http://" + base
@@ -123,6 +144,9 @@ func whyRemote(addr, method, target string, headers []string, grpc, sni string) 
 	}
 	if sni != "" {
 		q.Set("sni", sni)
+	}
+	if client != "" {
+		q.Set("client", client)
 	}
 	c := &http.Client{Timeout: 5 * time.Second}
 	resp, err := c.Get(strings.TrimRight(base, "/") + "/why?" + q.Encode())
@@ -259,6 +283,7 @@ func (u *ui) WhyPretty(tr *builtin.Trace, remote bool, width int) string {
 		if win.Timeout != "" {
 			w("    %s request timeout %s\n", u.arrow(), win.Timeout)
 		}
+		u.whyPolicy(&b, win, width)
 		if win.Redirect != nil {
 			section("Redirect")
 			w("    %s %s %s %s\n", u.arrow(), u.bold(fmt.Sprint(win.Redirect.Status)), u.gray("Location"), win.Redirect.Location)
@@ -353,5 +378,51 @@ func (u *ui) backendRow(b *strings.Builder, be builtin.TraceBackend, width int) 
 			sym = u.idleSym()
 		}
 		fmt.Fprintf(b, "        %s %s %s\n", sym, e.URL, u.gray(e.State))
+	}
+}
+
+// whyPolicy prints the rate limit, retry policy and notes of the winner.
+func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) {
+	if rl := win.RateLimit; rl != nil {
+		switch {
+		case !rl.Enabled:
+			fmt.Fprintf(b, "    %s rate limit: none\n", u.arrow())
+		default:
+			fmt.Fprintf(b, "    %s rate limit %s, bucket %s\n", u.arrow(), rl.Policy, rl.Bucket)
+			if rl.Live && rl.Tokens != nil {
+				verdict := u.green("admitted")
+				if rl.Limited != nil && *rl.Limited {
+					verdict = u.red("refused with 429")
+				}
+				fmt.Fprintf(b, "        live bucket holds %.1f tokens: this request would be %s\n", *rl.Tokens, verdict)
+			}
+		}
+		if rl.Note != "" {
+			for _, ln := range wrap(rl.Note, "        ", width) {
+				fmt.Fprintln(b, u.gray(ln))
+			}
+		}
+	}
+	if rt := win.Retry; rt != nil {
+		codes := "connection errors only"
+		if len(rt.Codes) > 0 {
+			parts := make([]string, len(rt.Codes))
+			for i, c := range rt.Codes {
+				parts[i] = fmt.Sprint(c)
+			}
+			codes = "status " + strings.Join(parts, ", ") + " and connection errors"
+		}
+		fmt.Fprintf(b, "    %s retry up to %d time(s) after %s backoff on %s\n", u.arrow(), rt.Attempts, rt.Backoff, codes)
+		if !rt.Idempotent {
+			fmt.Fprintf(b, "        %s\n", u.gray("this method is not idempotent: only a failed connection is retried, not a status code"))
+		}
+		for _, ln := range wrap(rt.Budget, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+	}
+	for _, n := range win.Notes {
+		for _, ln := range wrap(n, "    ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
 	}
 }

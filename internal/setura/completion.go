@@ -45,7 +45,7 @@ var migrateFlags = []string{"--ingress", "--routes", "--services", "--objects", 
 	"--probe-extra", "--address", "--ingress-address", "--gateway-address", "--ca", "--timeout", "--header", "--format"}
 
 // replayFlags are offered after "setura replay".
-var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit", "--ignore-weights", "--fail-on"}
+var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit", "--ignore-weights", "--fail-on", "--default-host", "--before-rate-limit", "--after-rate-limit"}
 
 // gatewayFlags are offered after "setura gateway".
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
@@ -54,7 +54,7 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
-var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header"}
+var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff"}
 
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.

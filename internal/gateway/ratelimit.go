@@ -115,22 +115,25 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// allow takes one token for the request. When refused it returns how long
-// until a token is available.
-func (l *limiter) allow(route string, r *http.Request) (bool, time.Duration) {
-	var k string
+// bucketKey names the token bucket a request draws from.
+func (l *limiter) bucketKey(route string, r *http.Request) string {
 	switch {
 	case l.key == "route":
-		k = route
+		return route
 	case l.header != "":
 		v := r.Header.Get(l.header)
 		if v == "" {
 			v = "ip:" + clientIP(r)
 		}
-		k = route + "\x00" + v
-	default:
-		k = route + "\x00" + clientIP(r)
+		return route + "\x00" + v
 	}
+	return route + "\x00" + clientIP(r)
+}
+
+// allow takes one token for the request. When refused it returns how long
+// until a token is available.
+func (l *limiter) allow(route string, r *http.Request) (bool, time.Duration) {
+	k := l.bucketKey(route, r)
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()

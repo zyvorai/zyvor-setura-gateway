@@ -29,6 +29,7 @@ type TLSRule struct {
 }
 
 type tlsRouteSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []TLSRule   `json:"rules"`

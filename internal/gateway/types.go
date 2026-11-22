@@ -364,6 +364,7 @@ type gatewaySpec struct {
 }
 
 type routeSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []Rule      `json:"rules"`
@@ -402,7 +403,11 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
-			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+			created, err := spec.created()
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grpcRouteKey, tlsRouteKey:
 			if err := cfg.parseExtraRoute(kind, rns, name, fc.Resources[key]); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)

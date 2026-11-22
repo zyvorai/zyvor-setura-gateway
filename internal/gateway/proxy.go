@@ -248,28 +248,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			pr.Out.Host = pr.In.Host
-			pr.SetXForwarded()
-			if pg.TLS {
-				pr.Out.Header.Set("X-Forwarded-Proto", "https")
-			}
-			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
-			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
-			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
-			for _, f := range filters {
-				switch {
-				case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
-					applyHeaderMod(pr.Out.Header, f.RequestHeaderModifier)
-				case f.Type == "URLRewrite" && f.URLRewrite != nil:
-					if f.URLRewrite.Hostname != "" {
-						pr.Out.Host = f.URLRewrite.Hostname
-					}
-					if p := f.URLRewrite.Path; p != nil {
-						np := rewritePath(pr.Out.URL.Path, p, e.Match)
-						pr.Out.URL.Path, pr.Out.URL.RawPath = np, ""
-					}
-				}
-			}
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false)
 			injectTrace(pr.Out, st)
 			s.fireMirrors(pr.Out, body, mirrors, sc)
 		},
@@ -277,8 +256,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			resp.Header.Set(BackendHeader, ref.Name)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
-			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
-			for _, f := range filters {
+			for _, f := range requestFilters(rule, ref) {
 				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
 					applyHeaderMod(resp.Header, f.ResponseHeaderModifier)
 				}

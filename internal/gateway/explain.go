@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -43,6 +44,12 @@ type ExplainRequest struct {
 	// the clock when set.
 	Live bool      `json:"-"`
 	Now  time.Time `json:"-"`
+
+	// Remote is the client address (X-Forwarded-For, rate-limit key); empty
+	// renders as <client-ip>. Server carries the gateway-wide policy that is
+	// not part of the route config: rate limit, retry budget, shadow default.
+	Remote string        `json:"remote,omitempty"`
+	Server ExplainServer `json:"-"`
 }
 
 // ParseExplainRequest validates the inputs of "setura why" and /why.
@@ -113,7 +120,11 @@ func (q ExplainRequest) httpRequest() *http.Request {
 		host = v
 		h.Del("Host")
 	}
-	r := &http.Request{Method: q.Method, URL: &url.URL{Path: q.Path, RawQuery: q.RawQuery}, Header: h, Host: host, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
+	remote := q.Remote
+	if remote == "" {
+		remote = "<client-ip>"
+	}
+	r := &http.Request{Method: q.Method, URL: &url.URL{Path: q.Path, RawQuery: q.RawQuery}, Header: h, Host: host, RemoteAddr: net.JoinHostPort(remote, "0"), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
 	if q.GRPC != "" {
 		r.Proto, r.ProtoMajor, r.ProtoMinor = "HTTP/2.0", 2, 0
 	}
@@ -238,6 +249,11 @@ type TraceWinner struct {
 	Mirrors  []string       `json:"mirrors,omitempty"`
 	Timeout  string         `json:"timeout,omitempty"`
 	Passthru bool           `json:"passthrough,omitempty"`
+
+	MirrorTargets []TraceMirror   `json:"mirror_targets,omitempty"`
+	Retry         *TraceRetry     `json:"retry,omitempty"`
+	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
+	Notes         []string        `json:"notes,omitempty"`
 }
 
 // ---- recorders, called from the match code with a non-nil Trace ----
@@ -405,9 +421,15 @@ func whyLost(w, o *Entry, ws, os score) string {
 	}
 	switch {
 	case !wr.Created.Equal(or.Created):
-		return fmt.Sprintf("tied on every precedence rule; the oldest route wins: %s (created %s) is older than %s (created %s)", routeLabel(wr), fmtTime(wr.Created), routeLabel(or), fmtTime(or.Created))
+		note := ""
+		if wr.Created.IsZero() || or.Created.IsZero() {
+			note = " (a route without a creationTimestamp counts as oldest)"
+		}
+		return fmt.Sprintf("tied on every precedence rule; tie-break 1, the oldest creationTimestamp wins: %s (created %s) is older than %s (created %s)%s", routeLabel(wr), fmtTime(wr.Created), routeLabel(or), fmtTime(or.Created), note)
+	case wr.Created.IsZero():
+		return fmt.Sprintf("tied on every precedence rule; neither route has a creationTimestamp (set metadata.creationTimestamp in the file to use creation time), so tie-break 2, name order, decides: %s sorts before %s", routeLabel(wr), routeLabel(or))
 	}
-	return fmt.Sprintf("tied on every precedence rule and created at the same time; the route whose name sorts first wins: %s before %s", routeLabel(wr), routeLabel(or))
+	return fmt.Sprintf("tied on every precedence rule and created at the same time (%s); tie-break 2, name order, decides: %s sorts before %s", fmtTime(wr.Created), routeLabel(wr), routeLabel(or))
 }
 
 func pathKindName(k int) string {
@@ -422,7 +444,7 @@ func pathKindName(k int) string {
 
 func fmtTime(t time.Time) string {
 	if t.IsZero() {
-		return "unknown time"
+		return "no creationTimestamp"
 	}
 	return t.UTC().Format(time.RFC3339)
 }
@@ -771,10 +793,8 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 	for _, f := range rule.Rule.Filters {
 		w.Filters = append(w.Filters, describeFilter("rule", f, e.Match, r, pg.TLS))
 	}
-	for _, m := range rule.Mirrors {
-		w.Mirrors = append(w.Mirrors, fmt.Sprintf("%d%% of requests are copied to %s (fire and forget, the response is ignored)", m.Percent, m.B.Name))
-	}
 	tr.Winner = w
+	tr.explainPolicy(w, e, tr.Request, r)
 	if rule.Redirect != nil {
 		code := rule.Redirect.StatusCode
 		if code == 0 {
@@ -950,33 +970,18 @@ func describeHeaderMod(h *HeaderMod) string {
 }
 
 // upstreamRequest applies the winning rule's filters and the backendRef's own
-// filters to the request, the way serveHTTP/serveGRPC do, and returns what the
-// backend would receive.
+// filters to the request, through the same shapeUpstream the proxy runs, and
+// returns what the backend would receive.
 func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, eps []TraceEndpoint, tlsPort bool) *TraceUpstream {
-	out := &http.Request{Method: in.Method, URL: &url.URL{Path: in.URL.Path, RawQuery: in.URL.RawQuery}, Host: in.Host, Header: in.Header.Clone()}
+	out := &http.Request{Method: in.Method, URL: &url.URL{}, Header: in.Header.Clone()}
 	if out.Header == nil {
 		out.Header = http.Header{}
 	}
-	proto := "http"
-	if tlsPort {
-		proto = "https"
-	}
-	out.Header.Set("X-Forwarded-For", "<client-ip>")
-	out.Header.Set("X-Forwarded-Host", in.Host)
-	out.Header.Set("X-Forwarded-Proto", proto)
-	filters := append(append([]Filter(nil), e.Rule.Rule.Filters...), ref.Filters...)
-	for _, f := range filters {
-		switch {
-		case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
-			applyHeaderMod(out.Header, f.RequestHeaderModifier)
-		case f.Type == "URLRewrite" && f.URLRewrite != nil && !e.GRPC:
-			if f.URLRewrite.Hostname != "" {
-				out.Host = f.URLRewrite.Hostname
-			}
-			if p := f.URLRewrite.Path; p != nil {
-				out.URL.Path = rewritePath(out.URL.Path, p, e.Match)
-			}
-		}
+	stripHopHeaders(out.Header) // httputil.ReverseProxy does this before Rewrite
+	out.URL.RawQuery = in.URL.RawQuery
+	shapeUpstream(out, in, remoteIP(in), tlsPort, requestFilters(e.Rule, ref), e.Match, e.GRPC)
+	if !e.GRPC {
+		previewTrace(out, in.Header)
 	}
 	target := "<endpoint>"
 	if ref.B != nil && len(ref.B.Eps) > 0 {
@@ -999,7 +1004,7 @@ func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, ep
 
 // ---- admin endpoint ----
 
-// handleWhy serves /why?method=&url=&header=...&grpc=&sni= : the same JSON
+// handleWhy serves /why?method=&url=&header=...&grpc=&sni=&client= : the same JSON
 // trace "setura why" prints, without sending any traffic.
 func (s *Server) handleWhy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -1018,6 +1023,7 @@ func (s *Server) handleWhy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Live, req.Now = true, s.res.now()
+	req.Remote, req.Server = strings.TrimSpace(q.Get("client")), s.liveServerPolicy()
 	tr := Explain(t, req)
 	w.Header().Set("Content-Type", "application/json")
 	writeIndented(w, tr)

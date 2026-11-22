@@ -46,6 +46,7 @@ type GRPCMethodMatch struct {
 }
 
 type grpcRouteSpec struct {
+	creationMeta
 	ParentRefs []ParentRef `json:"parentRefs"`
 	Hostnames  []string    `json:"hostnames"`
 	Rules      []GRPCRule  `json:"rules"`
@@ -63,13 +64,21 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 		if err := json.Unmarshal(raw, &spec); err != nil {
 			return err
 		}
-		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		created, err := spec.created()
+		if err != nil {
+			return err
+		}
+		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	case tlsRouteKey:
 		var spec tlsRouteSpec
 		if err := json.Unmarshal(raw, &spec); err != nil {
 			return err
 		}
-		c.TLSRoutes = append(c.TLSRoutes, &TLSRoute{NS: ns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		created, err := spec.created()
+		if err != nil {
+			return err
+		}
+		c.TLSRoutes = append(c.TLSRoutes, &TLSRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	}
 	return nil
 }
@@ -311,25 +320,14 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		defer cancel()
 		r = r.WithContext(ctx)
 	}
-	filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
+	filters := requestFilters(rule, ref)
 	proxy := &httputil.ReverseProxy{
 		Transport:     tr,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			pr.Out.Host = pr.In.Host
-			pr.SetXForwarded()
-			if pg.TLS {
-				pr.Out.Header.Set("X-Forwarded-Proto", "https")
-			}
-			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
-			pr.Out.URL.Path, pr.Out.URL.RawPath = pr.In.URL.Path, pr.In.URL.RawPath
-			for _, f := range filters {
-				if f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil {
-					applyHeaderMod(pr.Out.Header, f.RequestHeaderModifier)
-				}
-			}
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
