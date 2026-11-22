@@ -197,6 +197,8 @@ type Rewrite struct {
 type Mirror struct {
 	BackendRef BackendRef `json:"backendRef"`
 	Percent    *int       `json:"percent,omitempty"`
+	// ShadowDiff turns the mirror into a comparison (setura.zyvor.dev/shadow-diff).
+	ShadowDiff *ShadowDiff `json:"setura.zyvor.dev/shadow-diff,omitempty"`
 }
 
 // BackendRef references a Service.

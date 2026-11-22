@@ -47,6 +47,8 @@ Flags for run and up:
   --outlier-max-ejection DUR   ejection time cap (default 5m)
   --health-path PATH    active-check every backend without its own healthCheck (default off)
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
+  --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
+                        a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -87,6 +89,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&r.HealthPath, "health-path", "", "default active health check path")
 	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
 	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
+	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -103,6 +106,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 			}
 			f.opts.PortMap[from] = to
 		}
+	}
+	if f.opts.ShadowDiff < 0 || f.opts.ShadowDiff > 100 {
+		return nil, fmt.Errorf("--shadow-diff %d: want 0-100", f.opts.ShadowDiff)
 	}
 	f.opts.Resilience.OutlierFailures = f.outlier
 	if f.outlier == 0 {

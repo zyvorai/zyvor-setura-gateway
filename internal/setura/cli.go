@@ -630,6 +630,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "man":
 		return 0, Man(stdout)
 
+	case "shadow":
+		return runShadow(fs, rest, stdout, stderr, u)
+
 	case "replay":
 		return runReplay(fs, rest, u, stdoutTTY, os.Stdin, stdout, stderr)
 

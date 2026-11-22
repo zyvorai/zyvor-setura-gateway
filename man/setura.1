@@ -73,6 +73,9 @@ explain saved evidence, optionally with local Ollama
 .B gateway run|up|install|rollout|history|rollback
 built\-in Gateway API data plane, no Envoy needed; guarded config rollout
 .TP
+.B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
+compare mirrored responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
+.TP
 .B publish GATEWAY \-\-listener NAME
 forward an Envoy Gateway listener to IPv4 loopback
 .TP

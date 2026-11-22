@@ -30,6 +30,7 @@ var commandNames = []string{
 	"capabilities",
 	"exposure",
 	"gateway",
+	"shadow",
 	"completion",
 	"watch",
 	"history",
@@ -49,6 +50,8 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout"}
 
+var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
+
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.
 var flagSets = []struct {
@@ -58,6 +61,7 @@ var flagSets = []struct {
 	{"migrate", migrateFlags},
 	{"replay", replayFlags},
 	{"gateway", gatewayFlags},
+	{"shadow", shadowFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

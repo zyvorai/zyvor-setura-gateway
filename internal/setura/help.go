@@ -46,6 +46,7 @@ var helpGroups = []helpGroup{
 	}},
 	{"Publish", []helpEntry{
 		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
+		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
@@ -74,6 +75,7 @@ var cmdExamples = map[string][]string{
 	"map":       {"setura map -n demo > map.html"},
 	"impact":    {"setura impact Service/demo/orders --snapshot before.json"},
 	"lint":      {"setura lint --snapshot before.json --strict", "setura lint --all-contexts -n demo --format json"},
+	"shadow":    {"setura shadow --admin 127.0.0.1:19000 --fail-under 99.5", "setura gateway run --config routes.json --shadow-diff 10"},
 	"history":   {"setura history probes.jsonl --since 24h --route orders", "setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\""},
 	"watch":     {"setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\" --alert-cooldown 5m"},
 	"doctor":    {"setura doctor -n demo"},

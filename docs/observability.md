@@ -99,3 +99,7 @@ Rate-limit, access-log and OTLP series appear only when the feature is enabled.
 Rate limits are local, not shared across replicas. There is no per-backend
 limiting, no log rotation (use the file's owner or logrotate with copytruncate; the
 file is opened append-only), and no OTLP/gRPC or protobuf.
+
+## Shadow diffing
+
+`setura_gateway_shadow_total{route,result}` and the admin `/shadow` document are described in [shadow.md](shadow.md).

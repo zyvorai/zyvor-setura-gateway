@@ -87,6 +87,7 @@ type CRef struct {
 type CMirror struct {
 	B       *Backend
 	Percent int
+	Shadow  *CShadow // never nil
 }
 
 // CMatch is a compiled HTTPRouteMatch.
@@ -530,7 +531,11 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 					pct = *f.RequestMirror.Percent
 				}
 				if b != nil {
-					cr.Mirrors = append(cr.Mirrors, &CMirror{B: b, Percent: pct})
+					cs, err := compileShadow(f.RequestMirror.ShadowDiff)
+					if err != nil {
+						return nil, nil, err
+					}
+					cr.Mirrors = append(cr.Mirrors, &CMirror{B: b, Percent: pct, Shadow: cs})
 				}
 			}
 		}
