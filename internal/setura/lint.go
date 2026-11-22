@@ -32,6 +32,9 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET013", SeverityError, "listener allowedRoutes (namespaces or kinds) does not admit the attaching route"},
 	{"SET014", SeverityError, "route rule has a negative or overflowing backendRef weight, or mixes Service and non-Service backendRefs"},
 	{"SET015", SeverityError, "shadow-diff block (RequestMirror extension or setura.zyvor.dev/shadow-diff annotation) is invalid or targets no RequestMirror"},
+	{"SET016", SeverityWarning, "auth policy accepts any audience (jwt without audience) or fetches its JWKS over plain http"},
+	{"SET017", SeverityWarning, "auth policy stores an API key or a basic auth password in clear text instead of a hash"},
+	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
 }
 
 func ruleSeverity(id string) string {
@@ -214,6 +217,7 @@ func Lint(snapshot obj) (obj, error) {
 
 	findings = append(findings, extraRules(snapshot, specs, ns)...)
 	findings = append(findings, shadowRules(specs, ns)...)
+	findings = append(findings, authRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

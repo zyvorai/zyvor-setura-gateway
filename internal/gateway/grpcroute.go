@@ -233,6 +233,7 @@ const (
 	grpcDeadlineExceeded = 4
 	grpcUnimplemented    = 12
 	grpcUnavailable      = 14
+	grpcUnauthenticated  = 16
 )
 
 // grpcFail answers with a Trailers-Only gRPC error: HTTP 200 and grpc-status
@@ -322,6 +323,12 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	st.listener = l.Key
+	cc, deny := s.clientCertFor(l, r)
+	if deny != "" {
+		fail(grpcUnauthenticated, deny, http.StatusMisdirectedRequest)
+		return
+	}
+	prepareIdentity(r, nil, cc)
 	e := l.selectEntry(r, host)
 	if e == nil {
 		fail(grpcUnimplemented, "no route matched", http.StatusNotFound)

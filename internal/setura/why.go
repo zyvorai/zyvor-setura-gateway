@@ -149,7 +149,12 @@ func whyRemote(addr, method, target string, headers []string, grpc, sni, client 
 		q.Set("client", client)
 	}
 	c := &http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get(strings.TrimRight(base, "/") + "/why?" + q.Encode())
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+"/why?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	adminToken(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +388,33 @@ func (u *ui) backendRow(b *strings.Builder, be builtin.TraceBackend, width int) 
 
 // whyPolicy prints the rate limit, retry policy and notes of the winner.
 func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) {
+	if a := win.Auth; a != nil && a.Applies {
+		verdict := u.green("admitted")
+		switch a.Decision {
+		case "deny":
+			verdict = u.red(fmt.Sprintf("refused with %d", a.Status))
+		case "unknown":
+			verdict = u.gray("undetermined here")
+		}
+		fmt.Fprintf(b, "    %s auth: %s\n", u.arrow(), a.Policy)
+		by := ""
+		if a.Method != "" && a.Method != "none" {
+			by = " by " + a.Method
+			if a.Subject != "" {
+				by += " as " + a.Subject
+			}
+		}
+		fmt.Fprintf(b, "        this request would be %s%s\n", verdict, by)
+		for _, ln := range wrap(a.Reason, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+		for _, c := range a.Challenge {
+			fmt.Fprintln(b, u.gray("        WWW-Authenticate: "+c))
+		}
+		if len(a.Headers) > 0 {
+			fmt.Fprintln(b, u.gray("        headers set for the backend: "+strings.Join(a.Headers, ", ")))
+		}
+	}
 	if rl := win.RateLimit; rl != nil {
 		switch {
 		case !rl.Enabled:

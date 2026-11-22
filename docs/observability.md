@@ -175,7 +175,8 @@ IPv4-mapped; bracketed and `ip:port` entries are accepted. `X-Forwarded-Proto` a
 ## Metrics
 
 The admin endpoint (default `127.0.0.1:19000`) serves Prometheus text at
-`/metrics` (and recent connections as JSON at `/connections`):
+`/metrics` (and recent connections as JSON at `/connections`). With `--admin-token` a
+scraper sends `Authorization: Bearer TOKEN` (see [security](security.md)):
 
 ```
 setura_gateway_requests_total

@@ -276,10 +276,15 @@ func splitRemote(remote string) (ip string, port int) {
 
 func (s *Server) logPath(r *http.Request) string {
 	p := r.URL.RequestURI()
-	if !s.opts.Obs.LogQuery {
-		if i := strings.IndexByte(p, '?'); i >= 0 {
-			p = p[:i]
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		if !s.opts.Obs.LogQuery {
+			return p[:i]
 		}
+		var extra []string
+		if q := s.authQ.Load(); q != nil {
+			extra = *q
+		}
+		return p[:i+1] + redactQuery(p[i+1:], extra...)
 	}
 	return p
 }
