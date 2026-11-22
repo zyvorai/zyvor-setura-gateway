@@ -171,7 +171,7 @@ footer a{color:var(--ink-2)}footer a:hover{color:var(--ink)}
     <p class="lede">A Gateway API gateway built into one static binary, and a verifier that checks what really answers. No Envoy required.</p>
     <div class="cta">
       <a class="btn primary" href="#pricing">Buy a license</a>
-      <a class="btn ghost" href="https://github.com/zyvorai/zyvor-setura-gateway#quickstart">Try it free for 30 days</a>
+      <a class="btn ghost" href="https://github.com/zyvorai/zyvor-setura-gateway#quickstart">Request a 30-day trial</a>
     </div>
     <div class="install"><span class="p">$</span><span>setura gateway up examples/builtin-demo.json</span></div>
     <div class="terminal reveal">
@@ -297,12 +297,12 @@ admin <span class="dim">http://127.0.0.1:19000</span>
 <section id="pricing">
   <div class="wrap">
     <p class="kicker">Pricing</p>
-    <h2>Free to evaluate.<br>Licensed for production.</h2>
-    <p class="sub">Source-available under the Zyvor Production License v1.0. Evaluate for 30 days per organization at no cost, then license by the cluster.</p>
+    <h2>Trial on request.<br>Licensed for production.</h2>
+    <p class="sub">Source-available under the Zyvor Production Licence v2.0. A 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge); production and any other use needs a paid Order, licensed by the cluster.</p>
     <div class="plans">
       <div class="plan reveal">
-        <h3>Evaluate</h3><p class="for">For trying it out and non-production use.</p>
-        <div class="price">Free<small> / 30 days</small></div><p class="price-in">Per organization</p>
+        <h3>Evaluate</h3><p class="for">For trying it out.</p>
+        <div class="price">On request<small> / 30 days</small></div><p class="price-in">Evaluation Order at no charge</p>
         <ul><li>Every command and feature</li><li>Development, testing, research, education</li><li>Community support on GitHub</li></ul>
         <a class="btn outline" href="https://github.com/zyvorai/zyvor-setura-gateway#quickstart">Get started</a>
       </div>
@@ -328,8 +328,8 @@ admin <span class="dim">http://127.0.0.1:19000</span>
     <p class="kicker">Questions</p>
     <h2>The fine print, in plain words.</h2>
     <div class="faq">
-      <details><summary>Is it open source?</summary><p>The full source is public, under the Zyvor Production License v1.0. That is source-available rather than OSI open source: it is free for evaluation and every non-production use, and production use needs a commercial license.</p></details>
-      <details><summary>What counts as production?</summary><p>Using Setura to support live business operations, customers or revenue-generating services. Running it in a lab, a CI pipeline for pre-production, a demo, or for research and education is non-production. The license text is the authority; ask <a href="mailto:sales@zyvor.dev">sales@zyvor.dev</a> if you are unsure.</p></details>
+      <details><summary>Is it open source?</summary><p>The full source is public, under the Zyvor Production Licence v2.0. That is source-available rather than OSI open source: a 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge), and production and any other use needs a paid Order.</p></details>
+      <details><summary>What counts as production?</summary><p>Using Setura to support live business operations, customers or revenue-generating services. The licence text is the authority; ask <a href="mailto:sales@zyvor.dev">sales@zyvor.dev</a> if you are unsure.</p></details>
       <details><summary>Do I need Envoy?</summary><p>No. <span class="inline">setura gateway</span> is a Gateway API data plane built into the binary. It does not yet cover everything Envoy does (no GRPCRoute, retries or rate limiting), so if you need those today, run Envoy Gateway and let Setura verify it.</p></details>
       <details><summary>Does it change my cluster?</summary><p>Not unless you ask. Every command reads through your existing kubectl credentials. <span class="inline">publish</span> runs a foreground <span class="inline">kubectl port-forward</span> and stops when you press Ctrl-C.</p></details>
       <details><summary>How is it different from gwctl or egctl?</summary><p>Those tools inspect and translate cluster resources. Setura is complementary: it sends a real request through the listener and checks what answered, then lints the specs offline. Use them together.</p></details>
@@ -350,7 +350,7 @@ admin <span class="dim">http://127.0.0.1:19000</span>
 
 <footer>
   <div class="wrap">
-    <span>Copyright © 2026 Zyvor AI Labs Private Limited. Licensed under the <a href="https://github.com/zyvorai/zyvor-setura-gateway/blob/main/LICENSE">Zyvor Production License v1.0</a>.</span>
+    <span>Copyright © 2026 Zyvor AI Labs Private Limited. Licensed under the <a href="https://github.com/zyvorai/zyvor-setura-gateway/blob/main/LICENSE">Zyvor Production Licence v2.0</a>.</span>
     <span><a href="https://github.com/zyvorai/zyvor-setura-gateway">GitHub</a> · <a href="https://zyvor.dev/pricing?utm_source=github-pages&utm_medium=setura&utm_campaign=footer">Pricing</a> · <a href="https://zyvor.dev/buy?utm_source=github-pages&utm_medium=setura&utm_campaign=footer">Buy</a> · <a href="mailto:sales@zyvor.dev">sales@zyvor.dev</a></span>
   </div>
 </footer>
