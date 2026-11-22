@@ -1,0 +1,35 @@
+# TEMPLATE ONLY. This is the shape of the file the suite writes to report.yaml in this
+# directory. It contains no results. Do not copy values from here into a claim.
+# Field names follow sigs.k8s.io/gateway-api conformance/apis/v1 (ConformanceReport).
+kind: ConformanceReport
+apiVersion: gateway.networking.k8s.io/v1
+date: "<RFC3339 time of the run>"
+mode: default
+gatewayAPIVersion: v1.4.1
+gatewayAPIChannel: standard
+implementation:
+  organization: Zyvor AI Labs
+  project: zyvor-setura-gateway
+  url: https://github.com/zyvorai/zyvor-setura-gateway
+  version: "<git describe of the tested build>"
+  contact:
+    - https://github.com/zyvorai/zyvor-setura-gateway/issues
+profiles:
+  - name: GATEWAY-HTTP
+    summary: "<one-line summary written by the suite>"
+    core:
+      result: "<success | partial | failure>"
+      statistics:
+        Passed: 0
+        Skipped: 0
+        Failed: 0
+      failedTests: []
+      skippedTests: []
+    extended:
+      result: "<success | partial | failure>"
+      statistics:
+        Passed: 0
+        Skipped: 0
+        Failed: 0
+      supportedFeatures: []
+      unsupportedFeatures: []

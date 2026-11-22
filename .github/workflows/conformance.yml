@@ -1,0 +1,44 @@
+name: Gateway API conformance
+# Manual and weekly. Not a PR gate: the built-in gateway is not expected to pass
+# the whole suite yet, and a red run here is information, not a regression.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+permissions:
+  contents: read
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: conformance/go.mod
+          cache-dependency-path: conformance/go.sum
+      - name: Start a disposable K3s cluster
+        run: |
+          docker run --privileged --name setura-k3s -d -p 127.0.0.1:6443:6443 rancher/k3s:v1.35.6-k3s1 server --disable=traefik
+          mkdir -p ~/.kube
+          for _ in {1..90}; do
+            if docker cp setura-k3s:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && [ -n "$(kubectl get nodes -o name 2>/dev/null)" ]; then break; fi
+            sleep 2
+          done
+          kubectl wait --for=condition=Ready node --all --timeout=180s
+      - name: Run the conformance suite
+        # --patch-addresses is a harness shim (the controller does not publish
+        # Gateway status.addresses yet); the report README says how to read that.
+        run: scripts/run-conformance.sh --context default --k3s-container setura-k3s --patch-addresses
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n setura-system logs deploy/setura-gateway --tail=300 || true
+          kubectl get gateways,httproutes -A || true
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report
+          path: docs/conformance/
+          if-no-files-found: warn
