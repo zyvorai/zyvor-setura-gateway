@@ -204,10 +204,10 @@ func (s *Server) fireSpooled(out *http.Request, mirrors []*CMirror, sc *shadowRe
 			body.Close()
 			continue
 		}
-		var tr http.RoundTripper = s.transport(m.B.Insecure)
+		var tr http.RoundTripper = s.backendTransport(m.B)
 		if grpc {
 			ep := req.URL
-			g := s.grpcTr.get(ep.Scheme, m.B.Insecure)
+			g := s.grpcTransport(m.B, ep.Scheme)
 			if g == nil {
 				body.Close()
 				continue

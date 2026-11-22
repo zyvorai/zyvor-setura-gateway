@@ -71,6 +71,12 @@ another namespace than the snapshot `namespace`.
   `insecureSkipVerify` is available for https upstreams.
 * `secrets` resolves a listener's `certificateRefs`; files are relative to the config file
   or inline PEM (`cert`, `key`). Rotating a certificate file triggers a reload.
+* `caCertificates` maps `[namespace/]name` to `{"pem": "..."}` or `{"file": "ca.crt"}`; it is
+  what a BackendTLSPolicy's `caCertificateRefs` (kind ConfigMap or Secret) resolve to in a file.
+  Besides Gateways and HTTPRoutes the `resources` section may hold GRPCRoutes, TLSRoutes,
+  TCPRoutes, UDPRoutes, ListenerSets and BackendTLSPolicies (keys `listenersets.`,
+  `tcproutes.`, `udproutes.`, `backendtlspolicies.` plus `gateway.networking.k8s.io/NAME`).
+  See [gateway-api-1-5](gateway-api-1-5.md).
 * The format is JSON only. There is deliberately no YAML parser; convert with any tool.
 
 ## Architecture
@@ -118,7 +124,7 @@ returns 500; no match returns 404.
 | --- | --- |
 | Listeners: HTTP, HTTPS (TLS terminate), hostname, wildcards | Supported |
 | SNI certificate selection, ALPN `h2` and `http/1.1` | Supported |
-| `allowedRoutes`: namespaces `Same`, `All`, `Selector` (`matchLabels` only), `kinds` | Supported |
+| `allowedRoutes`: namespaces `Same`, `All`, `Selector` (`matchLabels` and `matchExpressions`: In, NotIn, Exists, DoesNotExist), `kinds` | Supported |
 | parentRefs: name, namespace, sectionName, port | Supported |
 | Path match Exact, PathPrefix, RegularExpression | Supported |
 | Header match Exact, RegularExpression | Supported |
@@ -129,19 +135,25 @@ returns 500; no match returns 404.
 | Filter: RequestRedirect (scheme, hostname, port, path, statusCode) | Supported |
 | Filter: URLRewrite (hostname, ReplaceFullPath, ReplacePrefixMatch) | Supported |
 | Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB (GRPCRoute: see [shadow](shadow.md#grpc)) |
-| `timeouts.request` | Supported |
+| `timeouts.request`, `timeouts.backendRequest` | Supported (one attempt, headers and body; 504 on expiry) |
 | `retry` (codes, attempts, backoff, jitter, perTryTimeout, crossBackend) | Supported; budgeted, idempotent-safe (POST/PATCH only on connect errors, deliberately), see [resilience](resilience.md) |
 | Circuit breaking (max requests, pending, connections, failure threshold, half-open probing) | Supported per backend, see [resilience](resilience.md) |
-| `timeouts.backendRequest`, session persistence | Not implemented |
+| Session persistence (cookie and header, absolute and idle timeout, rule and backendRef level) | Supported, see [gateway-api-1-5](gateway-api-1-5.md) |
+| Rule `name`, `DestinationPortMatching` (the listener port decides, not the Host port) | Supported |
 | ReferenceGrant for backendRefs and certificateRefs | Supported |
 | Status: Accepted, Programmed, ResolvedRefs, Conflicted, observedGeneration, attachedRoutes | Supported |
-| Filter: ExtensionRef, CORS, ExternalAuth; BackendTLSPolicy | Not implemented (route marked Accepted=False, UnsupportedValue; ExtensionRef says why) |
+| Filter: CORS (origins incl. wildcards, credentials, methods, headers, expose, maxAge; preflight answered by the gateway) | Supported |
+| Filter: ExternalAuth (HTTP and Envoy gRPC `ext_authz`, allowed headers, forwardBody, fail closed) | Supported |
+| BackendTLSPolicy (CA from ConfigMap, Secret or snapshot `caCertificates`, SNI, hostname and SAN validation, mTLS through the Gateway's `spec.tls.backend.clientCertificateRef`) | Supported, policy status on the Gateway ancestors |
+| Filter: ExtensionRef | Not implemented (route marked Accepted=False, UnsupportedValue, and the message says why) |
 | GRPCRoute (service/method match, h2c and h2, streaming, trailers, grpc-timeout, unary retries, mirroring, gRPC health checks) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
 | TLSRoute with TLS passthrough (SNI routing, wildcards, weights) | Supported |
 | TLSRoute with TLS Terminate to TCP backends, ALPN-based routing (Setura extension) | Supported |
-| TCPRoute, UDPRoute | Not implemented |
+| TCPRoute, UDPRoute (TCP and UDP listeners, weighted backends, TCP half-close, UDP session table with idle timeout) | Supported, see [gateway-api-1-5](gateway-api-1-5.md) |
+| ListenerSet attachment (`allowedListeners`, routes through `parentRef` kind ListenerSet) | Supported |
 | Gateway status `addresses` (from the install Service) | Supported, see Kubernetes controller mode |
-| Gateway `spec.addresses`, per-Gateway load balancer provisioning | Not implemented |
+| Gateway `spec.addresses` (IPAddress and Hostname reported in status; no address is assigned or bound) | Supported as reporting only |
+| Per-Gateway load balancer provisioning | Not implemented |
 
 ## Kubernetes controller mode
 
@@ -157,7 +169,7 @@ kept). Patches are sent only when the status differs from what the API holds, so
 converged cluster sees no writes and drift is repaired on the next event or resync.
 
 * **Watches.** Each collection (GatewayClasses, Gateways, HTTPRoutes, GRPCRoutes,
-  TLSRoutes, Services, EndpointSlices, ReferenceGrants, Namespaces) is listed once for its
+  TLSRoutes, TCPRoutes, UDPRoutes, ListenerSets, BackendTLSPolicies, Services, EndpointSlices, ReferenceGrants, Namespaces) is listed once for its
   `resourceVersion`, then followed with a chunked `?watch=1&resourceVersion=...&allowWatchBookmarks=true`
   stream over plain `net/http`. Bookmarks advance the version, events trigger one coalesced
   reload, a `410 Gone` (HTTP or in-stream) forces a relist, dropped streams reconnect with
@@ -208,10 +220,10 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   not been run through the upstream Gateway API conformance suite yet (a harness exists
   under `conformance/`; see `docs/conformance`). `conformance_test.go` is a self-check
   named after the suite's tests.
-* Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, and TLS
-  passthrough by SNI. No HTTP/3. Client certificates are validated on HTTPS listeners
-  (Gateway API frontend TLS validation) but not on `TLS` terminate listeners; see
-  [security](security.md).
+* Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, TLS
+  passthrough by SNI, and plain TCP and UDP. No HTTP/3. Client certificates are validated on
+  HTTPS listeners (Gateway API frontend TLS validation) but not on `TLS` terminate listeners;
+  see [security](security.md).
   Upstreams are spoken to with HTTP/1.1 (HTTP/2 only for https upstreams).
 * Kubernetes mode: Secrets are not watched (picked up by the `--resync` relist), and a
   leader that loses the API for longer than the renew deadline steps down, so status can
@@ -219,10 +231,20 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   Service with ports 80 and 443; use `--expose-gateway-ports` (or add ports yourself) for
   other listener ports, and remember `--port-offset 8000` maps spec ports below 1024. All
   Gateways of the class share one process, so listeners with the same port merge into one
-  socket. Gateway `spec.addresses` (static addresses) is not honoured.
+  socket. Gateway `spec.addresses` are reported in status but never bound or assigned. UDP
+  listener ports are not added to the Service by `--expose-gateway-ports` (TCP ports are); add
+  them yourself.
 * One status `generation` in file mode is the reload counter (snapshot files have no
   metadata generation).
-* Selector namespaces support `matchLabels` only; `matchExpressions` fail closed.
+* A BackendTLSPolicy turns plain `host:port` endpoints into https ones. One backend (Service
+  port) has one TLS identity: the Gateway client certificate and policy of the first route
+  that resolves it. Session persistence tokens are signed with a per-process key unless
+  `SETURA_GATEWAY_SESSION_KEY` is set, so they do not survive a restart or move between
+  replicas by default. TCPRoute and UDPRoute have nothing to match on: a listener sends all
+  traffic to the oldest attached route's first rule with a backend. UDP is not retried, not
+  health checked and not rate limited; neither TCP nor UDP supports PROXY protocol.
+* ListenerSet listeners follow the Gateway's rules for conflicts (the Gateway's own listeners
+  win, then older sets). BackendTLSPolicy is not applied to TLSRoute Terminate listeners.
 * Traffic security is per HTTPRoute rule and opt-in: JWT, API key, basic auth, client address
   lists and client certificates (see [security](security.md)). GRPCRoutes get the
   client-certificate headers but no auth policy; there is no OIDC login flow, no JWT

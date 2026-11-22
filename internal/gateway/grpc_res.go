@@ -263,7 +263,7 @@ func (t *grpcTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if attempt > 0 && t.retry != nil && t.canReplay { // the first try reads the live body (a mirror spool may wrap it)
 			out.Body = io.NopCloser(bytes.NewReader(t.replay))
 		}
-		resp, err := t.s.grpcTr.get(ep.URL.Scheme, t.b.Insecure).RoundTrip(out)
+		resp, err := t.s.grpcTransport(t.b, ep.URL.Scheme).RoundTrip(out)
 		if t.st != nil {
 			t.st.up.end(trace, ep, health, resp, err)
 			t.st.noteUpstream()
@@ -390,7 +390,7 @@ func (s *Server) grpcHealthProbe(ctx context.Context, c *healthConfig, b *Backen
 	}
 	req.Header.Set("Content-Type", "application/grpc")
 	req.Header.Set("Te", "trailers")
-	resp, err := (&http.Client{Transport: s.grpcTr.get(ep.URL.Scheme, b.Insecure)}).Do(req)
+	resp, err := (&http.Client{Transport: s.grpcTransport(b, ep.URL.Scheme)}).Do(req)
 	if err != nil {
 		return false
 	}

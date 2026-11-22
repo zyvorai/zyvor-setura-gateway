@@ -55,13 +55,22 @@ func TestUpstreamRequestMatchesProxy(t *testing.T) {
 		"redir": route("redir.test", m{
 			"filters": l{m{"type": "RequestRedirect", "requestRedirect": m{"scheme": "https", "statusCode": 308}}},
 		}),
+		// Gateway API 1.5 filters: each must go through the shared helpers on both paths.
+		"cors": route("cors.test", withFilters(rule("/api", ref("a", 1)),
+			m{"type": "CORS", "cors": m{"allowOrigins": l{"https://app.example.com"}, "allowCredentials": true, "exposeHeaders": l{"X-Out"}}},
+			m{"type": "ResponseHeaderModifier", "responseHeaderModifier": hmod("X-Resp=cors", "", "")})),
+		"auth": route("auth.test", withFilters(rule("/api", ref("a", 1)),
+			m{"type": "ExternalAuth", "externalAuth": m{"protocol": "HTTP", "backendRef": ref("authz", -1), "http": m{"path": "/v", "allowedResponseHeaders": l{"X-User"}}}},
+			m{"type": "RequestHeaderModifier", "requestHeaderModifier": hmod("X-After-Auth=1", "", "")})),
 	}
+	authSrv, _ := httpAuthServer(t)
+	be["authz"] = strings.TrimPrefix(authSrv.URL, "http://")
 	s := startServer(t, snap(httpGateway(""), routes, be), nil)
 	hdrs := []string{"X-Drop", "x", "X-Drop2", "y", "X-Add", "client", "X-Keep", "k", "Forwarded", "for=6.6.6.6",
 		"X-Forwarded-For", "6.6.6.6", "X-Forwarded-Proto", "https", "Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-		"Tracestate", "v=1", "X-Request-Id", "req-42"}
+		"Tracestate", "v=1", "X-Request-Id", "req-42", "Origin", "https://app.example.com", "Authorization", "Bearer ok"}
 	type tc struct{ host, target string }
-	for _, c := range []tc{{"rw.test", "/api/users?x=1"}, {"rw.test", "/api"}, {"full.test", "/old"}} {
+	for _, c := range []tc{{"rw.test", "/api/users?x=1"}, {"rw.test", "/api"}, {"full.test", "/old"}, {"cors.test", "/api"}, {"auth.test", "/api"}} {
 		before := len(ups["a"].seen())
 		live := req(t, client(s.Addr(8080), nil), "http", "GET", c.host+":8080", c.target, "", hdrs...)
 		if live.Status != 200 {
@@ -101,6 +110,17 @@ func TestUpstreamRequestMatchesProxy(t *testing.T) {
 				if !strings.HasPrefix(sv, "00-0af7651916cd43dd8448eb211c80319c-") || !strings.HasSuffix(sv, "-01") || !strings.HasPrefix(v, "00-0af7651916cd43dd8448eb211c80319c-") {
 					t.Errorf("%s%s: traceparent explain %q proxy %q", c.host, c.target, v, sv)
 				}
+			case "authorization":
+				// explain redacts credentials; the proxy forwards the client's value
+				if v != "<redacted>" || sv != "Bearer ok" {
+					t.Errorf("%s%s: authorization explain %q proxy %q", c.host, c.target, v, sv)
+				}
+			case "x-user":
+				// ExternalAuth: the answer is only known at run time, so explain
+				// shows a placeholder where the proxy sends the service's value.
+				if v != authPreviewValue || sv != "alice" || c.host != "auth.test" {
+					t.Errorf("%s%s: x-user explain %q proxy %q", c.host, c.target, v, sv)
+				}
 			case "tracestate", "x-request-id", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-env", "x-add", "x-ref", "x-keep":
 				if sv != v {
 					t.Errorf("%s%s: %s explain %q proxy %q", c.host, c.target, k, v, sv)
@@ -121,6 +141,17 @@ func TestUpstreamRequestMatchesProxy(t *testing.T) {
 		}
 		if seen.Headers["x-forwarded-for"] != "127.0.0.1" {
 			t.Errorf("client X-Forwarded-For must be replaced, got %q", seen.Headers["x-forwarded-for"])
+		}
+		// Response side: what Explain says the gateway adds must be what the client gets.
+		for k, v := range tr.Winner.Backends[0].ResponseHeaders {
+			if got := strings.Join(live.Header.Values(k), ", "); got != v {
+				t.Errorf("%s%s: response header %s explain %q live %q", c.host, c.target, k, v, got)
+			}
+		}
+		if c.host == "cors.test" {
+			if len(tr.Winner.Backends[0].ResponseHeaders) == 0 || live.Header.Get("Access-Control-Allow-Origin") == "" {
+				t.Errorf("%s: explain shows no response headers: %+v", c.host, tr.Winner.Backends[0].ResponseHeaders)
+			}
 		}
 	}
 	// ResponseHeaderModifier and RequestRedirect are response-side: the

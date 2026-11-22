@@ -45,6 +45,7 @@ Flags for run and up:
   --service-name N, --service-namespace NS   Service whose address becomes Gateway status.addresses
   --expose-gateway-ports   with --kubernetes: add a Service port for every Gateway listener port
   --force               apply configurations that have lint errors
+  --udp-idle-timeout DUR   close a UDP session after DUR without client datagrams (default 30s)
   --access-log FILE|-|off   access log (default "-", stdout)
   --access-log-format json|text   access log format (default json)
   --access-log-max-size SIZE    rotate the access log file past SIZE (100, 64k, 10MB, 1g; default off)
@@ -138,6 +139,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&f.rotateSize, "access-log-max-size", "", "rotate the access log file past this size (100, 64k, 10MB, 1g)")
 	fs.IntVar(&f.rotate.Keep, "access-log-keep", 0, "rotated access log files to keep (default all)")
 	fs.BoolVar(&f.rotate.Gzip, "access-log-gzip", false, "gzip rotated access log files")
+	fs.DurationVar(&f.opts.UDPIdle, "udp-idle-timeout", 0, "idle timeout of UDP sessions on UDP listeners (default 30s)")
 	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.opts.ShadowState, "shadow-state", "", "persist shadow results to FILE (atomic snapshots, reloaded at start)")

@@ -6,6 +6,8 @@ import "sort"
 const (
 	grpcRouteKey = "grpcroutes." + APIGroup
 	tlsRouteKey  = "tlsroutes." + APIGroup
+	tcpRouteKey  = "tcproutes." + APIGroup
+	udpRouteKey  = "udproutes." + APIGroup
 	grantKey     = "referencegrants." + APIGroup
 )
 
@@ -16,6 +18,10 @@ func protocolKinds(proto string) []string {
 		return []string{"HTTPRoute", "GRPCRoute"}
 	case "TLS":
 		return []string{"TLSRoute"}
+	case "TCP":
+		return []string{"TCPRoute"}
+	case "UDP":
+		return []string{"UDPRoute"}
 	}
 	return nil
 }

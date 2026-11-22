@@ -329,7 +329,7 @@ func (s *Server) startHealth(ctx context.Context, b *Backend) {
 	if c == nil {
 		return
 	}
-	client := &http.Client{Transport: s.transport(b.Insecure), Timeout: c.timeout,
+	client := &http.Client{Transport: s.backendTransport(b), Timeout: c.timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for _, ep := range b.Eps {
 		go func(ep *Endpoint) {

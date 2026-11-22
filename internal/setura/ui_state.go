@@ -49,6 +49,7 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET017": {"Secret stored in clear text", "An API key or basic auth password is written in the config instead of a hash.", "Store a hash made with setura gateway hash and remove the clear text."},
 	"SET018": {"Auth block is invalid", "The auth block or annotation cannot be parsed or compiled, or it names a rule that does not exist. The route is not served.", "Fix the JSON (see docs/security.md)."},
 	"SET015": {"Shadow-diff block is invalid", "The shadow-diff block or annotation cannot be parsed, or it names a rule that has no RequestMirror filter.", "Fix the JSON (see docs/shadow.md), or add a RequestMirror filter to that rule."},
+	"SET019": {"Gateway API 1.5 setting is invalid", "A CORS or ExternalAuth filter, session persistence, a backend timeout or a BackendTLSPolicy is configured in a way the built-in gateway refuses, so the route (or policy) is not accepted.", "Fix the setting named in the message (see docs/gateway-api-1-5.md)."},
 }
 
 func routeKindLabel(resource string) string {

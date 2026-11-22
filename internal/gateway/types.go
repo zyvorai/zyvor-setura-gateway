@@ -35,6 +35,11 @@ type Gateway struct {
 	Generation int64
 	ClassName  string
 	Listeners  []Listener
+	// Addresses is spec.addresses; AllowedListeners is spec.allowedListeners.namespaces;
+	// BackendClientCert is spec.tls.backend.clientCertificateRef.
+	Addresses         []GatewayAddress
+	AllowedListeners  *RouteNamespaces
+	BackendClientCert *ObjRef
 	// TLS is spec.tls (Gateway API 1.5 frontend TLS validation).
 	TLS *GatewayTLS
 }
@@ -79,8 +84,8 @@ type AllowedRoutes struct {
 type RouteNamespaces struct {
 	From     string `json:"from,omitempty"`
 	Selector *struct {
-		MatchLabels      map[string]string `json:"matchLabels,omitempty"`
-		MatchExpressions []json.RawMessage `json:"matchExpressions,omitempty"`
+		MatchLabels      map[string]string     `json:"matchLabels,omitempty"`
+		MatchExpressions []SelectorRequirement `json:"matchExpressions,omitempty"`
 	} `json:"selector,omitempty"`
 }
 
@@ -119,11 +124,14 @@ func (r *Route) StatusKey() string {
 
 // Rule is one HTTPRoute rule.
 type Rule struct {
-	Matches     []Match      `json:"matches,omitempty"`
-	Filters     []Filter     `json:"filters,omitempty"`
-	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
-	Retry       *RetryRule   `json:"retry,omitempty"`
-	Timeouts    *struct {
+	Name string `json:"name,omitempty"`
+	// SessionPersistence pins a client to one backend endpoint (affinity.go).
+	SessionPersistence *SessionPersistence `json:"sessionPersistence,omitempty"`
+	Matches            []Match             `json:"matches,omitempty"`
+	Filters            []Filter            `json:"filters,omitempty"`
+	BackendRefs        []BackendRef        `json:"backendRefs,omitempty"`
+	Retry              *RetryRule          `json:"retry,omitempty"`
+	Timeouts           *struct {
 		Request        string `json:"request,omitempty"`
 		BackendRequest string `json:"backendRequest,omitempty"`
 	} `json:"timeouts,omitempty"`
@@ -154,12 +162,14 @@ type ValueMatch struct {
 
 // Filter is an HTTPRoute filter.
 type Filter struct {
-	Type                   string     `json:"type"`
-	RequestHeaderModifier  *HeaderMod `json:"requestHeaderModifier,omitempty"`
-	ResponseHeaderModifier *HeaderMod `json:"responseHeaderModifier,omitempty"`
-	RequestRedirect        *Redirect  `json:"requestRedirect,omitempty"`
-	URLRewrite             *Rewrite   `json:"urlRewrite,omitempty"`
-	RequestMirror          *Mirror    `json:"requestMirror,omitempty"`
+	Type                   string        `json:"type"`
+	RequestHeaderModifier  *HeaderMod    `json:"requestHeaderModifier,omitempty"`
+	ResponseHeaderModifier *HeaderMod    `json:"responseHeaderModifier,omitempty"`
+	RequestRedirect        *Redirect     `json:"requestRedirect,omitempty"`
+	URLRewrite             *Rewrite      `json:"urlRewrite,omitempty"`
+	RequestMirror          *Mirror       `json:"requestMirror,omitempty"`
+	CORS                   *CORS         `json:"cors,omitempty"`
+	ExternalAuth           *ExternalAuth `json:"externalAuth,omitempty"`
 }
 
 // NameValue is a header name and value.
@@ -214,6 +224,8 @@ type BackendRef struct {
 	Port      int      `json:"port,omitempty"`
 	Weight    *int     `json:"weight,omitempty"`
 	Filters   []Filter `json:"filters,omitempty"`
+	// SessionPersistence is a Setura extension: persistence scoped to this backendRef.
+	SessionPersistence *SessionPersistence `json:"setura.zyvor.dev/sessionPersistence,omitempty"`
 }
 
 // BackendDef maps a Service port to upstream endpoints.
@@ -222,6 +234,8 @@ type BackendDef struct {
 	Timeout            string       `json:"timeout,omitempty"`
 	HealthCheck        *HealthCheck `json:"healthCheck,omitempty"`
 	InsecureSkipVerify bool         `json:"insecureSkipVerify,omitempty"`
+	// PortName is the Service port name (BackendTLSPolicy targetRefs may name a section).
+	PortName string `json:"portName,omitempty"`
 	// CircuitBreaker overrides the gateway-wide circuit breaking defaults for
 	// this backend (negative numbers lift a default limit).
 	CircuitBreaker *CircuitConfig `json:"circuitBreaker,omitempty"`
@@ -351,6 +365,15 @@ type Config struct {
 	// GRPCRoutes and TLSRoutes are the additional route kinds.
 	GRPCRoutes []*GRPCRoute
 	TLSRoutes  []*TLSRoute
+	// BackendTLS are the BackendTLSPolicies, CACerts the CA bundles (ConfigMaps
+	// and Secrets, "ns/name") their caCertificateRefs name.
+	BackendTLS []*BackendTLSPolicy
+	CACerts    map[string]CADef
+	// ListenerSets, TCPRoutes and UDPRoutes are further resource kinds
+	// (listenerset.go, l4route.go).
+	ListenerSets []*ListenerSet
+	TCPRoutes    []*L4Route
+	UDPRoutes    []*L4Route
 
 	skipCerts bool // offline replay: do not load listener certificates
 }
@@ -361,6 +384,7 @@ type fileConfig struct {
 	Resources       map[string]json.RawMessage `json:"resources"`
 	Backends        map[string]BackendDef      `json:"backends"`
 	Secrets         map[string]SecretDef       `json:"secrets"`
+	CACertificates  map[string]CADef           `json:"caCertificates"`
 	ReferenceGrants []struct {
 		Metadata struct {
 			Namespace string `json:"namespace"`
@@ -377,9 +401,28 @@ type fileConfig struct {
 }
 
 type gatewaySpec struct {
-	GatewayClassName string      `json:"gatewayClassName"`
-	Listeners        []Listener  `json:"listeners"`
-	TLS              *GatewayTLS `json:"tls,omitempty"`
+	GatewayClassName string     `json:"gatewayClassName"`
+	Listeners        []Listener `json:"listeners"`
+	// TLS is spec.tls: frontend client certificate validation and the backend client certificate.
+	TLS *GatewayTLS `json:"tls,omitempty"`
+	// Addresses are the static addresses the Gateway asks for (reported in status).
+	Addresses []GatewayAddress `json:"addresses,omitempty"`
+	// AllowedListeners says which ListenerSets may attach (default: none).
+	AllowedListeners *struct {
+		Namespaces *RouteNamespaces `json:"namespaces,omitempty"`
+	} `json:"allowedListeners,omitempty"`
+}
+
+// gateway builds the Gateway a gatewaySpec describes.
+func (s gatewaySpec) gateway(ns, name string, generation int64) *Gateway {
+	g := &Gateway{NS: ns, Name: name, Generation: generation, ClassName: s.GatewayClassName, Listeners: s.Listeners, TLS: s.TLS, Addresses: s.Addresses}
+	if s.AllowedListeners != nil {
+		g.AllowedListeners = s.AllowedListeners.Namespaces
+	}
+	if s.TLS != nil && s.TLS.Backend != nil {
+		g.BackendClientCert = s.TLS.Backend.ClientCertificateRef
+	}
+	return g
 }
 
 type routeSpec struct {
@@ -419,7 +462,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
-			cfg.Gateways = append(cfg.Gateways, &Gateway{NS: rns, Name: name, ClassName: spec.GatewayClassName, Listeners: spec.Listeners, TLS: spec.TLS})
+			cfg.Gateways = append(cfg.Gateways, spec.gateway(rns, name, 0))
 		case routeKey:
 			var spec routeSpec
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
@@ -442,7 +485,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			}
 			cfg.Grants = append(cfg.Grants, Grant{Namespace: rns, From: spec.From, To: spec.To})
 			cfg.GrantsCaptured = true
-		case grpcRouteKey, tlsRouteKey:
+		case grpcRouteKey, tlsRouteKey, tcpRouteKey, udpRouteKey, listenerSetKey, backendTLSPolicyKey:
 			if err := cfg.parseExtraRoute(kind, rns, name, fc.Resources[key]); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
@@ -469,6 +512,13 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 		}
 		v.CertFile, v.KeyFile = abs(v.CertFile), abs(v.KeyFile)
 		cfg.Secrets[key] = v
+	}
+	cfg.CACerts = map[string]CADef{}
+	for k, v := range fc.CACertificates {
+		if !strings.Contains(k, "/") {
+			k = ns + "/" + k
+		}
+		cfg.CACerts[k] = v.abs(dir)
 	}
 	for _, g := range fc.ReferenceGrants {
 		gr := Grant{Namespace: g.Metadata.Namespace}

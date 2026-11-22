@@ -83,10 +83,17 @@ func (k *KubeSource) gatewayAddresses(svcs []kobj, raw []json.RawMessage) ([]Gat
 func listenerPorts(cfg *Config) []int {
 	seen := map[int]bool{}
 	var out []int
+	var lists [][]Listener
 	for _, g := range cfg.Gateways {
-		for _, l := range g.Listeners {
+		lists = append(lists, g.Listeners)
+	}
+	for _, ls := range cfg.ListenerSets { // listeners added through ListenerSets need Service ports too
+		lists = append(lists, ls.Listeners)
+	}
+	for _, listeners := range lists {
+		for _, l := range listeners {
 			switch strings.ToUpper(l.Protocol) {
-			case "HTTP", "HTTPS", "TLS":
+			case "HTTP", "HTTPS", "TLS", "TCP":
 				if l.Port >= 1 && l.Port <= 65535 && !seen[l.Port] {
 					seen[l.Port] = true
 					out = append(out, l.Port)

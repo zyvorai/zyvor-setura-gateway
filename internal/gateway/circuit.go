@@ -213,16 +213,20 @@ func (b *cbBody) Close() error {
 // divided over the endpoints, so excess requests wait for a connection.
 func (s *Server) transportFor(b *Backend, l cbLimits) http.RoundTripper {
 	if l.maxConn <= 0 {
-		return s.transport(b.Insecure)
+		return s.backendTransport(b)
 	}
 	per := (l.maxConn + len(b.Eps) - 1) / len(b.Eps)
-	key := b.Key + "|" + strconv.Itoa(per) + "|" + strconv.FormatBool(b.Insecure)
+	key := b.Key + "|" + strconv.Itoa(per) + "|" + strconv.FormatBool(b.Insecure) + "|" + b.tlsFP()
 	s.res.mu.Lock()
 	defer s.res.mu.Unlock()
 	if t := s.res.transports[key]; t != nil {
 		return t
 	}
-	t := s.transport(b.Insecure).(*http.Transport).Clone()
+	bt, ok := s.backendTransport(b).(*http.Transport)
+	if !ok {
+		return s.backendTransport(b)
+	}
+	t := bt.Clone()
 	t.MaxConnsPerHost = per
 	s.res.transports[key] = t
 	return t

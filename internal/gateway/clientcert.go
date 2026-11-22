@@ -30,6 +30,11 @@ const (
 // GatewayTLS is a Gateway's spec.tls.
 type GatewayTLS struct {
 	Frontend *FrontendTLS `json:"frontend,omitempty"`
+	// Backend is spec.tls.backend: the client certificate presented to
+	// backends under a BackendTLSPolicy (backendtls.go).
+	Backend *struct {
+		ClientCertificateRef *ObjRef `json:"clientCertificateRef,omitempty"`
+	} `json:"backend,omitempty"`
 }
 
 // FrontendTLS is spec.tls.frontend: client certificate validation for the
