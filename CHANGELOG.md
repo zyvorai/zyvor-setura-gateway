@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0-rc2
+
+Second release candidate. rc1 could not ship: a golden-frame test for `setura top` printed a percentile that differed by one millisecond between Apple-silicon and Linux (fused multiply-add), so the release job failed its tests. Fixed by snapping quantiles to a fixed precision; the suite now passes on both architectures. Otherwise identical to the 0.7.0 list below.
+
 ## 0.7.0-rc1
 
 Release candidate for 0.7.0, and the first run of the signed release pipeline (cosign signatures, SLSA provenance, SBOMs, `.deb` and `.rpm` packages and the Helm chart). It is a pre-release: it does not move the `latest` image tag. The contents are the 0.7.0 list below.
