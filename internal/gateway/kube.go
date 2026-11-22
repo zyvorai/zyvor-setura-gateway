@@ -29,13 +29,17 @@ const (
 	apiGatewayV1 = "/apis/gateway.networking.k8s.io/v1"
 )
 
-type kubeFlags struct{ api, tokenFile, caFile string }
+type kubeFlags struct {
+	api, tokenFile, caFile string
+	ctl                    controllerFlags
+}
 
 func addKubeFlags(fs *flag.FlagSet) *kubeFlags {
 	k := &kubeFlags{}
 	fs.StringVar(&k.api, "kube-api", "", "Kubernetes API URL (default: in-cluster service address)")
 	fs.StringVar(&k.tokenFile, "kube-token-file", saDir+"/token", "bearer token file, re-read on every request")
 	fs.StringVar(&k.caFile, "kube-ca-file", saDir+"/ca.crt", "CA bundle for the API server")
+	addControllerFlags(fs, &k.ctl)
 	return k
 }
 
@@ -67,12 +71,15 @@ func (k *kubeFlags) source(diag io.Writer) (Source, error) {
 		}
 		return strings.TrimSpace(string(b))
 	}
-	return NewKubeSource(base, hc, token, diag), nil
+	ks := NewKubeSource(base, hc, token, diag)
+	k.ctl.apply(ks)
+	return ks, nil
 }
 
 // KubeSource reads Gateways, HTTPRoutes, Services, EndpointSlices and Secrets
 // through plain HTTPS calls to the Kubernetes API, and writes status back
-// through the status subresource. It polls; it does not use watches.
+// through the status subresource. It watches the API (watch.go) unless Poll is
+// set, and can elect a leader through a Lease (lease.go).
 type KubeSource struct {
 	base  string
 	hc    *http.Client
@@ -84,6 +91,12 @@ type KubeSource struct {
 	gwRaw   map[string]json.RawMessage
 	rtRaw   map[string]json.RawMessage
 	extra   map[string]extraRaw // GRPCRoutes and TLSRoutes by status key
+	stale   map[string]extraRaw // routes that no longer attach to us but still carry our status
+	addrs   []GatewayAddress    // Gateway status.addresses, from the install Service
+	svcRaw  json.RawMessage     // that Service, for --expose-gateway-ports
+	gwPorts []int               // spec ports of the listeners we serve
+
+	kubeCtl
 }
 
 // NewKubeSource builds a source for the API at base.
@@ -238,6 +251,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		mine[gw.Key()] = true
 		gwRaw[gw.Key()] = gwItems[i]
 	}
+	stale := map[string]extraRaw{}
 	rts, _ := decode(rtItems)
 	for i, r := range rts {
 		var spec routeSpec
@@ -256,6 +270,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			}
 		}
 		if len(parents) == 0 {
+			noteStale(stale, apiGatewayV1, "httproutes", "httproute", r, rtItems[i])
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, r.Metadata.CreationTimestamp)
@@ -264,7 +279,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}
 
-	extra, err := k.loadExtraRoutes(ctx, cfg, mine)
+	extra, err := k.loadExtraRoutes(ctx, cfg, mine, stale)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +351,9 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 	}
 
+	addrs, svcRaw := k.gatewayAddresses(svcs, svcItems)
+	gwPorts := listenerPorts(cfg)
+
 	// Referenced TLS Secrets, fetched one by one so RBAC needs only "get".
 	for _, gw := range cfg.Gateways {
 		for _, l := range gw.Listeners {
@@ -388,6 +406,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 
 	k.mu.Lock()
 	k.classes, k.gwRaw, k.rtRaw, k.extra = ours, gwRaw, rtRaw, extra
+	k.stale, k.addrs, k.svcRaw, k.gwPorts = stale, addrs, svcRaw, gwPorts
 	k.mu.Unlock()
 	sig, _ := json.Marshal(struct {
 		G []*Gateway
@@ -445,11 +464,12 @@ func (k *KubeSource) patchStatus(ctx context.Context, path string, status any) e
 // WriteStatus implements StatusWriter. It patches only what differs from the
 // objects seen by the latest Load, so a converged cluster sees no writes.
 func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
-	if doc == nil {
-		return nil
+	if doc == nil || !k.isLeader() {
+		return nil // followers serve traffic but never write
 	}
 	k.mu.Lock()
 	classes, gwRaw, rtRaw, extra := k.classes, k.gwRaw, k.rtRaw, k.extra
+	stale, addrs := k.stale, k.addrs
 	k.mu.Unlock()
 	var errs []error
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -482,13 +502,19 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		var st struct {
 			Conditions []Condition      `json:"conditions"`
 			Listeners  []ListenerStatus `json:"listeners"`
+			Addresses  []GatewayAddress `json:"addresses"`
 		}
 		json.Unmarshal(o.Status, &st)
-		if sameConds(st.Conditions, want.Conditions) && sameListeners(st.Listeners, want.Listeners) {
+		withAddrs := len(addrs) > 0 && !reflect.DeepEqual(st.Addresses, addrs)
+		if sameConds(st.Conditions, want.Conditions) && sameListeners(st.Listeners, want.Listeners) && !withAddrs {
 			continue
 		}
 		path := apiGatewayV1 + "/namespaces/" + url.PathEscape(o.Metadata.Namespace) + "/gateways/" + url.PathEscape(o.Metadata.Name)
-		if err := k.patchStatus(ctx, path, map[string]any{"conditions": want.Conditions, "listeners": want.Listeners}); err != nil {
+		body := map[string]any{"conditions": want.Conditions, "listeners": want.Listeners}
+		if len(addrs) > 0 {
+			body["addresses"] = addrs
+		}
+		if err := k.patchStatus(ctx, path, body); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -501,6 +527,14 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		if err := k.writeRouteStatus(ctx, x.base, x.plural, x.raw, doc.Routes[key]); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	for _, x := range stale { // detached routes: drop our entries, keep other controllers'
+		if err := k.writeRouteStatus(ctx, x.base, x.plural, x.raw, &RouteStatus{}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := k.reconcileServicePorts(ctx); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -534,5 +568,5 @@ func (k *KubeSource) writeRouteStatus(ctx context.Context, base, plural string, 
 	}
 	path := base + "/namespaces/" + url.PathEscape(o.Metadata.Namespace) + "/" + plural + "/" + url.PathEscape(o.Metadata.Name)
 	// A merge patch replaces arrays wholesale, so keep other controllers' entries.
-	return k.patchStatus(ctx, path, map[string]any{"parents": append(others, want.Parents...)})
+	return k.patchStatus(ctx, path, map[string]any{"parents": append(append([]ParentStatus{}, others...), want.Parents...)})
 }

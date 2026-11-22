@@ -273,6 +273,9 @@ func BuildTable(cfg *Config) *Table {
 				continue
 			}
 			names[spec.Name] = true
+			if bad := l.invalidKinds(); len(bad) > 0 {
+				l.Resolved = fact{false, "InvalidRouteKinds", "allowedRoutes.kinds names kinds this listener cannot carry: " + strings.Join(bad, ", ")}
+			}
 			if prev, ok := portProto[spec.Port]; ok && prev != proto {
 				l.Conflicted = fact{true, "ProtocolConflict", fmt.Sprintf("port %d already serves %s", spec.Port, prev)}
 				continue

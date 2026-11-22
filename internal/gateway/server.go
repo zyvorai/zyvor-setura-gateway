@@ -412,6 +412,29 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		}
 	}
 	write()
+	wake := make(chan struct{}, 1)
+	if bg, ok := src.(Background); ok {
+		if resync := bg.Start(ctx, func() {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}); resync > 0 {
+			interval = resync // events drive reloads; the ticker is only a safety net
+		}
+		defer bg.Wait() // runs before s.Close; releases a held lease
+	}
+	tick := func() {
+		switch changed, err := s.Reload(ctx, src); {
+		case err != nil:
+			if ctx.Err() == nil {
+				s.diag("reload rejected, keeping previous configuration: %v", err)
+			}
+		case changed:
+			s.diag("configuration applied (generation %d)", s.Status().Generation)
+		}
+		write()
+	}
 	tk := time.NewTicker(interval)
 	defer tk.Stop()
 	for {
@@ -419,15 +442,18 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		case <-ctx.Done():
 			return nil
 		case <-tk.C:
-			switch changed, err := s.Reload(ctx, src); {
-			case err != nil:
-				if ctx.Err() == nil {
-					s.diag("reload rejected, keeping previous configuration: %v", err)
-				}
-			case changed:
-				s.diag("configuration applied (generation %d)", s.Status().Generation)
+			tick()
+		case <-wake:
+			select { // coalesce a burst of events into one reload
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return nil
 			}
-			write()
+			select {
+			case <-wake:
+			default:
+			}
+			tick()
 		}
 	}
 }
