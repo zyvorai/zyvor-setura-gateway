@@ -18,6 +18,7 @@ var commandNames = []string{
 	"diff",
 	"migrate",
 	"map",
+	"ui",
 	"impact",
 	"lint",
 	"ai",
