@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"schema\":\"setura.route-specs/v1\",\"resources\":{\"gateways.gateway.networking.k8s.io/gw\":{\"listeners\":[{\"name\":\"t\",\"protocol\":\"HTTPS\",\"port\":8443,\"tls\":{\"mode\":\"Terminate\",\"certificateRefs\":[{\"name\":\"missing\"}]}}]}},\"secrets\":{\"missing\":{\"certFile\":\"../../etc/passwd\",\"keyFile\":\"/nonexistent\"}}}")

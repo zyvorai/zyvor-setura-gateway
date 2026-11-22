@@ -4,16 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -58,67 +55,6 @@ func (r *recorder) Flush() {
 
 // Unwrap lets http.ResponseController reach Hijack for upgrades.
 func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-// Counter counts requests by status class.
-type Counter struct {
-	Requests int64            `json:"requests"`
-	Status   map[string]int64 `json:"status"`
-}
-
-// Stats holds per-route and per-backend counters across reloads.
-type Stats struct {
-	mu        sync.Mutex
-	total     int64
-	unmatched int64
-	routes    map[string]*Counter
-	backends  map[string]*Counter
-}
-
-func newStats() *Stats {
-	return &Stats{routes: map[string]*Counter{}, backends: map[string]*Counter{}}
-}
-
-func bump(m map[string]*Counter, key string, status int) {
-	c := m[key]
-	if c == nil {
-		c = &Counter{Status: map[string]int64{}}
-		m[key] = c
-	}
-	c.Requests++
-	c.Status[fmt.Sprintf("%dxx", status/100)]++
-}
-
-func (s *Stats) record(route, backend string, status int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.total++
-	if route == "" {
-		s.unmatched++
-	} else {
-		bump(s.routes, route, status)
-	}
-	if backend != "" {
-		bump(s.backends, backend, status)
-	}
-}
-
-// Snapshot returns a JSON-ready copy.
-func (s *Stats) Snapshot() map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := func(in map[string]*Counter) map[string]Counter {
-		out := map[string]Counter{}
-		for k, v := range in {
-			c := Counter{Requests: v.Requests, Status: map[string]int64{}}
-			for sk, sv := range v.Status {
-				c.Status[sk] = sv
-			}
-			out[k] = c
-		}
-		return out
-	}
-	return map[string]any{"requests": s.total, "unmatched": s.unmatched, "routes": cp(s.routes), "backends": cp(s.backends)}
-}
 
 type reqState struct {
 	listener, route, backend, errMsg string
@@ -182,9 +118,11 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 		status = 200
 	}
 	s.stats.record(st.route, st.backend, status)
-	s.hist.observe(st.route, status, time.Since(start))
-	s.latency.observe(st.route, st.backend, time.Since(start))
-	s.observe(rec, r, st, start, status)
+	end := time.Now()
+	d := end.Sub(start)
+	s.hist.observe(st.route, status, d)
+	s.latency.observe(st.route, st.backend, d)
+	s.observe(rec, r, st, start, end, status)
 }
 
 func (s *Server) intn(n int) int {
@@ -318,6 +256,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	rt := s.newTransport(rule, ref, ep, rule.Retry, replay, canReplay)
 	rt.st = st
 	var pristine, inbound *http.Request
+	keepPristine := rule.Retry != nil && len(rule.Refs) > 1 // only a cross-backend retry rebuilds the request
 
 	var body []byte
 	var sp *bodySpool
@@ -350,10 +289,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
 		FlushInterval: -1,
-		ErrorLog:      log.New(io.Discard, "", 0),
+		BufferPool:    proxyBufPool,
+		ErrorLog:      discardLog,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			pristine, inbound = pr.Out.Clone(pr.Out.Context()), pr.In // before filters, for retries on another backendRef
+			if keepPristine { // before filters, for retries on another backendRef
+				pristine, inbound = pr.Out.Clone(pr.Out.Context()), pr.In
+			}
 			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false)
 			s.chainForwardedFor(pr.In, pr.Out)
 			injectTrace(pr.Out, st)

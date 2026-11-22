@@ -257,8 +257,7 @@ func (s *Server) FlushAccessLog() {
 }
 
 // observe records one finished request: access log line, history record and span.
-func (s *Server) observe(rec *recorder, r *http.Request, st *reqState, start time.Time, status int) {
-	end := time.Now()
+func (s *Server) observe(rec *recorder, r *http.Request, st *reqState, start, end time.Time, status int) {
 	if s.obs.access != nil || s.conns != nil {
 		l := s.buildLine(rec, r, st, start, end, status)
 		if a := s.obs.access; a != nil {

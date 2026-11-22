@@ -34,6 +34,9 @@ explain why the built\-in gateway routes a request the way it does
 .B bench URL
 repeat probes and report latency percentiles and budgets
 .TP
+.B load URL
+keep\-alive load generator: requests/s, p50/p90/p99/p99.9, errors, gateway goroutines and memory
+.TP
 .B grpc\-health HOST:PORT
 call grpc.health.v1.Health/Check over TLS (HTTP/2)
 .TP

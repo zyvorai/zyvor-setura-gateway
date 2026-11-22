@@ -368,6 +368,8 @@ func TestConnTLSDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	// The record is pushed just after the response; wait for the second one (a flake found by -count=3).
+	waitFor(t, "the second connection record", func() bool { return len(history(s)) > 1 })
 	if rec := lastRecord(t, s); rec.Protocol != "HTTP/1.1" || rec.TLSALPN != "http/1.1" {
 		t.Errorf("protocol %q alpn %q", rec.Protocol, rec.TLSALPN)
 	}
