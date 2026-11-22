@@ -1,0 +1,8 @@
+- id: setura-lint
+  name: setura lint
+  description: Statically analyze Gateway and HTTPRoute specs in Setura snapshot files.
+  entry: setura lint --snapshot
+  language: golang
+  files: '(^|/)[^/]*snapshot[^/]*\.json$'
+  types: [json]
+  pass_filenames: true

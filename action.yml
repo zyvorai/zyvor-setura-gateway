@@ -1,0 +1,73 @@
+name: Zyvor Setura
+description: Install Zyvor Setura (checksum verified) and run it, for example `setura lint` on Gateway API specs.
+author: Zyvor AI Labs
+branding:
+  icon: check-circle
+  color: blue
+inputs:
+  command:
+    description: Setura command to run, for example `lint` or `check`. Leave empty to only install.
+    default: ''
+  args:
+    description: Arguments appended to the command (shell-split).
+    default: ''
+  version:
+    description: Release version without the leading v, or `latest`.
+    default: latest
+runs:
+  using: composite
+  steps:
+    - name: Install setura
+      shell: bash
+      env:
+        SETURA_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        repo=zyvorai/zyvor-setura-gateway
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::unsupported runner OS $RUNNER_OS"; exit 2 ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unsupported runner arch $RUNNER_ARCH"; exit 2 ;;
+        esac
+        version="${SETURA_VERSION#v}"
+        if [ -z "$version" ] || [ "$version" = latest ]; then
+          url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")
+          version="${url##*/}"; version="${version#v}"
+        fi
+        case "$version" in
+          *[!0-9A-Za-z._-]*|"") echo "::error::invalid version $version"; exit 2 ;;
+        esac
+        cache="${RUNNER_TOOL_CACHE:-$HOME/.cache}/setura/$version/$os-$arch"
+        if [ ! -x "$cache/setura" ]; then
+          name="setura_${version}_${os}_${arch}"
+          base="https://github.com/$repo/releases/download/v$version"
+          tmp=$(mktemp -d)
+          curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz"
+          curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
+          want=$(awk -v f="$name.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/checksums.txt")
+          [ -n "$want" ] || { echo "::error::$name.tar.gz not listed in checksums.txt"; exit 1; }
+          if command -v sha256sum >/dev/null; then got=$(sha256sum "$tmp/$name.tar.gz" | awk '{print $1}')
+          else got=$(shasum -a 256 "$tmp/$name.tar.gz" | awk '{print $1}'); fi
+          [ "$got" = "$want" ] || { echo "::error::checksum mismatch for $name.tar.gz"; exit 1; }
+          tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+          mkdir -p "$cache"
+          install -m 0755 "$tmp/$name/setura" "$cache/setura"
+          rm -rf "$tmp"
+        fi
+        echo "$cache" >> "$GITHUB_PATH"
+    - name: Run setura
+      shell: bash
+      env:
+        SETURA_COMMAND: ${{ inputs.command }}
+        SETURA_ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        [ -n "$SETURA_COMMAND" ] || { setura version; exit 0; }
+        # Word splitting of args is intentional.
+        # shellcheck disable=SC2086
+        setura $SETURA_COMMAND $SETURA_ARGS
