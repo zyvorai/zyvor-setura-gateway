@@ -36,7 +36,7 @@ func (k *KubeSource) listOptional(ctx context.Context, group string, versions []
 }
 
 // loadExtraRoutes reads GRPCRoutes and TLSRoutes that attach to our Gateways.
-func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[string]bool) (map[string]extraRaw, error) {
+func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[string]bool, stale map[string]extraRaw) (map[string]extraRaw, error) {
 	extra := map[string]extraRaw{}
 	ours := func(ns string, refs []ParentRef) []ParentRef {
 		var out []ParentRef
@@ -65,6 +65,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		}
 		parents := ours(o.Metadata.Namespace, spec.ParentRefs)
 		if len(parents) == 0 {
+			noteStale(stale, base, "grpcroutes", "grpcroute", o, items[i])
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)
@@ -87,6 +88,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		}
 		parents := ours(o.Metadata.Namespace, spec.ParentRefs)
 		if len(parents) == 0 {
+			noteStale(stale, base, "tlsroutes", "tlsroute", o, items[i])
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)

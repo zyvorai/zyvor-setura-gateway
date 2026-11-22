@@ -32,7 +32,14 @@ Flags for run and up:
   --port-map A=B[,..]   serve spec port A on port B (0 = any free port); repeatable
   --port-offset N       add N to spec ports below 1024 (unprivileged remapping)
   --admin ADDR|off      admin endpoint (default 127.0.0.1:19000)
-  --interval DUR        poll interval for config changes (default 1s; 5s with --kubernetes)
+  --interval DUR        poll interval for config changes (default 1s; with --kubernetes only used by --poll, default 5s)
+  --poll                with --kubernetes: poll instead of using watches
+  --resync DUR          with --kubernetes: safety relist while watching (default 1m)
+  --leader-elect        with --kubernetes: only the holder of a coordination.k8s.io Lease writes status
+  --lease-name N, --lease-namespace NS, --lease-duration D (15s), --lease-renew-deadline D (10s),
+  --lease-retry-period D (2s), --lease-identity ID   Lease settings for --leader-elect
+  --service-name N, --service-namespace NS   Service whose address becomes Gateway status.addresses
+  --expose-gateway-ports   with --kubernetes: add a Service port for every Gateway listener port
   --force               apply configurations that have lint errors
   --access-log FILE|-|off   access log (default "-", stdout)
   --access-log-format json|text   access log format (default json)
@@ -184,6 +191,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 			if interval == 0 {
 				interval = 5 * time.Second
 			}
+			kopts.ctl.portOffsetFn = func() (int, map[int]int) { return rf.opts.PortOffset, rf.opts.PortMap }
 			ks, err := kopts.source(stderr)
 			if err != nil {
 				return fail(err)
@@ -226,6 +234,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		fs.StringVar(&io.Image, "image", "", "container image (default ghcr.io/zyvorai/zyvor-setura-gateway:VERSION)")
 		fs.StringVar(&io.ClassName, "class", "setura", "GatewayClass name")
 		fs.IntVar(&io.Replicas, "replicas", 1, "controller replicas")
+		fs.BoolVar(&io.ExposePorts, "expose-gateway-ports", false, "run the controller with --expose-gateway-ports and grant it patch on its own Service")
 		if _, err := parseInterleaved(fs, rest); err != nil {
 			return fail(err)
 		}

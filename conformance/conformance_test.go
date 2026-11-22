@@ -20,6 +20,12 @@ var supported = []features.FeatureName{
 	features.SupportGateway,
 	features.SupportHTTPRoute,
 	features.SupportReferenceGrant,
+	// GRPCRoute (h2c and h2, streaming) and TLSRoute with TLS passthrough.
+	features.SupportGRPCRoute,
+	features.SupportTLSRoute,
+	// The controller (run with --expose-gateway-ports) adds Service ports for listeners
+	// such as 8080 and publishes the Service address in Gateway status.addresses.
+	features.SupportGatewayPort8080,
 	// HTTPRoute extended features the data plane implements.
 	features.SupportHTTPRouteQueryParamMatching,
 	features.SupportHTTPRouteMethodMatching,
@@ -36,12 +42,12 @@ var supported = []features.FeatureName{
 	features.SupportHTTPRouteBackendRequestHeaderModification,
 }
 
-// Deliberately not claimed (see docs/builtin-gateway.md): GatewayPort8080,
-// GatewayStaticAddresses, GatewayAddressEmpty, GatewayHTTPListenerIsolation,
+// Deliberately not claimed (see docs/builtin-gateway.md): GatewayStaticAddresses, GatewayAddressEmpty, GatewayHTTPListenerIsolation,
 // GatewayInfrastructurePropagation, HTTPRouteBackendTimeout, HTTPRouteCORS,
 // HTTPRouteDestinationPortMatching, HTTPRouteNamedRouteRule,
 // HTTPRouteRequestMultipleMirrors, HTTPRouteBackendProtocolH2C,
-// HTTPRouteBackendProtocolWebSocket, BackendTLSPolicy*, TLSRoute, GRPCRoute,
+// HTTPRouteBackendProtocolWebSocket, BackendTLSPolicy*, TLSRouteModeTerminate,
+// TLSRouteModeMixed, GRPCRouteNamedRouteRule, GRPCRouteRequestHeaderModifier, TCPRoute,
 // UDPRoute and the mesh profiles.
 
 // skipTests lists upstream ShortNames known to need behaviour Setura does not
@@ -70,9 +76,12 @@ func TestConformance(t *testing.T) {
 	opts.GatewayClassName = envOr("SETURA_GATEWAY_CLASS", "setura")
 	opts.CleanupBaseResources = envOr("SETURA_CLEANUP", "true") == "true"
 
-	// Profiles: GATEWAY-HTTP only for now. GRPCRoute and TLSRoute passthrough exist
-	// in the gateway but are not yet part of this harness (see ROADMAP.md).
-	opts.ConformanceProfiles = []suite.ConformanceProfileName{suite.GatewayHTTPConformanceProfileName}
+	// Profiles: HTTP, GRPC and TLS (passthrough). TCP, UDP and mesh are not supported.
+	opts.ConformanceProfiles = []suite.ConformanceProfileName{
+		suite.GatewayHTTPConformanceProfileName,
+		suite.GatewayGRPCConformanceProfileName,
+		suite.GatewayTLSConformanceProfileName,
+	}
 	opts.EnableAllSupportedFeatures = false
 	opts.SupportedFeatures = supported
 	opts.SkipTests = append(append([]string{}, skipTests...), splitList(os.Getenv("SETURA_CONFORMANCE_SKIP"))...)
