@@ -212,7 +212,11 @@ func TestOTLPDownCollectorNeverBlocks(t *testing.T) {
 	col := httptest.NewServer(http.NotFoundHandler())
 	url := col.URL
 	col.Close() // connection refused from now on
-	s, _ := obsServer(t, func(o *Options) { o.Obs.OTLPEndpoint = url; o.Obs.OTLPInterval = 10 * time.Millisecond })
+	s, _ := obsServer(t, func(o *Options) {
+		o.Obs.OTLPEndpoint = url
+		o.Obs.OTLPInterval = 10 * time.Millisecond
+		o.Obs.OTLP = OTLPOptions{Retries: -1}
+	})
 	for i := 0; i < 5; i++ {
 		if r := get(t, s, "x.test", "/ok"); r.Status != 200 {
 			t.Fatalf("status %d", r.Status)
