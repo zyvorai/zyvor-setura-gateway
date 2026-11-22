@@ -58,7 +58,7 @@ type TLSEntry struct {
 func (t *Table) attachTLS(r *TLSRoute) {
 	stub := r.stub()
 	res := &routeResult{Route: stub, Refs: fact{true, "ResolvedRefs", "all references resolved"}}
-	t.routes = append(t.routes, res)
+	t.addRoute(res)
 	var entries []*TLSEntry
 	for i := range r.Rules {
 		e := &TLSEntry{RouteKey: stub.StatusKey(), ALPN: r.Rules[i].ALPN}
@@ -333,6 +333,10 @@ func (rl *rawListener) shutdown(ctx context.Context) {
 
 // shutdown stops the port whatever its kind.
 func (bp *boundPort) shutdown(ctx context.Context) {
+	if bp.udp != nil {
+		bp.udp.shutdown(ctx)
+		return
+	}
 	if bp.raw != nil {
 		bp.raw.shutdown(ctx)
 		return

@@ -58,6 +58,7 @@ var helpGroups = []helpGroup{
 		{"exposure", "", "show Service exposure"},
 		{"completion", "bash|zsh|fish", "print a shell completion script"},
 		{"echo", "--name NAME", "run a tiny identity backend that answers with X-Setura-Backend"},
+		{"licence", "verify [KEY|--file F] | show", "verify a signed ZYV1 licence key offline (exit 0 valid, 1 invalid)"},
 		{"man", "", "print the manual page (roff)"},
 		{"version", "[--verbose]", "print the version and build info"},
 	}},

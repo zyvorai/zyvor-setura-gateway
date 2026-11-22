@@ -40,32 +40,38 @@ var supported = []features.FeatureName{
 	features.SupportHTTPRouteRequestPercentageMirror,
 	features.SupportHTTPRouteParentRefPort,
 	features.SupportHTTPRouteBackendRequestHeaderModification,
+	// Gateway API 1.5 features (docs/gateway-api-1-5.md), implemented in the data plane
+	// and the Kubernetes source but not yet verified by an upstream run.
+	features.SupportHTTPRouteCORS,
+	features.SupportHTTPRouteBackendTimeout,
+	features.SupportHTTPRouteDestinationPortMatching,
+	features.SupportHTTPRouteNamedRouteRule,
+	features.SupportGRPCRouteNamedRouteRule,
+	features.SupportBackendTLSPolicy,
+	features.SupportBackendTLSPolicySANValidation,
+	features.SupportListenerSet,
+	features.SupportGatewayStaticAddresses,
+	// Plain layer 4 listeners with weighted backends.
+	features.SupportTCPRoute,
+	features.SupportUDPRoute,
 }
 
-// Deliberately not claimed (see docs/builtin-gateway.md): GatewayStaticAddresses, GatewayAddressEmpty, GatewayHTTPListenerIsolation,
-// GatewayInfrastructurePropagation, HTTPRouteBackendTimeout, HTTPRouteCORS,
-// HTTPRouteDestinationPortMatching, HTTPRouteNamedRouteRule,
+// Deliberately not claimed (see docs/builtin-gateway.md): GatewayAddressEmpty,
+// GatewayHTTPListenerIsolation, GatewayInfrastructurePropagation,
 // HTTPRouteRequestMultipleMirrors, HTTPRouteBackendProtocolH2C,
-// HTTPRouteBackendProtocolWebSocket, BackendTLSPolicy*, TLSRouteModeTerminate,
-// TLSRouteModeMixed, GRPCRouteNamedRouteRule, GRPCRouteRequestHeaderModifier, TCPRoute,
-// UDPRoute and the mesh profiles.
+// HTTPRouteBackendProtocolWebSocket, TLSRouteModeTerminate, TLSRouteModeMixed,
+// GRPCRouteRequestHeaderModifier, BackendTLSPolicy use from GRPCRoute and TLSRoute terminate
+// (those tests need features that are not claimed), the Gateway client certificate validation
+// features, and the mesh profiles. ExternalAuth has no feature name in v1.7.0, so the suite
+// cannot exercise it.
 
 // skipTests lists upstream ShortNames known to need behaviour Setura does not
 // implement, so a run reports them as skipped instead of failing. Extend with
 // SETURA_CONFORMANCE_SKIP (comma separated).
 var skipTests = []string{
-	"HTTPRouteTimeoutBackendRequest",    // timeouts.backendRequest not implemented
-	"HTTPRouteCORS",                     // CORS filter not implemented
 	"HTTPRouteBackendProtocolH2C",       // no h2c upstreams
 	"HTTPRouteBackendProtocolWebSocket", // Service appProtocol selection not implemented
-	"BackendTLSPolicy",                  // BackendTLSPolicy not implemented
-	"BackendTLSPolicyConflictResolution",
-	"BackendTLSPolicyInvalidCACertificateRef",
-	"BackendTLSPolicyInvalidKind",
-	"BackendTLSPolicyObservedGenerationBump",
-	"BackendTLSPolicySANValidation",
-	"GatewayStaticAddresses", // Gateway spec.addresses not implemented
-	"GatewayOptionalAddressValue",
+	"GatewayOptionalAddressValue",       // needs GatewayAddressEmpty: the gateway cannot assign an address
 	"GatewayInfrastructureMetadata",
 	"GatewayHTTPListenerIsolation",
 }
@@ -76,11 +82,13 @@ func TestConformance(t *testing.T) {
 	opts.GatewayClassName = envOr("SETURA_GATEWAY_CLASS", "setura")
 	opts.CleanupBaseResources = envOr("SETURA_CLEANUP", "true") == "true"
 
-	// Profiles: HTTP, GRPC and TLS (passthrough). TCP, UDP and mesh are not supported.
+	// Profiles: HTTP, GRPC, TLS (passthrough), TCP and UDP. The mesh profiles are not supported.
 	opts.ConformanceProfiles = []suite.ConformanceProfileName{
 		suite.GatewayHTTPConformanceProfileName,
 		suite.GatewayGRPCConformanceProfileName,
 		suite.GatewayTLSConformanceProfileName,
+		suite.GatewayTCPConformanceProfileName,
+		suite.GatewayUDPConformanceProfileName,
 	}
 	opts.EnableAllSupportedFeatures = false
 	opts.SupportedFeatures = supported

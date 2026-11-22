@@ -62,6 +62,7 @@ func (rig *shadowRig) settle() ShadowSummary {
 
 func same(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body) // read the request like a real backend, or a large upload hits a closed connection
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Date", time.Now().String())
 		io.WriteString(w, body)

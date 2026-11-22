@@ -38,6 +38,7 @@ var commandNames = []string{
 	"watch",
 	"history",
 	"echo",
+	"licence",
 	"man",
 	"version",
 }
@@ -52,10 +53,13 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 // gatewayFlags are offered after "setura gateway".
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
-	"--shadow-diff", "--shadow-state"}
+	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
+
+// licenceFlags are offered after "setura licence".
+var licenceFlags = []string{"verify", "show", "--file", "--format"}
 
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
@@ -74,6 +78,7 @@ var flagSets = []struct {
 	{"shadow", shadowFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
+	{"licence", licenceFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

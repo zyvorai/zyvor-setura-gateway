@@ -62,6 +62,7 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	}
 	gauge("setura_gateway_endpoint_healthy", "1 when the endpoint passes active health checks.", func(r row) int { return r.healthy })
 	gauge("setura_gateway_endpoint_ejected", "1 while the endpoint is ejected by outlier detection.", func(r row) int { return r.ejected })
+	s.writeL4Metrics(w)
 	s.writeCircuitMetrics(w)
 	s.writeShadowMetrics(w)
 	s.latency.write(w)

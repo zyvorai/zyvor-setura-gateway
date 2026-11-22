@@ -200,6 +200,10 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET013` | error | listener `allowedRoutes` does not admit the attaching route |
 | `SET014` | error | negative or overflowing weights, or mixed Service and non-Service backends in one rule |
 | `SET015` | error | shadow-diff block or `setura.zyvor.dev/shadow-diff` annotation is invalid, or names a rule that has no RequestMirror filter |
+| `SET016` | warning | auth policy accepts any audience (JWT without audience) or fetches its JWKS over plain http |
+| `SET017` | warning | auth policy stores an API key or basic auth password in clear text instead of a hash |
+| `SET018` | error | auth block or `setura.zyvor.dev/auth` annotation is invalid or names a rule that does not exist |
+| `SET019` | error | a Gateway API 1.5 field is invalid: CORS, ExternalAuth, BackendTLSPolicy, session persistence or backend timeouts |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
 
@@ -231,13 +235,13 @@ setura gateway install --namespace setura-system | kubectl apply -f -   # you de
 | Matching | Path (exact, prefix, regex), headers, query parameters and method, with the spec's precedence rules |
 | Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, outlier ejection, retries with a budget, request timeouts, cross-backend retries, health state that survives reloads |
 | Protocols | HTTPRoute, GRPCRoute (h2c and h2, streaming, trailers) and TLSRoute (TLS passthrough by SNI) |
-| Protection | Local token-bucket rate limiting (by IP, route or header), circuit breaking, trusted-proxy client IPs |
-| Filters | Request and response header modification, redirects, URL rewrite, request mirroring |
+| Protection | BackendTLSPolicy (TLS and mTLS to backends), JWT, API key, basic auth, IP lists, client-certificate validation, Local token-bucket rate limiting (by IP, route or header), circuit breaking, trusted-proxy client IPs |
+| Filters | Request and response header modification, redirects, URL rewrite, request mirroring, CORS (with preflight), ExternalAuth |
 | Errors | 404 for no match, 500 for no valid backend, 502 and 504 for upstream failures; `X-Setura-Backend` always names the backend that answered |
 | Operations | Hot reload with zero dropped connections, lint-gated config (a config with lint errors is refused and the old one keeps serving), JSON or text access log, W3C trace propagation with optional OTLP export, admin `/ready`, `/config`, `/stats`, `/status` and Prometheus `/metrics` |
 | Kubernetes | Reads Gateways, HTTPRoutes, Services, EndpointSlices, Secrets and ReferenceGrants with the service account, writes Accepted, ResolvedRefs and Programmed status back |
 
-**Honest limits.** Not implemented: TCPRoute and UDPRoute; session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, authentication, and rate limits shared across replicas (use `--rate-limit-share` to approximate). TLS termination on `TLS` listeners forwards plain TCP to the backend. Kubernetes mode uses watches, leader election and status cleanup, but has only been tested against a fake API server, and Secrets are refreshed on a resync interval. It has not passed the upstream Gateway API conformance suite (a harness is in `conformance/`) and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
+**Honest limits.** Not implemented: HTTP/3, ExtensionRef filters, and rate limits shared across replicas (use `--rate-limit-share` to approximate). TCPRoute and UDPRoute are basic (one route per listener, no PROXY protocol). The Gateway API 1.5 features (CORS, ExternalAuth, BackendTLSPolicy, session persistence, ListenerSet, static addresses) are implemented but not yet verified by an upstream conformance run. TLS termination on `TLS` listeners forwards plain TCP to the backend. Kubernetes mode uses watches, leader election and status cleanup, but has only been tested against a fake API server, and Secrets are refreshed on a resync interval. It has not passed the upstream Gateway API conformance suite (a harness is in `conformance/`) and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
 
 ## Change it without guessing
 

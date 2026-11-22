@@ -59,6 +59,7 @@ func fetchShadow(ctx context.Context, admin string) (*builtin.ShadowSummary, err
 	if err != nil {
 		return nil, err
 	}
+	adminToken(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach the gateway admin endpoint at %s: %w", admin, err)

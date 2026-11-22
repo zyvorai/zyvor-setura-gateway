@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,11 +41,14 @@ type kubeCtl struct {
 	watchTimeout int           // server-side seconds per watch request (default 300)
 	fallbackPoll time.Duration // wake interval while a watch is unavailable (default 5s)
 
-	elect *elector
+	elect atomic.Pointer[elector] // set by Start, read by isLeader from other goroutines
 	wg    sync.WaitGroup
 }
 
-func (k *KubeSource) isLeader() bool { return k.elect == nil || k.elect.isLeader() }
+func (k *KubeSource) isLeader() bool {
+	e := k.elect.Load()
+	return e == nil || e.isLeader()
+}
 
 type controllerFlags struct {
 	poll         bool
@@ -121,6 +125,10 @@ var watchTargets = []struct {
 	{[]string{"/api/v1/services"}, false},
 	{[]string{"/apis/discovery.k8s.io/v1/endpointslices"}, false},
 	{[]string{apiGatewayV1 + "/grpcroutes"}, true},
+	{[]string{apiGatewayV1 + "/listenersets"}, true},
+	{[]string{apiGatewayV1 + "/tcproutes", "/apis/" + APIGroup + "/v1alpha2/tcproutes"}, true},
+	{[]string{apiGatewayV1 + "/udproutes", "/apis/" + APIGroup + "/v1alpha2/udproutes"}, true},
+	{[]string{apiGatewayV1 + "/backendtlspolicies", "/apis/" + APIGroup + "/v1alpha3/backendtlspolicies"}, true},
 	{[]string{apiGatewayV1 + "/tlsroutes", "/apis/" + APIGroup + "/v1alpha3/tlsroutes", "/apis/" + APIGroup + "/v1alpha2/tlsroutes"}, true},
 	{[]string{"/apis/gateway.networking.k8s.io/v1beta1/referencegrants"}, true},
 	{[]string{"/api/v1/namespaces"}, true},
@@ -130,9 +138,10 @@ var watchTargets = []struct {
 // unless Poll is set, one watch loop per collection.
 func (k *KubeSource) Start(ctx context.Context, wake func()) time.Duration {
 	if k.Lease != nil {
-		k.elect = newElector(k, *k.Lease, wake)
+		e := newElector(k, *k.Lease, wake)
+		k.elect.Store(e)
 		k.wg.Add(1)
-		go func() { defer k.wg.Done(); k.elect.run(ctx) }()
+		go func() { defer k.wg.Done(); e.run(ctx) }()
 	}
 	if k.Poll {
 		return 0

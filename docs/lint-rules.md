@@ -21,6 +21,11 @@
 | SET014 | error | negative or overflowing weights, or mixed Service/non-Service backendRefs in one rule |
 | SET015 | error | shadow-diff block or `setura.zyvor.dev/shadow-diff` annotation is invalid, or names a rule without a `RequestMirror` (see [shadow.md](shadow.md)) |
 
+| SET016 | warning | `setura.zyvor.dev/auth` JWT policy has no `audience`, or fetches its JWKS over plain http (see [security.md](security.md)) |
+| SET017 | warning | `setura.zyvor.dev/auth` API key or basic auth password stored in clear text instead of a hash |
+| SET018 | error | `setura.zyvor.dev/auth` block or annotation is invalid, or names a rule that does not exist |
+| SET019 | error | Gateway API 1.5 setting the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, `backendRequest` longer than `request`, BackendTLSPolicy without hostname or CA source (see [gateway-api-1-5.md](gateway-api-1-5.md)) |
+
 ## ReferenceGrants (SET004, SET012)
 
 `setura snapshot` now also reads `referencegrants.gateway.networking.k8s.io`

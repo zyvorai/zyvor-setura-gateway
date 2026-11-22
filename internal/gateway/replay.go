@@ -119,7 +119,7 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 	var pg *PortGroup
 	var l *RTListener
 	for _, p := range ports {
-		if g := t.Ports[p]; g != nil && !g.Passthrough {
+		if g := t.Ports[p]; g != nil && !g.Passthrough && g.L4 == "" {
 			if l = g.pickListener(host); l != nil {
 				pg = g
 				break

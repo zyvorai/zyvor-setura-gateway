@@ -41,11 +41,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 	ours := func(ns string, refs []ParentRef) []ParentRef {
 		var out []ParentRef
 		for _, p := range refs {
-			pns := p.Namespace
-			if pns == "" {
-				pns = ns
-			}
-			if (p.Kind == "" || p.Kind == "Gateway") && (p.Group == "" || p.Group == APIGroup) && mine[pns+"/"+p.Name] {
+			if ourParent(mine, p, ns) {
 				out = append(out, p)
 			}
 		}

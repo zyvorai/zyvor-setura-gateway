@@ -29,6 +29,7 @@ func waitLatest(t *testing.T, s *Server, n int64) {
 func lastRecord(t *testing.T, s *Server) *logLine {
 	t.Helper()
 	// Records are written just after the response, so give them a moment.
+	s.FlushAccessLog() // waits for handlers still queuing their record (the response is written first)
 	waitFor(t, "a connection record", func() bool { return len(history(s)) > 0 })
 	return history(s)[0]
 }
@@ -182,7 +183,9 @@ func TestConnRingBounds(t *testing.T) {
 func TestConnectionsEndpoint(t *testing.T) {
 	s, _ := obsServer(t, nil)
 	get(t, s, "x.test", "/ok")
+	s.FlushAccessLog() // record the first request before sending the second, so the order is deterministic
 	get(t, s, "x.test", "/missing")
+	s.FlushAccessLog()
 	waitLatest(t, s, 2)
 	srv := httptest.NewServer(http.HandlerFunc(s.connectionsHandler))
 	t.Cleanup(srv.Close)
@@ -240,6 +243,7 @@ func TestConnAdminRoute(t *testing.T) {
 	writeFile(t, path, snap(httpGateway(""), map[string]m{"r": route("", rule("/", ref("a", 1)))}, be))
 	s, _, _ := startFile(t, path, nil)
 	get(t, s, "x.test", "/")
+	s.FlushAccessLog() // the record is queued just after the response is written
 	resp, err := http.Get("http://" + s.AdminAddr() + "/connections?limit=5")
 	if err != nil {
 		t.Fatal(err)

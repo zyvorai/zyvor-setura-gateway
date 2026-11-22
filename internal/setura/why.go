@@ -149,7 +149,12 @@ func whyRemote(addr, method, target string, headers []string, grpc, sni, client 
 		q.Set("client", client)
 	}
 	c := &http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get(strings.TrimRight(base, "/") + "/why?" + q.Encode())
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+"/why?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	adminToken(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +288,27 @@ func (u *ui) WhyPretty(tr *builtin.Trace, remote bool, width int) string {
 		if win.Timeout != "" {
 			w("    %s request timeout %s\n", u.arrow(), win.Timeout)
 		}
+		if win.BackendTimeout != "" {
+			w("    %s backend request timeout %s\n", u.arrow(), win.BackendTimeout)
+		}
+		if win.RuleName != "" {
+			w("    %s rule name %s\n", u.arrow(), win.RuleName)
+		}
+		if win.Session != "" {
+			w("    %s %s\n", u.arrow(), win.Session)
+		}
+		if len(win.Preflight) > 0 {
+			section("CORS preflight answered by the gateway")
+			for _, k := range sortedKeys(win.Preflight) {
+				w("    %s %s\n", u.gray(k+":"), win.Preflight[k])
+			}
+		}
+		if len(win.ResponseHeaders) > 0 {
+			section("Headers the gateway adds to the response")
+			for _, k := range sortedKeys(win.ResponseHeaders) {
+				w("    %s %s\n", u.gray(k+":"), win.ResponseHeaders[k])
+			}
+		}
 		u.whyPolicy(&b, win, width)
 		if win.Redirect != nil {
 			section("Redirect")
@@ -304,6 +330,16 @@ func (u *ui) WhyPretty(tr *builtin.Trace, remote bool, width int) string {
 		for _, be := range win.Backends {
 			if be.Request == nil {
 				continue
+			}
+			if len(be.ResponseHeaders) > 0 && len(win.Backends) > 1 {
+				w("    %s %s adds to the response: ", u.arrow(), be.Name)
+				for _, k := range sortedKeys(be.ResponseHeaders) {
+					w("%s: %s; ", k, be.ResponseHeaders[k])
+				}
+				w("\n")
+			}
+			if be.BackendTLS != "" {
+				w("    %s %s: %s\n", u.arrow(), be.Name, be.BackendTLS)
 			}
 			section("Upstream request via " + be.Name)
 			up := be.Request
@@ -383,6 +419,33 @@ func (u *ui) backendRow(b *strings.Builder, be builtin.TraceBackend, width int) 
 
 // whyPolicy prints the rate limit, retry policy and notes of the winner.
 func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) {
+	if a := win.Auth; a != nil && a.Applies {
+		verdict := u.green("admitted")
+		switch a.Decision {
+		case "deny":
+			verdict = u.red(fmt.Sprintf("refused with %d", a.Status))
+		case "unknown":
+			verdict = u.gray("undetermined here")
+		}
+		fmt.Fprintf(b, "    %s auth: %s\n", u.arrow(), a.Policy)
+		by := ""
+		if a.Method != "" && a.Method != "none" {
+			by = " by " + a.Method
+			if a.Subject != "" {
+				by += " as " + a.Subject
+			}
+		}
+		fmt.Fprintf(b, "        this request would be %s%s\n", verdict, by)
+		for _, ln := range wrap(a.Reason, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+		for _, c := range a.Challenge {
+			fmt.Fprintln(b, u.gray("        WWW-Authenticate: "+c))
+		}
+		if len(a.Headers) > 0 {
+			fmt.Fprintln(b, u.gray("        headers set for the backend: "+strings.Join(a.Headers, ", ")))
+		}
+	}
 	if rl := win.RateLimit; rl != nil {
 		switch {
 		case !rl.Enabled:

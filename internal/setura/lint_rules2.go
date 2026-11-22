@@ -15,7 +15,7 @@ const (
 
 // routeKinds maps a snapshot resource prefix to its Kubernetes kind.
 var routeKinds = []struct{ resource, kind string }{
-	{route, "HTTPRoute"}, {grpcRoute, "GRPCRoute"}, {tlsRoute, "TLSRoute"},
+	{route, "HTTPRoute"}, {grpcRoute, "GRPCRoute"}, {tlsRoute, "TLSRoute"}, {tcpRoute, "TCPRoute"}, {udpRoute, "UDPRoute"},
 }
 
 // captureExtras adds GRPCRoutes, TLSRoutes, ReferenceGrants and gateways in
@@ -23,7 +23,7 @@ var routeKinds = []struct{ resource, kind string }{
 // optional; "captured" lists what was read successfully so lint can tell an
 // absent grant from an unread one.
 func captureExtras(c *Cluster, namespace string, resources obj) (captured []any, foreign obj) {
-	for _, k := range []string{grpcRoute, tlsRoute} {
+	for _, k := range append([]string{grpcRoute, tlsRoute}, gw15Kinds...) {
 		list, err := c.getMap(namespace, k)
 		if err != nil {
 			continue

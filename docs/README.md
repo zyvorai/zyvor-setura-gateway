@@ -2,7 +2,9 @@
 
 ## Start here
 
-- [Install](install.md): release binary, `install.sh`, Homebrew, container image.
+- [Install](install.md): release binary, `install.sh`, Homebrew, `.deb`/`.rpm`, Helm chart, container image.
+- [Licensing](licensing.md): plans, `setura licence verify`, the `ZYV1.` key format.
+- [Release process](release-process.md): signed releases, provenance, macOS signing on the Mac mini.
 - [Verification](verification.md): what has been proven, and how, for each release.
 - [Operators guide](operators.md): publish a listener and verify it from the client.
 - [Terminal](terminal.md): colour, ASCII mode and output formats.
@@ -12,6 +14,7 @@
 - [Built-in gateway](builtin-gateway.md): listeners, matching, filters, hot reload, Kubernetes mode, honest limits.
 - [GRPCRoute and TLSRoute](grpc-tls-routes.md): gRPC over h2c and h2, TLS passthrough by SNI.
 - [Resilience](resilience.md): retries, outlier ejection, health checks.
+- [Traffic security](security.md): JWT, API keys, basic auth, address lists, client certificates, OCSP stapling, admin token.
 - [Observability](observability.md): access logs, rotation, tracing, OTLP, rate limiting, `/metrics`.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.

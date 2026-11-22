@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: setura-gateway
+  namespace: {{ .Values.namespace }}
+  labels: {app.kubernetes.io/name: setura-gateway}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: setura-gateway}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: setura-gateway}
+    spec:
+      serviceAccountName: setura-gateway
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: gateway
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+          args:
+            - gateway
+            - run
+            - --kubernetes
+            - --bind=0.0.0.0
+            - --port-offset=8000   # 80 -> 8080, 443 -> 8443 without root
+            - --admin=0.0.0.0:19000
+            - --admin-open-ready   # kubelet probes read /ready; every other admin path needs the token
+            - --leader-elect       # one replica writes status, all serve traffic
+{{- if .Values.exposeGatewayPorts }}
+            - --expose-gateway-ports
+{{- end }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          env:
+            - name: SETURA_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: setura-gateway-admin, key: token}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: https, containerPort: 8443}
+            - {name: admin, containerPort: 19000}
+          readinessProbe:
+            httpGet: {path: /ready, port: admin}
+          livenessProbe:
+            httpGet: {path: /ready, port: admin}
+            initialDelaySeconds: 10
+{{- with .Values.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: setura-gateway
+  namespace: {{ .Values.namespace }}
+{{- if .Values.serviceMonitor.enabled }}
+  labels: {app.kubernetes.io/name: setura-gateway}
+{{- end }}
+spec:
+  # Change the type to LoadBalancer to expose the gateway. The controller writes this
+  # Service's address into Gateway status.addresses. Add a port for every extra listener
+  # port your Gateways declare (spec port N maps to N+8000 below 1024), or install with
+  # exposeGatewayPorts=true and the controller adds the ports itself.
+  type: {{ .Values.service.type }}
+  selector: {app.kubernetes.io/name: setura-gateway}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+    - {name: https, port: 443, targetPort: https}
+{{- if .Values.serviceMonitor.enabled }}
+    - {name: admin, port: 19000, targetPort: admin}
+{{- end }}

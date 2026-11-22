@@ -169,6 +169,17 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	st.listener = l.Key
+	if pe, c := l.preflightTarget(r, host); pe != nil {
+		st.route, st.matched, st.match = pe.Rule.RouteKey, true, pe.MatchIdx
+		idx := pe.Rule.Index
+		st.rule = &idx
+		st.markRoute()
+		for k, v := range c.preflightHeaders(r) {
+			rec.Header()[k] = v
+		}
+		rec.WriteHeader(http.StatusOK)
+		return
+	}
 	e := l.selectEntry(r, host)
 	if e == nil {
 		plain(rec, http.StatusNotFound, "no route matched")
@@ -183,13 +194,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	if s.rateLimited(rec, r, st) {
 		return
 	}
+	if s.authDenied(rec, r, st, l, rule.Rule) {
+		return
+	}
 
 	if rule.Redirect != nil {
-		for _, f := range rule.Rule.Filters {
-			if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
-				applyHeaderMod(rec.Header(), f.ResponseHeaderModifier)
-			}
-		}
+		shapeResponse(rec.Header(), r, rule.Rule.Filters)
 		rec.Header().Set("Location", redirectURL(r, rule.Redirect, e.Match, pg.TLS))
 		code := rule.Redirect.StatusCode
 		if code == 0 {
@@ -200,13 +210,32 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	}
 
 	ref := s.pickRef(rule)
+	var ep *Endpoint
+	if len(rule.sessionPolicies()) > 0 {
+		if pr, pe := s.sessionPin(rule, r, s.res.now()); pr != nil {
+			ref, ep = pr, pe
+		}
+	}
 	if ref == nil || ref.B == nil {
 		st.errMsg = "no valid backend"
 		plain(rec, http.StatusInternalServerError, "no valid backend for this route")
 		return
 	}
-	ep := ref.B.choose(s.res.now(), nil)
+	if ep == nil {
+		ep = ref.B.choose(s.res.now(), nil)
+	}
 	st.backend, st.weight = ref.B.Key, ref.Weight
+
+	if hasExternalAuth(requestFilters(rule, ref)) {
+		ar, v := s.runAuthFilters(r, rule, requestFilters(rule, ref), pg.TLS)
+		if v != nil {
+			st.errMsg = v.why
+			shapeResponse(rec.Header(), r, requestFilters(rule, ref))
+			writeAuthDenied(rec, v)
+			return
+		}
+		r = ar
+	}
 	st.markRoute()
 
 	timeout := rule.Timeout
@@ -282,10 +311,15 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			w.Header().Del(RequestIDHeader)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
-			for _, f := range requestFilters(rule, ref) {
-				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
-					applyHeaderMod(resp.Header, f.ResponseHeaderModifier)
+			shapeResponse(resp.Header, r, requestFilters(rule, ref))
+			if len(rule.sessionPolicies()) > 0 && resp.Request != nil {
+				var served *Endpoint
+				for _, e := range ref.B.Eps {
+					if e.URL.Host == resp.Request.URL.Host {
+						served = e
+					}
 				}
+				s.sessionAnnotate(resp.Header, rule, ref, r, served, pg.TLS, s.res.now())
 			}
 			return nil
 		},
@@ -337,7 +371,7 @@ func (s *Server) fireMirrors(out *http.Request, body []byte, mirrors []*CMirror,
 		req.Header = out.Header.Clone()
 		req.Header.Set("X-Setura-Mirror", "1")
 		req.Host = out.Host
-		client := &http.Client{Transport: s.transport(m.B.Insecure), Timeout: 10 * time.Second}
+		client := &http.Client{Transport: s.backendTransport(m.B), Timeout: 10 * time.Second}
 		if sc.submit(m, req, client) {
 			continue
 		}

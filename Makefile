@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/zyvorai/zyvor-setura-gateway/internal/setura.Version=$(VERSION)
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
-.PHONY: build test vet cover dist social man sbom clean
+.PHONY: build test vet cover dist package social man sbom clean
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/setura ./cmd/setura
 
@@ -28,6 +28,11 @@ dist: man
 	  tar -C dist -czf dist/$$name.tar.gz $$name && rm -rf dist/$$name; \
 	done
 	cd dist && shasum -a 256 *.tar.gz > checksums.txt
+
+# .deb and .rpm plus per-archive SBOMs from dist/ (run `make dist` first).
+package:
+	sh scripts/package.sh $(VERSION)
+	sh scripts/sbom-dist.sh dist
 
 # Regenerate the roff manual page from the command list.
 man:

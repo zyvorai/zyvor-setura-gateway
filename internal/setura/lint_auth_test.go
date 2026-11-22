@@ -1,0 +1,132 @@
+package setura
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	builtin "github.com/zyvorai/zyvor-setura-gateway/internal/gateway"
+)
+
+func authFindings(t *testing.T, rule obj, spec obj) map[string][]string {
+	t.Helper()
+	rt := obj{"parentRefs": []any{obj{"name": "gw"}}, "rules": []any{rule}}
+	for k, v := range spec {
+		rt[k] = v
+	}
+	rep, err := Lint(obj{"schema": snapshotSchema, "namespace": "t", "resources": obj{
+		gateway + "/gw": obj{"gatewayClassName": "x", "listeners": []any{obj{"name": "web", "protocol": "HTTP", "port": 80}}},
+		route + "/r":    rt}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string][]string{}
+	for _, f := range asList(rep["findings"]) {
+		m := asMap(f)
+		id := asStr(m["id"])
+		if id == "SET016" || id == "SET017" || id == "SET018" {
+			out[id] = append(out[id], asStr(m["message"]))
+		}
+	}
+	return out
+}
+
+func authRule(policy obj) obj {
+	return obj{builtin.AuthKey: policy, "backendRefs": []any{obj{"name": "a", "port": 80}}}
+}
+
+func TestLintAuthRules(t *testing.T) {
+	jwks := `{"keys":[]}`
+	_ = jwks
+	// a sound policy is clean
+	good := authRule(obj{"jwt": obj{"audience": []any{"api"}, "jwksUri": "https://idp.test/jwks"}, "apiKey": obj{"keys": []any{obj{"name": "a", "hash": "sha256$AAAA$" + strings.Repeat("0", 64)}}}})
+	if got := authFindings(t, good, nil); len(got) != 0 {
+		t.Fatalf("clean policy: %v", got)
+	}
+	// SET016
+	got := authFindings(t, authRule(obj{"jwt": obj{"jwksUri": "https://idp.test/jwks"}}), nil)
+	if len(got["SET016"]) != 1 || !strings.Contains(got["SET016"][0], "audience") {
+		t.Errorf("no audience: %v", got)
+	}
+	got = authFindings(t, authRule(obj{"jwt": obj{"audience": []any{"api"}, "jwksUri": "http://idp.test/jwks"}}), nil)
+	if len(got["SET016"]) != 1 || !strings.Contains(got["SET016"][0], "plain http") {
+		t.Errorf("http jwks: %v", got)
+	}
+	// SET017
+	got = authFindings(t, authRule(obj{"apiKey": obj{"keys": []any{obj{"name": "dev", "key": "plain"}}}, "basic": obj{"users": []any{obj{"name": "bob", "password": "pw"}}}}), nil)
+	if len(got["SET017"]) != 2 {
+		t.Errorf("clear text: %v", got)
+	}
+	for _, m := range got["SET017"] {
+		if strings.Contains(m, "plain") && !strings.Contains(m, `"dev"`) || strings.Contains(m, "pw\"") {
+			t.Errorf("message must name the entry, not repeat the secret: %s", m)
+		}
+	}
+	// SET018
+	got = authFindings(t, authRule(obj{"jwt": obj{"audience": []any{"api"}}}), nil)
+	if len(got["SET018"]) != 1 {
+		t.Errorf("invalid block: %v", got)
+	}
+	got = authFindings(t, authRule(obj{"bogus": 1}), nil)
+	if len(got["SET018"]) != 1 || !strings.Contains(got["SET018"][0], "unknown field") {
+		t.Errorf("unknown field: %v", got)
+	}
+	// annotations
+	ann := func(kv ...string) obj {
+		m := obj{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return obj{builtin.SeturaAnnotationsKey: m}
+	}
+	plain := obj{"backendRefs": []any{obj{"name": "a", "port": 80}}}
+	got = authFindings(t, plain, ann(builtin.AuthKey, `{"apiKey":{"keys":[{"name":"x","key":"k"}]}}`, builtin.AuthKey+".rule-4", `{}`))
+	if len(got["SET017"]) != 1 || len(got["SET018"]) != 1 || !strings.Contains(got["SET018"][0], "names no rule") {
+		t.Errorf("annotations: %v", got)
+	}
+	got = authFindings(t, plain, ann(builtin.AuthKey, `{"jwt":`))
+	if len(got["SET018"]) != 1 {
+		t.Errorf("undecodable annotation: %v", got)
+	}
+}
+
+func TestWhyShowsAuthDecision(t *testing.T) {
+	cfg := `{"schema":"setura.route-specs/v1","namespace":"t","resources":{
+	  "gateways.gateway.networking.k8s.io/gw":{"gatewayClassName":"setura","listeners":[{"name":"web","protocol":"HTTP","port":8080}]},
+	  "httproutes.gateway.networking.k8s.io/r":{"parentRefs":[{"name":"gw"}],"hostnames":["a.test"],"rules":[{
+	    "setura.zyvor.dev/auth":{"apiKey":{"keys":[{"name":"ci","key":"s3cret"}]},"ipAllow":["10.0.0.0/8"]},
+	    "backendRefs":[{"name":"v1","port":80}]}]}},
+	  "backends":{"t/v1:80":"127.0.0.1:9"}}`
+	path := filepath.Join(t.TempDir(), "gw.json")
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (int, string) {
+		var out, errb bytes.Buffer
+		code := Main(args, &out, &errb)
+		return code, out.String() + errb.String()
+	}
+	_, out := run("why", "GET", "http://a.test:8080/x", "--config", path, "--ascii", "--client-ip", "10.1.2.3", "-H", "X-API-Key: s3cret")
+	for _, want := range []string{"auth: api key in X-API-Key", "would be admitted by apikey as ci", "X-Setura-Auth-Method"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "s3cret") {
+		t.Errorf("the credential is printed:\n%s", out)
+	}
+	_, out = run("why", "GET", "http://a.test:8080/x", "--config", path, "--ascii", "--client-ip", "10.1.2.3", "-H", "X-API-Key: wrong")
+	if !strings.Contains(out, "refused with 401") || !strings.Contains(out, "WWW-Authenticate: ApiKey") {
+		t.Errorf("bad key:\n%s", out)
+	}
+	_, out = run("why", "GET", "http://a.test:8080/x", "--config", path, "--ascii", "--client-ip", "192.0.2.1", "-H", "X-API-Key: s3cret")
+	if !strings.Contains(out, "refused with 403") || !strings.Contains(out, "not on the allow list") {
+		t.Errorf("address outside the list:\n%s", out)
+	}
+	_, out = run("why", "GET", "http://a.test:8080/x", "--config", path, "--ascii", "--format", "json", "-H", "X-API-Key: s3cret")
+	if strings.Contains(out, "s3cret") || !strings.Contains(out, `"decision": "unknown"`) {
+		t.Errorf("json without --client-ip:\n%s", out)
+	}
+}

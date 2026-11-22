@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -144,8 +145,11 @@ type Trace struct {
 	// recorders, filled by the match code when a Trace is attached
 	lrec   []listenerRec
 	chosen *RTListener
-	erec   []entryRec
-	trec   []tlsRec
+	// credHeaders and credQuery name where the winning rule's auth policy reads
+	// credentials, so the echoed request can hide them.
+	credHeaders, credQuery []string
+	erec                   []entryRec
+	trec                   []tlsRec
 }
 
 type listenerRec struct {
@@ -228,6 +232,10 @@ type TraceBackend struct {
 	Reason    string          `json:"reason,omitempty"`
 	Endpoints []TraceEndpoint `json:"endpoints,omitempty"`
 	Request   *TraceUpstream  `json:"request,omitempty"`
+	// ResponseHeaders are the headers the gateway itself adds to the response
+	// (header modifiers, CORS), whatever the backend sends.
+	ResponseHeaders map[string]string `json:"response_headers,omitempty"`
+	BackendTLS      string            `json:"backend_tls,omitempty"`
 }
 
 // TraceRedirect is the answer of a RequestRedirect rule.
@@ -253,7 +261,15 @@ type TraceWinner struct {
 	MirrorTargets []TraceMirror   `json:"mirror_targets,omitempty"`
 	Retry         *TraceRetry     `json:"retry,omitempty"`
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
+	Auth          *TraceAuth      `json:"auth,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
+
+	// Gateway API 1.5 additions (explain_ext.go).
+	RuleName        string            `json:"rule_name,omitempty"`
+	BackendTimeout  string            `json:"backend_timeout,omitempty"`
+	Session         string            `json:"session_persistence,omitempty"`
+	ResponseHeaders map[string]string `json:"response_headers,omitempty"` // redirect rules
+	Preflight       map[string]string `json:"preflight,omitempty"`        // CORS preflight answer
 }
 
 // ---- recorders, called from the match code with a non-nil Trace ----
@@ -322,19 +338,16 @@ func (c *Config) allowedWhy(kind string, l *RTListener, routeNS string) string {
 	case "All":
 		return ""
 	case "Same":
-		if routeNS == l.GW.NS {
+		if routeNS == l.ownerNS() {
 			return ""
 		}
-		return fmt.Sprintf("listener %s allows routes from the %s namespace only (allowedRoutes.namespaces.from is Same) and the route lives in %s", l.Key, l.GW.NS, routeNS)
+		return fmt.Sprintf("listener %s allows routes from the %s namespace only (allowedRoutes.namespaces.from is Same) and the route lives in %s", l.Key, l.ownerNS(), routeNS)
 	case "Selector":
-		if ns.Selector == nil || len(ns.Selector.MatchExpressions) > 0 {
-			return fmt.Sprintf("listener %s uses a namespace selector with matchExpressions, which the built-in gateway does not evaluate (fails closed)", l.Key)
+		if ns.Selector == nil {
+			return fmt.Sprintf("listener %s has allowedRoutes.namespaces.from Selector without a selector (fails closed)", l.Key)
 		}
-		labels := c.Namespaces[routeNS]
-		for k, v := range ns.Selector.MatchLabels {
-			if labels[k] != v {
-				return fmt.Sprintf("listener %s selects namespaces labelled %s=%s and namespace %s does not have that label", l.Key, k, v, routeNS)
-			}
+		if why := selectorWhy(ns.Selector.MatchLabels, ns.Selector.MatchExpressions, c.Namespaces[routeNS]); why != "" {
+			return fmt.Sprintf("listener %s selects namespaces by %s and namespace %s does not match", l.Key, why, routeNS)
 		}
 		return ""
 	}
@@ -355,6 +368,10 @@ func (t *Table) parentFit(kind, routeNS string, p ParentRef, gw *Gateway, hostna
 	switch {
 	case l.GW != gw:
 		return nil, fitSkip, "parentRef names another Gateway"
+	case p.Kind == "ListenerSet" && (l.LS == nil || l.LS.Name != p.Name || l.LS.NS != parentNS(p, routeNS)):
+		return nil, fitSkip, "parentRef names a ListenerSet that does not hold this listener"
+	case p.Kind != "ListenerSet" && p.SectionName != "" && l.LS != nil:
+		return nil, fitSkip, "parentRef sectionName names a listener of the Gateway itself, not of a ListenerSet"
 	case p.SectionName != "" && l.L.Name != p.SectionName:
 		return nil, fitSkip, fmt.Sprintf("parentRef sectionName %q names a different listener", p.SectionName)
 	case p.Port != 0 && l.L.Port != p.Port:
@@ -478,6 +495,7 @@ func valueOp(v cvm) string {
 // considered, with a reason for each decision.
 func Explain(t *Table, q ExplainRequest) *Trace {
 	tr := &Trace{Request: q}
+	defer tr.redactRequest()
 	now := q.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -494,6 +512,8 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 	var l *RTListener
 	switch {
 	case pg == nil:
+	case pg.L4 != "":
+		l = pg.pickListenerT(host, tr)
 	case pg.Passthrough && !passthrough:
 		tr.Verdict, tr.Reason = VerdictNoListener, fmt.Sprintf("port %d is a TLS passthrough port (TLSRoute); give the server name with --sni", q.Port)
 	case !pg.Passthrough && passthrough:
@@ -519,6 +539,10 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 		return tr
 	}
 	tr.fillRoutes(t, l, passthrough)
+	if l.L4Entries != nil || (pg != nil && pg.L4 != "") {
+		tr.explainL4(t, l, now)
+		return tr
+	}
 
 	if passthrough {
 		tr.explainTLS(t, l, host, now)
@@ -526,6 +550,10 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 	}
 	r.URL.RawQuery = q.RawQuery
 	e := l.selectEntryT(r, host, tr)
+	pe, pcors := l.preflightTarget(r, host)
+	if pe != nil {
+		e = pe
+	}
 	tr.fillCandidates(l, e)
 	if e == nil {
 		tr.Verdict = VerdictNoRoute
@@ -533,6 +561,9 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 		return tr
 	}
 	tr.explainWinner(t, pg, e, r, now)
+	if pe != nil {
+		tr.explainPreflight(tr.Winner, pcors, r)
+	}
 	return tr
 }
 
@@ -613,6 +644,9 @@ func (tr *Trace) fillRoutes(t *Table, l *RTListener, passthrough bool) {
 	}
 	tlsAttached := map[string]bool{}
 	for _, e := range l.TLSEntries {
+		tlsAttached[e.RouteKey] = true
+	}
+	for _, e := range l.L4Entries {
 		tlsAttached[e.RouteKey] = true
 	}
 	gateways := map[string]*Gateway{}
@@ -801,6 +835,7 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 			code = http.StatusFound
 		}
 		w.Redirect = &TraceRedirect{Status: code, Location: redirectURL(r, rule.Redirect, e.Match, pg.TLS)}
+		tr.explainExtras(w, e, r)
 		tr.finishBackends(w)
 		return
 	}
@@ -816,6 +851,7 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 			w.Backends[i].Request = upstreamRequest(tr.Request, r, e, rule.Refs[i], w.Backends[i].Endpoints, pg.TLS)
 		}
 	}
+	tr.explainExtras(w, e, r)
 	tr.finishBackends(w)
 }
 
@@ -945,6 +981,10 @@ func describeFilter(scope string, f Filter, m *CMatch, r *http.Request, tlsPort 
 		tf.Effect = fmt.Sprintf("answer %d with Location %s", code, redirectURL(r, f.RequestRedirect, m, tlsPort))
 	case f.Type == "RequestMirror" && f.RequestMirror != nil:
 		tf.Effect = "mirror a copy to " + f.RequestMirror.BackendRef.Name
+	case f.Type == "CORS" && f.CORS != nil:
+		tf.Effect = describeCORS(f.CORS)
+	case f.Type == "ExternalAuth" && f.ExternalAuth != nil:
+		tf.Effect = f.ExternalAuth.describe()
 	}
 	if tf.Effect == "" {
 		tf.Effect = "no effect"
@@ -979,6 +1019,7 @@ func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, ep
 	}
 	stripHopHeaders(out.Header) // httputil.ReverseProxy does this before Rewrite
 	out.URL.RawQuery = in.URL.RawQuery
+	in = in.WithContext(context.WithValue(in.Context(), authCtxKey{}, authPreview{}))
 	shapeUpstream(out, in, remoteIP(in), tlsPort, requestFilters(e.Rule, ref), e.Match, e.GRPC)
 	if !e.GRPC {
 		previewTrace(out, in.Header)
@@ -993,10 +1034,10 @@ func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, ep
 	}
 	u := target + out.URL.EscapedPath()
 	if out.URL.RawQuery != "" {
-		u += "?" + out.URL.RawQuery
+		u += "?" + redactQuery(out.URL.RawQuery)
 	}
 	hdr := map[string]string{}
-	for k, v := range out.Header {
+	for k, v := range redactedHeaders(out.Header) {
 		hdr[k] = strings.Join(v, ",")
 	}
 	return &TraceUpstream{Method: out.Method, URL: u, Host: out.Host, Headers: hdr}

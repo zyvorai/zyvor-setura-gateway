@@ -317,6 +317,9 @@ func Snapshot(c *Cluster, namespace string) (obj, error) {
 	if len(foreign) > 0 {
 		snap["foreign"] = foreign
 	}
+	if cas := captureCACertificates(c, namespace, resources); len(cas) > 0 {
+		snap["caCertificates"] = cas
+	}
 	return snap, nil
 }
 

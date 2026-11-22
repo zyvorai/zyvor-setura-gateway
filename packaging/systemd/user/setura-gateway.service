@@ -1,0 +1,13 @@
+[Unit]
+Description=Setura built-in gateway
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/zyvor-setura-gateway
+ExecStart=%h/zyvor-setura-gateway/bin/setura gateway run --config %h/zyvor-setura-gateway/config/gateway.json --bind 127.0.0.1 --port-map 8080=18090 --admin 127.0.0.1:18092 --ui 127.0.0.1:18091
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
