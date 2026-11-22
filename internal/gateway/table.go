@@ -31,9 +31,10 @@ type Table struct {
 
 // PortGroup holds the listeners sharing one port.
 type PortGroup struct {
-	Port      int
-	TLS       bool
-	Listeners []*RTListener
+	Port        int
+	TLS         bool
+	Passthrough bool // raw TCP listener for TLS passthrough (TLSRoute)
+	Listeners   []*RTListener
 }
 
 // RTListener is a resolved listener.
@@ -44,6 +45,7 @@ type RTListener struct {
 	Host       string
 	Certs      []tls.Certificate
 	Entries    []*Entry
+	TLSEntries []*TLSEntry // TLSRoute entries (passthrough listeners)
 	Attached   int
 	Serving    bool
 	Accepted   fact
@@ -57,6 +59,7 @@ type Entry struct {
 	Rule  *CRule
 	Match *CMatch
 	Hosts []string
+	GRPC  bool // entry comes from a GRPCRoute
 }
 
 // CRule is a compiled rule.
@@ -218,20 +221,8 @@ func intersect(routeHost, listenerHost string) (string, bool) {
 	return "", false
 }
 
-func hasKind(ar *AllowedRoutes) bool {
-	if ar == nil || len(ar.Kinds) == 0 {
-		return true
-	}
-	for _, k := range ar.Kinds {
-		if k.Kind == "HTTPRoute" && (k.Group == "" || k.Group == APIGroup) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Config) allowedNamespace(l *RTListener, routeNS string) bool {
-	if !hasKind(l.L.AllowedRoutes) {
+func (c *Config) allowedNamespace(kind string, l *RTListener, routeNS string) bool {
+	if !l.allowsKind(kind) {
 		return false
 	}
 	var ns *RouteNamespaces
@@ -296,8 +287,11 @@ func BuildTable(cfg *Config) *Table {
 			case names[spec.Name]:
 				l.Accepted = fact{false, "Invalid", "listener name is declared more than once"}
 				continue
-			case proto != "HTTP" && proto != "HTTPS":
-				l.Accepted = fact{false, "UnsupportedProtocol", "built-in gateway serves HTTP and HTTPS listeners only"}
+			case proto != "HTTP" && proto != "HTTPS" && proto != "TLS":
+				l.Accepted = fact{false, "UnsupportedProtocol", "built-in gateway serves HTTP, HTTPS and TLS (passthrough) listeners only"}
+				continue
+			case proto == "TLS" && (spec.TLS == nil || spec.TLS.Mode != "Passthrough"):
+				l.Accepted = fact{false, "UnsupportedProtocol", "TLS listeners need tls.mode Passthrough; Terminate is not supported for TLS listeners"}
 				continue
 			case spec.Port < 1 || spec.Port > 65535:
 				l.Accepted = fact{false, "Invalid", "port out of range"}
@@ -318,7 +312,7 @@ func BuildTable(cfg *Config) *Table {
 			if proto == "HTTPS" {
 				cfg.resolveCerts(l)
 				if l.L.TLS != nil && l.L.TLS.Mode == "Passthrough" {
-					l.Accepted = fact{false, "UnsupportedProtocol", "TLS mode Passthrough is not supported"}
+					l.Accepted = fact{false, "UnsupportedProtocol", "HTTPS listeners cannot use TLS mode Passthrough; use protocol TLS with a TLSRoute"}
 					continue
 				}
 			}
@@ -328,7 +322,7 @@ func BuildTable(cfg *Config) *Table {
 			}
 			pg := t.Ports[spec.Port]
 			if pg == nil {
-				pg = &PortGroup{Port: spec.Port, TLS: proto == "HTTPS"}
+				pg = &PortGroup{Port: spec.Port, TLS: proto == "HTTPS", Passthrough: proto == "TLS"}
 				t.Ports[spec.Port] = pg
 			}
 			pg.Listeners = append(pg.Listeners, l)
@@ -345,6 +339,7 @@ func BuildTable(cfg *Config) *Table {
 	for _, r := range rs {
 		t.attach(r)
 	}
+	t.attachExtra()
 	return t
 }
 
@@ -384,14 +379,19 @@ func (c *Config) resolveCerts(l *RTListener) {
 }
 
 func (t *Table) backend(r *Route, ref BackendRef) (*Backend, fact) {
+	return t.backendFor("HTTPRoute", r.NS, ref)
+}
+
+// backendFor resolves a backendRef for a route of the given kind and namespace.
+func (t *Table) backendFor(kind, routeNS string, ref BackendRef) (*Backend, fact) {
 	if (ref.Kind != "" && ref.Kind != "Service") || (ref.Group != "" && ref.Group != "core") {
 		return nil, fact{false, "InvalidKind", fmt.Sprintf("backendRef %q must be a Service", ref.Name)}
 	}
 	ns := ref.Namespace
 	if ns == "" {
-		ns = r.NS
+		ns = routeNS
 	}
-	if !t.Cfg.granted("HTTPRoute", r.NS, "", "Service", ns, ref.Name) {
+	if !t.Cfg.granted(kind, routeNS, "", "Service", ns, ref.Name) {
 		return nil, fact{false, "RefNotPermitted", fmt.Sprintf("Service %s/%s needs a ReferenceGrant", ns, ref.Name)}
 	}
 	key := backendKey(ns, ref.Name, ref.Port)
@@ -576,13 +576,26 @@ func (t *Table) attach(r *Route) {
 			break
 		}
 	}
+	res.Parents = t.attachParents("HTTPRoute", r.NS, r.Parents, r.Hostnames, invalid, func(l *RTListener, hosts []string) {
+		for i := range r.Rules {
+			for _, cm := range cms[i] {
+				l.Entries = append(l.Entries, &Entry{Route: r, Rule: crs[i], Match: cm, Hosts: hosts})
+			}
+		}
+	})
+}
+
+// attachParents resolves parentRefs for a route of any kind. add is called for
+// every listener the route attaches to, with the effective hostnames.
+func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnames []string, invalid error, add func(l *RTListener, hosts []string)) []*parentResult {
+	var out []*parentResult
 	gateways := map[string]*Gateway{}
 	for _, g := range t.Cfg.Gateways {
 		gateways[g.Key()] = g
 	}
-	for _, p := range r.Parents {
+	for _, p := range parents {
 		pr := &parentResult{Ref: p}
-		res.Parents = append(res.Parents, pr)
+		out = append(out, pr)
 		if invalid != nil {
 			pr.Accepted = fact{false, "UnsupportedValue", invalid.Error()}
 			continue
@@ -593,7 +606,7 @@ func (t *Table) attach(r *Route) {
 		}
 		ns := p.Namespace
 		if ns == "" {
-			ns = r.NS
+			ns = routeNS
 		}
 		gw := gateways[ns+"/"+p.Name]
 		if gw == nil {
@@ -611,22 +624,18 @@ func (t *Table) attach(r *Route) {
 				notAllowed++
 				continue
 			}
-			if !t.Cfg.allowedNamespace(l, r.NS) {
+			if !t.Cfg.allowedNamespace(kind, l, routeNS) {
 				notAllowed++
 				continue
 			}
-			hosts := effectiveHosts(r.Hostnames, l.Host)
+			hosts := effectiveHosts(hostnames, l.Host)
 			if len(hosts) == 0 {
 				noHost++
 				continue
 			}
 			attached = true
 			l.Attached++
-			for i := range r.Rules {
-				for _, cm := range cms[i] {
-					l.Entries = append(l.Entries, &Entry{Route: r, Rule: crs[i], Match: cm, Hosts: hosts})
-				}
-			}
+			add(l, hosts)
 		}
 		switch {
 		case attached:
@@ -639,6 +648,7 @@ func (t *Table) attach(r *Route) {
 			pr.Accepted = fact{false, "NotAllowedByListeners", "listener does not allow this route"}
 		}
 	}
+	return out
 }
 
 func effectiveHosts(routeHosts []string, listenerHost string) []string {

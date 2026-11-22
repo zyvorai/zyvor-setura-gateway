@@ -128,7 +128,7 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 			cf := fact{conflict.OK, conflict.Reason, conflict.Message}
 			ls := ListenerStatus{Name: l.L.Name, AttachedRoutes: l.Attached, SupportedKinds: []KindRef{}}
 			if l.Accepted.OK {
-				ls.SupportedKinds = []KindRef{{Group: APIGroup, Kind: "HTTPRoute"}}
+				ls.SupportedKinds = l.supportedKinds()
 			}
 			ls.Conditions = []Condition{
 				mkCond(oldL, "Accepted", l.Accepted, gw.Generation, now),
@@ -156,7 +156,7 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 		rs := &RouteStatus{ObservedGeneration: rr.Route.Generation}
 		var old *RouteStatus
 		if prev != nil {
-			old = prev.Routes[rr.Route.Key()]
+			old = prev.Routes[rr.Route.StatusKey()]
 		}
 		for i, p := range rr.Parents {
 			var oldC []Condition
@@ -175,7 +175,7 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 				mkCond(oldC, "ResolvedRefs", rr.Refs, rr.Route.Generation, now),
 			}})
 		}
-		doc.Routes[rr.Route.Key()] = rs
+		doc.Routes[rr.Route.StatusKey()] = rs
 	}
 	return doc
 }

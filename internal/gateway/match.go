@@ -135,6 +135,9 @@ func (l *RTListener) selectEntry(r *http.Request, host string) *Entry {
 	var best *Entry
 	var bestScore score
 	for _, e := range l.Entries {
+		if e.GRPC != isGRPC(r) {
+			continue
+		}
 		rank, ok := -1, false
 		for _, h := range e.Hosts {
 			if hostMatches(h, host) && hostRank(h) > rank {

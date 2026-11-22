@@ -130,6 +130,8 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		"/apis/gateway.networking.k8s.io/v1/gatewayclasses": "gatewayclasses",
 		"/apis/gateway.networking.k8s.io/v1/gateways":       "gateways",
 		"/apis/gateway.networking.k8s.io/v1/httproutes":     "httproutes",
+		"/apis/gateway.networking.k8s.io/v1/grpcroutes":     "grpcroutes",
+		"/apis/gateway.networking.k8s.io/v1/tlsroutes":      "tlsroutes",
 		"/api/v1/services":                                        "services",
 		"/apis/discovery.k8s.io/v1/endpointslices":                "endpointslices",
 		"/apis/gateway.networking.k8s.io/v1beta1/referencegrants": "referencegrants",

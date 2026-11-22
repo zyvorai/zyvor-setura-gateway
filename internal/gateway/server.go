@@ -58,6 +58,7 @@ type boundPort struct {
 	ln  net.Listener
 	srv *http.Server
 	tls bool
+	raw *rawListener // TLS passthrough listener; srv is nil then
 }
 
 // Server is the built-in gateway data plane.
@@ -78,6 +79,7 @@ type Server struct {
 
 	res            *resilience
 	tr, trInsecure *http.Transport
+	grpcTr         grpcTransports
 	ready          atomic.Bool
 
 	adminLn  net.Listener
@@ -155,8 +157,13 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 	if err != nil {
 		return err
 	}
+	if pg.Passthrough {
+		s.ports[spec] = &boundPort{ln: ln, raw: s.startPassthrough(ln, spec)}
+		return nil
+	}
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.serveHTTP(w, r, spec) })}
+	enableH2C(srv, pg.TLS)
 	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
 	s.ports[spec] = bp
 	if pg.TLS {
@@ -204,9 +211,7 @@ func (s *Server) closePort(bp *boundPort) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if bp.srv.Shutdown(ctx) != nil {
-			bp.srv.Close()
-		}
+		bp.shutdown(ctx)
 	}()
 }
 
@@ -236,7 +241,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	sort.Ints(specPorts)
 	for _, p := range specPorts {
 		pg := t.Ports[p]
-		if bp := s.ports[p]; bp != nil && bp.tls != pg.TLS {
+		if bp := s.ports[p]; bp != nil && (bp.tls != pg.TLS || (bp.raw != nil) != pg.Passthrough) {
 			s.closePort(bp)
 			delete(s.ports, p)
 		}
@@ -311,8 +316,11 @@ func (s *Server) Listening() []string {
 			continue
 		}
 		scheme := "http"
-		if l.L.Protocol == "HTTPS" {
+		switch l.L.Protocol {
+		case "HTTPS":
 			scheme = "https"
+		case "TLS":
+			scheme = "tls-passthrough"
 		}
 		host := l.Host
 		if host == "" {
@@ -421,9 +429,7 @@ func (s *Server) Close() {
 	s.mu.Lock()
 	for p, bp := range s.ports {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if bp.srv.Shutdown(ctx) != nil {
-			bp.srv.Close()
-		}
+		bp.shutdown(ctx)
 		cancel()
 		delete(s.ports, p)
 	}
@@ -439,6 +445,7 @@ func (s *Server) Close() {
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()
+	s.grpcTr.closeIdle()
 }
 
 func (s *Server) startAdmin() error {
@@ -504,5 +511,7 @@ func (c *Config) Dump() map[string]any {
 		routes = append(routes, map[string]any{"namespace": r.NS, "name": r.Name, "generation": r.Generation,
 			"parentRefs": r.Parents, "hostnames": r.Hostnames, "rules": r.Rules})
 	}
-	return map[string]any{"namespace": c.Namespace, "gateways": gws, "httproutes": routes, "backends": c.Backends, "secrets": sortedKeys(c.Secrets)}
+	out := map[string]any{"namespace": c.Namespace, "gateways": gws, "httproutes": routes, "backends": c.Backends, "secrets": sortedKeys(c.Secrets)}
+	c.dumpExtra(out)
+	return out
 }

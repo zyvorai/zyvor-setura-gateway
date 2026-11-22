@@ -1,0 +1,52 @@
+{
+  "schema": "setura.route-specs/v1",
+  "namespace": "setura-demo",
+  "resources": {
+    "gateways.gateway.networking.k8s.io/edge": {
+      "gatewayClassName": "setura",
+      "listeners": [
+        {"name": "grpc", "protocol": "HTTP", "port": 8080, "allowedRoutes": {"kinds": [{"kind": "GRPCRoute"}]}},
+        {"name": "passthrough", "protocol": "TLS", "port": 8443, "hostname": "*.secure.mactra.test", "tls": {"mode": "Passthrough"}}
+      ]
+    },
+    "grpcroutes.gateway.networking.k8s.io/orders": {
+      "parentRefs": [{"name": "edge", "sectionName": "grpc"}],
+      "hostnames": ["grpc.mactra.test"],
+      "rules": [
+        {
+          "matches": [{"method": {"type": "Exact", "service": "mactra.orders.v1.Orders", "method": "Get"}}],
+          "backendRefs": [{"name": "orders-v2", "port": 50051}]
+        },
+        {
+          "matches": [{"method": {"service": "mactra.orders.v1.Orders"}}],
+          "backendRefs": [
+            {"name": "orders-v1", "port": 50051, "weight": 90},
+            {"name": "orders-v2", "port": 50051, "weight": 10}
+          ]
+        },
+        {
+          "matches": [{"method": {"type": "RegularExpression", "service": "mactra\\.admin\\..*"}, "headers": [{"name": "x-tenant", "value": "ops"}]}],
+          "filters": [{"type": "RequestHeaderModifier", "requestHeaderModifier": {"set": [{"name": "x-via", "value": "setura"}]}}],
+          "backendRefs": [{"name": "admin", "port": 50051}]
+        }
+      ]
+    },
+    "tlsroutes.gateway.networking.k8s.io/vault": {
+      "parentRefs": [{"name": "edge", "sectionName": "passthrough"}],
+      "hostnames": ["vault.secure.mactra.test"],
+      "rules": [{"backendRefs": [{"name": "vault", "port": 8443}]}]
+    },
+    "tlsroutes.gateway.networking.k8s.io/other": {
+      "parentRefs": [{"name": "edge", "sectionName": "passthrough"}],
+      "rules": [{"backendRefs": [{"name": "legacy-a", "port": 8443, "weight": 3}, {"name": "legacy-b", "port": 8443, "weight": 1}]}]
+    }
+  },
+  "backends": {
+    "orders-v1:50051": "127.0.0.1:50051",
+    "orders-v2:50051": "127.0.0.1:50052",
+    "admin:50051": "127.0.0.1:50053",
+    "vault:8443": "127.0.0.1:9443",
+    "legacy-a:8443": "127.0.0.1:9444",
+    "legacy-b:8443": "127.0.0.1:9445"
+  }
+}
