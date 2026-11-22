@@ -21,7 +21,7 @@ set -euo pipefail
 
 # Pinned Gateway API release. Must equal the sigs.k8s.io/gateway-api version in
 # conformance/go.mod (checked below).
-GATEWAY_API_VERSION=${GATEWAY_API_VERSION:-v1.4.1}
+GATEWAY_API_VERSION=${GATEWAY_API_VERSION:-v1.7.0}
 NAMESPACE=${NAMESPACE:-setura-system}
 GATEWAY_CLASS=${GATEWAY_CLASS:-setura}
 IMAGE=setura-conformance:local

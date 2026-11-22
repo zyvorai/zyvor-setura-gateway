@@ -1,7 +1,7 @@
-# Gateway API v1.4.1 conformance run
+# Gateway API v1.7.0 conformance run
 
 This directory holds the output of the upstream Gateway API conformance suite
-(`sigs.k8s.io/gateway-api` v1.4.1, standard channel) run against `setura gateway run
+(`sigs.k8s.io/gateway-api` v1.7.0, standard channel) run against `setura gateway run
 --kubernetes`. No results have been committed yet. `report.template.yaml` shows only the
 shape of a report; it is not a result.
 

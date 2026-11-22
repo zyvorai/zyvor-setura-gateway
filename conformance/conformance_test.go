@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/gateway-api/conformance"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
@@ -71,11 +70,11 @@ func TestConformance(t *testing.T) {
 	opts.GatewayClassName = envOr("SETURA_GATEWAY_CLASS", "setura")
 	opts.CleanupBaseResources = envOr("SETURA_CLEANUP", "true") == "true"
 
-	// Profiles: only GATEWAY-HTTP. GATEWAY-GRPC (no GRPCRoute) and
-	// GATEWAY-TLS (no TLSRoute, no passthrough) are not supported yet.
-	opts.ConformanceProfiles = sets.New(suite.GatewayHTTPConformanceProfileName)
+	// Profiles: GATEWAY-HTTP only for now. GRPCRoute and TLSRoute passthrough exist
+	// in the gateway but are not yet part of this harness (see ROADMAP.md).
+	opts.ConformanceProfiles = []suite.ConformanceProfileName{suite.GatewayHTTPConformanceProfileName}
 	opts.EnableAllSupportedFeatures = false
-	opts.SupportedFeatures = sets.New(supported...)
+	opts.SupportedFeatures = supported
 	opts.SkipTests = append(append([]string{}, skipTests...), splitList(os.Getenv("SETURA_CONFORMANCE_SKIP"))...)
 
 	opts.Implementation.Organization = "Zyvor AI Labs"

@@ -124,11 +124,14 @@ returns 500; no match returns 404.
 | Filter: URLRewrite (hostname, ReplaceFullPath, ReplacePrefixMatch) | Supported |
 | Filter: RequestMirror (backendRef, percent) | Supported; fire-and-forget, body up to 1 MiB |
 | `timeouts.request` | Supported |
-| `timeouts.backendRequest`, retries, session persistence | Not implemented |
+| `retry` (codes, attempts, backoff) | Supported; budgeted, idempotent-safe, see [resilience](resilience.md) |
+| `timeouts.backendRequest`, session persistence | Not implemented |
 | ReferenceGrant for backendRefs and certificateRefs | Supported |
 | Status: Accepted, Programmed, ResolvedRefs, Conflicted, observedGeneration, attachedRoutes | Supported |
 | Filter: ExtensionRef, CORS, ExternalAuth; BackendTLSPolicy | Not implemented (route marked Accepted=False, UnsupportedValue) |
-| GRPCRoute, TLSRoute, TCPRoute, UDPRoute, TLS passthrough | Not implemented |
+| GRPCRoute (service/method match, h2c and h2, streaming, trailers) | Supported, see [grpc-tls-routes](grpc-tls-routes.md) |
+| TLSRoute with TLS passthrough (SNI routing, wildcards, weights) | Supported |
+| TCPRoute, UDPRoute, TLS termination on TLS listeners | Not implemented |
 | Gateway `addresses`, per-Gateway load balancer provisioning | Not implemented |
 
 ## Kubernetes controller mode
@@ -151,10 +154,11 @@ image is `ghcr.io/zyvorai/zyvor-setura-gateway:VERSION`; override with `--image`
 
 * This is a compact data plane, not a replacement for Envoy at scale. It has had unit,
   race-detector and in-process integration tests, not load or soak testing, and it has
-  not been run through the upstream Gateway API conformance suite. `conformance_test.go`
-  is a self-check named after the suite's tests.
-* Clients: HTTP/1.1, HTTP/2 over TLS, WebSocket and other Upgrade requests. No cleartext
-  HTTP/2 (h2c), no HTTP/3, no TLS passthrough, no client-certificate authentication.
+  not been run through the upstream Gateway API conformance suite yet (a harness exists
+  under `conformance/`; see `docs/conformance`). `conformance_test.go` is a self-check
+  named after the suite's tests.
+* Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, and TLS
+  passthrough by SNI. No HTTP/3, no client-certificate authentication.
   Upstreams are spoken to with HTTP/1.1 (HTTP/2 only for https upstreams).
 * Kubernetes mode polls (default 5 s); it does not use watches, so changes take up to one
   interval. There is no leader election: replicas each serve traffic and write the same
@@ -165,8 +169,9 @@ image is `ghcr.io/zyvorai/zyvor-setura-gateway:VERSION`; override with `--image`
 * One status `generation` in file mode is the reload counter (snapshot files have no
   metadata generation).
 * Selector namespaces support `matchLabels` only; `matchExpressions` fail closed.
-* No retries, circuit breaking, rate limiting, authentication or Prometheus metrics. The
-  admin `/stats` endpoint is simple JSON counters per route and backend, resets on
+* No circuit breaking, authentication or shared (cross-replica) rate limits. Retries move
+  only between endpoints of one Service, and ejection state resets on reload. Prometheus
+  metrics are served on the admin `/metrics` endpoint. The admin `/stats` endpoint is simple JSON counters per route and backend, resets on
   restart, and the admin endpoint is unauthenticated (loopback by default; `/config`
   never includes secret material).
 * The redirect filter keeps the port from the request `Host` header when no scheme or

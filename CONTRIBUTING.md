@@ -5,7 +5,7 @@ Source contributions are by arrangement with Zyvor AI Labs. Write to [sales@zyvo
 ## Development
 
 ```sh
-go version        # 1.22 or newer
+go version        # 1.27 or newer
 make vet          # go vet and gofmt check
 make test         # go test -race
 make build        # bin/setura

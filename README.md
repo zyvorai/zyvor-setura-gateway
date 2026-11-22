@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/zyvorai/zyvor-setura-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyvor-setura-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zyvorai/zyvor-setura-gateway?display_name=tag&sort=semver&color=0071e3&labelColor=1d1d1f)](https://github.com/zyvorai/zyvor-setura-gateway/releases)
-[![Go](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go&logoColor=white&labelColor=1d1d1f)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.27+-00ADD8?logo=go&logoColor=white&labelColor=1d1d1f)](go.mod)
 [![License: Zyvor Production](https://img.shields.io/badge/license-Zyvor%20Production-0071e3?labelColor=1d1d1f)](LICENSE)
 
 [![Buy a license](https://img.shields.io/badge/Buy_a_license-0071e3?style=for-the-badge)](https://zyvor.dev/buy?utm_source=github&utm_medium=setura&utm_campaign=readme_hero)
@@ -222,13 +222,15 @@ setura gateway install --namespace setura-system | kubectl apply -f -   # you de
 | --- | --- |
 | Listeners | HTTP and HTTPS, TLS termination with SNI certificate selection, HTTP/2 via ALPN, WebSocket upgrade, wildcard hostnames, `allowedRoutes` |
 | Matching | Path (exact, prefix, regex), headers, query parameters and method, with the spec's precedence rules |
-| Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, request timeouts |
+| Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, outlier ejection, retries with a budget, request timeouts |
+| Protocols | HTTPRoute, GRPCRoute (h2c and h2, streaming, trailers) and TLSRoute (TLS passthrough by SNI) |
+| Protection | Local token-bucket rate limiting (by IP, route or header) |
 | Filters | Request and response header modification, redirects, URL rewrite, request mirroring |
 | Errors | 404 for no match, 500 for no valid backend, 502 and 504 for upstream failures; `X-Setura-Backend` always names the backend that answered |
-| Operations | Hot reload with zero dropped connections, lint-gated config (a config with lint errors is refused and the old one keeps serving), JSON access log, admin `/ready`, `/config`, `/stats` and `/status` |
+| Operations | Hot reload with zero dropped connections, lint-gated config (a config with lint errors is refused and the old one keeps serving), JSON or text access log, W3C trace propagation with optional OTLP export, admin `/ready`, `/config`, `/stats`, `/status` and Prometheus `/metrics` |
 | Kubernetes | Reads Gateways, HTTPRoutes, Services, EndpointSlices, Secrets and ReferenceGrants with the service account, writes Accepted, ResolvedRefs and Programmed status back |
 
-**Honest limits.** Not implemented: GRPCRoute, TLSRoute, TCPRoute, UDPRoute and TLS passthrough; retries, session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, h2c, rate limiting and authentication. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The Kubernetes mode polls instead of watching, has no leader election, and has only been tested against a fake API server so far. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
+**Honest limits.** Not implemented: TCPRoute, UDPRoute and TLS termination on TLS listeners; session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, circuit breaking, shared rate limits across replicas and authentication. It has not passed the upstream Gateway API conformance suite and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The Kubernetes mode polls instead of watching, has no leader election, and has only been tested against a fake API server so far. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
 
 ## Watch it, graph it
 
