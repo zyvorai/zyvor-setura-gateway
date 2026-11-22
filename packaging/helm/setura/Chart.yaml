@@ -1,0 +1,14 @@
+apiVersion: v2
+name: setura
+description: Zyvor Setura built-in Gateway API controller and data plane (one static binary, no Envoy)
+type: application
+version: 0.6.0
+appVersion: "0.6.0"
+home: https://github.com/zyvorai/zyvor-setura-gateway
+sources:
+  - https://github.com/zyvorai/zyvor-setura-gateway
+maintainers:
+  - name: Zyvor AI Labs
+    email: sales@zyvor.dev
+annotations:
+  licenseRef: LicenseRef-Zyvor-Production-2.0

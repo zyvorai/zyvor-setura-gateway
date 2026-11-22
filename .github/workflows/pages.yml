@@ -4,25 +4,54 @@ on:
     branches: [main]
     paths: ['site/**', '.github/workflows/pages.yml']
   workflow_dispatch:
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-  actions: read   # deploy-pages v5 lists the run's artifacts
+
+permissions: {}
+
+# One deployment at a time; never cancel one that is half way through.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  build:
+    name: Stage the site
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+      - name: Stage site/ with fixed timestamps
+        run: |
+          # The same commit always produces the same artifact: copy the tree and
+          # stamp every entry with the commit time.
+          test -f site/index.html
+          rm -rf _site
+          mkdir _site
+          cp -R site/. _site/
+          epoch=$(git log -1 --format=%ct)
+          find _site -exec touch -h -d "@$epoch" {} +
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: _site
+          retention-days: 7
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read   # deploy-pages v5 lists the run's artifacts
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: site
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
