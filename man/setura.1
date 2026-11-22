@@ -1,0 +1,70 @@
+.TH SETURA 1 "" "Zyvor Setura" "User Commands"
+.SH NAME
+setura \- publish and diagnose a local Envoy gateway
+.SH SYNOPSIS
+.B setura
+[\fB\-\-context\fR \fINAME\fR] \fICOMMAND\fR [\fIflags\fR]
+.SH DESCRIPTION
+.B setura
+forwards Kubernetes Gateway API listeners to IPv4 loopback and verifies
+routes from the client side.
+.SH COMMANDS
+.TP
+.B publish GATEWAY \-\-listener NAME
+forward an Envoy listener to IPv4 loopback
+.TP
+.B explain URL
+probe a URL from this host
+.TP
+.B check FILE [\-\-junit FILE]
+run a JSON file of route assertions
+.TP
+.B inspect ROUTE
+show route conditions and backend inventory
+.TP
+.B listeners GATEWAY
+show listener attachment and conditions
+.TP
+.B gate ROUTE URL
+require current parent status and a probe streak
+.TP
+.B compare URL \-\-target dns|IP
+probe the same URL via DNS and/or IPs
+.TP
+.B snapshot / diff BEFORE AFTER
+capture and compare Gateway and HTTPRoute specs
+.TP
+.B map / impact TARGET
+render or query the declared route topology
+.TP
+.B lint
+statically analyze Gateway and HTTPRoute specs (offline)
+.TP
+.B completion bash|zsh|fish
+print a shell completion script
+.TP
+.B man
+print the manual page (roff)
+.TP
+.B ai REPORT [\-\-model NAME]
+explain saved evidence, optionally with local Ollama
+.TP
+.B doctor / capabilities / exposure
+check permissions, controllers and Service exposure
+.TP
+.B version
+print the version
+.PP
+Run \fBsetura COMMAND \-h\fR for the flags of a command.
+.SH EXIT STATUS
+.TP
+.B 0
+success
+.TP
+.B 1
+the check, gate or lint failed
+.TP
+.B 2
+usage or input error
+.SH SEE ALSO
+https://github.com/zyvorai/zyvor\-setura\-gateway

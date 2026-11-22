@@ -7,7 +7,7 @@ import (
 )
 
 var commandNames = []string{"publish", "explain", "check", "inspect", "listeners", "gate", "compare",
-	"snapshot", "diff", "map", "impact", "lint", "ai", "doctor", "capabilities", "exposure", "completion", "version"}
+	"snapshot", "diff", "map", "impact", "lint", "ai", "doctor", "capabilities", "exposure", "completion", "man", "version"}
 
 // Completion writes a shell completion script for command names.
 func Completion(shell string, w io.Writer) error {

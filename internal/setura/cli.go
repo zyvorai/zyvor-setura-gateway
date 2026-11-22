@@ -29,6 +29,7 @@ Commands:
   map / impact TARGET               render or query the declared route topology
   lint                              statically analyze Gateway and HTTPRoute specs (offline)
   completion bash|zsh|fish          print a shell completion script
+  man                               print the manual page (roff)
   ai REPORT [--model NAME]          explain saved evidence, optionally with local Ollama
   doctor / capabilities / exposure  check permissions, controllers and Service exposure
   version                           print the version
@@ -481,6 +482,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			failed = true
 		}
 		return boolExit(failed), nil
+
+	case "man":
+		return 0, Man(stdout)
 
 	case "completion":
 		pos, err := parse(fs, rest)
