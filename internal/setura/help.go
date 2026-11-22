@@ -41,7 +41,8 @@ var helpGroups = []helpGroup{
 		{"ai", "REPORT [--model NAME]", "explain saved evidence, optionally with local Ollama"},
 	}},
 	{"Publish", []helpEntry{
-		{"publish", "GATEWAY --listener NAME", "forward an Envoy listener to IPv4 loopback"},
+		{"gateway", "run|up|install", "built-in Gateway API data plane, no Envoy needed"},
+		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
 		{"doctor", "", "check permissions needed by setura"},
@@ -73,7 +74,7 @@ var cmdExamples = map[string][]string{
 }
 
 func writeHelp(w io.Writer, u *ui) {
-	fmt.Fprintf(w, "\n  %s  publish and diagnose a local Envoy gateway\n\n", u.bold("setura"))
+	fmt.Fprintf(w, "\n  %s  serve, publish and verify Gateway API routes\n\n", u.bold("setura"))
 	fmt.Fprintf(w, "  %s  setura [--context NAME] [--color auto|always|never] [--ascii] COMMAND [flags]\n", u.gray("Usage"))
 	for _, g := range helpGroups {
 		fmt.Fprintf(w, "\n  %s\n", u.blue(g.title))

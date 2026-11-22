@@ -1,6 +1,6 @@
 .TH SETURA 1 "" "Zyvor Setura" "User Commands"
 .SH NAME
-setura \- publish and diagnose a local Envoy gateway
+setura \- serve, publish and verify Gateway API routes
 .SH SYNOPSIS
 .B setura
 [\fB\-\-context\fR \fINAME\fR] \fICOMMAND\fR [\fIflags\fR]
@@ -58,8 +58,11 @@ compare two snapshots
 .B ai REPORT [\-\-model NAME]
 explain saved evidence, optionally with local Ollama
 .TP
+.B gateway run|up|install
+built\-in Gateway API data plane, no Envoy needed
+.TP
 .B publish GATEWAY \-\-listener NAME
-forward an Envoy listener to IPv4 loopback
+forward an Envoy Gateway listener to IPv4 loopback
 .TP
 .B doctor
 check permissions needed by setura

@@ -140,6 +140,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		fmt.Fprintln(stdout, "setura", Version)
 		return 0, nil
 
+	case "gateway":
+		return runGateway(rest, stdout, stderr), nil
+
 	case "publish":
 		listener := fs.String("listener", "", "listener name (required)")
 		proxyNS := fs.String("proxy-namespace", "envoy-gateway-system", "namespace of the Envoy proxy Services")

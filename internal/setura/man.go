@@ -32,7 +32,7 @@ func Man(w io.Writer) error {
 	var b strings.Builder
 	p := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
 	p(".TH SETURA 1 \"\" \"Zyvor Setura\" \"User Commands\"\n")
-	p(".SH NAME\nsetura \\- publish and diagnose a local Envoy gateway\n")
+	p(".SH NAME\nsetura \\- serve, publish and verify Gateway API routes\n")
 	p(".SH SYNOPSIS\n.B setura\n[\\fB\\-\\-context\\fR \\fINAME\\fR] \\fICOMMAND\\fR [\\fIflags\\fR]\n")
 	p(".SH DESCRIPTION\n.B setura\nforwards Kubernetes Gateway API listeners to IPv4 loopback and verifies\nroutes from the client side.\n")
 	p(".SH COMMANDS\n")
