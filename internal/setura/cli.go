@@ -31,6 +31,7 @@ Commands:
   completion bash|zsh|fish          print a shell completion script
   ai REPORT [--model NAME]          explain saved evidence, optionally with local Ollama
   doctor / capabilities / exposure  check permissions, controllers and Service exposure
+  watch URL... [--file FILE]        re-probe on an interval, print state changes, serve metrics
   version                           print the version
 
 Run "setura COMMAND -h" for a command's flags.
@@ -481,6 +482,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			failed = true
 		}
 		return boolExit(failed), nil
+
+	case "watch":
+		return watchCommand(rest, stdout, stderr)
 
 	case "completion":
 		pos, err := parse(fs, rest)
