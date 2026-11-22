@@ -138,10 +138,10 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("{}"))
 		return
 	}
-	// secret GET: /api/v1/namespaces/NS/secrets/NAME
-	if strings.Contains(path, "/secrets/") {
+	// secret and configmap GET: /api/v1/namespaces/NS/{secrets,configmaps}/NAME
+	if strings.Contains(path, "/secrets/") || strings.Contains(path, "/configmaps/") {
 		parts := strings.Split(path, "/")
-		o := f.objects["secrets"][parts[4]+"/"+parts[6]]
+		o := f.objects[parts[5]][parts[4]+"/"+parts[6]]
 		if o == nil {
 			http.NotFound(w, r)
 			return

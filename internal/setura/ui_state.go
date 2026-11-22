@@ -46,6 +46,7 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET013": {"Listener refuses this route", "The listener's allowedRoutes does not admit this route's namespace or kind.", "Widen allowedRoutes on the listener, or move the route to an allowed namespace."},
 	"SET014": {"Backend weights are invalid", "A weight is negative or too large, or the rule mixes Service and non-Service backends.", "Use weights from 0 up, and keep one kind of backend per rule."},
 	"SET015": {"Shadow-diff block is invalid", "The shadow-diff block or annotation cannot be parsed, or it names a rule that has no RequestMirror filter.", "Fix the JSON (see docs/shadow.md), or add a RequestMirror filter to that rule."},
+	"SET016": {"Gateway API 1.5 setting is invalid", "A CORS or ExternalAuth filter, session persistence, a backend timeout or a BackendTLSPolicy is configured in a way the built-in gateway refuses, so the route (or policy) is not accepted.", "Fix the setting named in the message (see docs/gateway-api-1-5.md)."},
 }
 
 func routeKindLabel(resource string) string {

@@ -247,12 +247,16 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		if _, ok := ours[spec.GatewayClassName]; !ok {
 			continue
 		}
-		gw := &Gateway{NS: g.Metadata.Namespace, Name: g.Metadata.Name, Generation: g.Metadata.Generation, ClassName: spec.GatewayClassName, Listeners: spec.Listeners}
+		gw := spec.gateway(g.Metadata.Namespace, g.Metadata.Name, g.Metadata.Generation)
 		cfg.Gateways = append(cfg.Gateways, gw)
 		mine[gw.Key()] = true
 		gwRaw[gw.Key()] = gwItems[i]
 	}
 	stale := map[string]extraRaw{}
+	gw15 := map[string]extraRaw{}
+	if err := k.loadListenerSets(ctx, cfg, mine, gw15); err != nil {
+		return nil, err
+	}
 	rts, _ := decode(rtItems)
 	for i, r := range rts {
 		var spec routeSpec
@@ -262,11 +266,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 		var parents []ParentRef // only the parentRefs that name our Gateways are ours to judge
 		for _, p := range spec.ParentRefs {
-			ns := p.Namespace
-			if ns == "" {
-				ns = r.Metadata.Namespace
-			}
-			if (p.Kind == "" || p.Kind == "Gateway") && (p.Group == "" || p.Group == APIGroup) && mine[ns+"/"+p.Name] {
+			if ourParent(mine, p, r.Metadata.Namespace) {
 				parents = append(parents, p)
 			}
 		}
@@ -284,6 +284,15 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 	extra, err := k.loadExtraRoutes(ctx, cfg, mine, stale)
 	if err != nil {
 		return nil, err
+	}
+	if err := k.loadL4Routes(ctx, cfg, mine, stale, extra); err != nil {
+		return nil, err
+	}
+	if err := k.loadBackendTLS(ctx, cfg, gw15); err != nil {
+		return nil, err
+	}
+	for key, x := range gw15 {
+		extra[key] = x
 	}
 
 	// Services and ready endpoints become backends.
@@ -321,7 +330,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 		key := s.Metadata.Namespace + "/" + s.Metadata.Name
 		for _, sp := range spec.Ports {
-			def := &BackendDef{}
+			def := &BackendDef{PortName: sp.Name}
 			if spec.Type == "ExternalName" && spec.ExternalName != "" {
 				def.Endpoints = []string{net.JoinHostPort(spec.ExternalName, fmt.Sprint(sp.Port))}
 			}
@@ -420,7 +429,9 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		N map[string]map[string]string
 		X []*GRPCRoute
 		T []*TLSRoute
-	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes})
+		Y []any
+	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes,
+		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts}})
 	sum := sha256.Sum256(sig)
 	return &Loaded{Config: cfg, Hash: hex.EncodeToString(sum[:])}, nil
 }
@@ -503,19 +514,28 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		var o kobj
 		json.Unmarshal(raw, &o)
 		var st struct {
-			Conditions []Condition      `json:"conditions"`
-			Listeners  []ListenerStatus `json:"listeners"`
-			Addresses  []GatewayAddress `json:"addresses"`
+			Conditions           []Condition      `json:"conditions"`
+			Listeners            []ListenerStatus `json:"listeners"`
+			Addresses            []GatewayAddress `json:"addresses"`
+			AttachedListenerSets *int             `json:"attachedListenerSets"`
 		}
 		json.Unmarshal(o.Status, &st)
-		withAddrs := len(addrs) > 0 && !reflect.DeepEqual(st.Addresses, addrs)
-		if sameConds(st.Conditions, want.Conditions) && sameListeners(st.Listeners, want.Listeners) && !withAddrs {
+		gwAddrs := addrs // static spec.addresses win over the Service's
+		if len(want.Addresses) > 0 {
+			gwAddrs = want.Addresses
+		}
+		withAddrs := len(gwAddrs) > 0 && !reflect.DeepEqual(st.Addresses, gwAddrs)
+		attachedSets := want.AttachedListenerSets != nil && (st.AttachedListenerSets == nil || *st.AttachedListenerSets != *want.AttachedListenerSets)
+		if sameConds(st.Conditions, want.Conditions) && sameListeners(st.Listeners, want.Listeners) && !withAddrs && !attachedSets {
 			continue
 		}
 		path := apiGatewayV1 + "/namespaces/" + url.PathEscape(o.Metadata.Namespace) + "/gateways/" + url.PathEscape(o.Metadata.Name)
 		body := map[string]any{"conditions": want.Conditions, "listeners": want.Listeners}
-		if len(addrs) > 0 {
-			body["addresses"] = addrs
+		if len(gwAddrs) > 0 {
+			body["addresses"] = gwAddrs
+		}
+		if want.AttachedListenerSets != nil {
+			body["attachedListenerSets"] = *want.AttachedListenerSets
 		}
 		if err := k.patchStatus(ctx, path, body); err != nil {
 			errs = append(errs, err)
@@ -531,6 +551,7 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 			errs = append(errs, err)
 		}
 	}
+	errs = append(errs, k.writeGw15Status(ctx, doc, extra)...)
 	for _, x := range stale { // detached routes: drop our entries, keep other controllers'
 		if err := k.writeRouteStatus(ctx, x.base, x.plural, x.raw, &RouteStatus{}); err != nil {
 			errs = append(errs, err)
