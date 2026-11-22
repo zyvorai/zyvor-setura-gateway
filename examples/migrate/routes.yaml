@@ -50,7 +50,32 @@ spec:
     - matches:
         - path:
             type: PathPrefix
+            value: /web
+      backendRefs:
+        - name: web
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
             value: /status
       backendRefs:
         - name: status
           port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: rpc-rpc-example-test
+  namespace: demo
+spec:
+  parentRefs:
+    - name: nginx
+  hostnames:
+    - rpc.example.test
+  rules:
+    - matches:
+        - method:
+            service: helloworld.Greeter
+      backendRefs:
+        - name: greeter
+          port: 50051

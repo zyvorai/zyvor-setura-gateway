@@ -39,3 +39,53 @@ spec:
                 name: legacy
                 port:
                   number: 80
+          # A named port: resolved against the Service in services.yaml.
+          - path: /web
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+---
+# gRPC backend: converts to a GRPCRoute.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rpc
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rpc.example.test
+      http:
+        paths:
+          - path: /helloworld.Greeter
+            pathType: Prefix
+            backend:
+              service:
+                name: greeter
+                port:
+                  number: 50051
+---
+# A different class: skipped with --ingress-class nginx.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin
+  namespace: demo
+spec:
+  ingressClassName: internal
+  rules:
+    - host: admin.example.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin
+                port:
+                  number: 80
