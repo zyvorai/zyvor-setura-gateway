@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0-rc1
+
+Release candidate for 0.7.0, and the first run of the signed release pipeline (cosign signatures, SLSA provenance, SBOMs, `.deb` and `.rpm` packages and the Helm chart). It is a pre-release: it does not move the `latest` image tag. The contents are the 0.7.0 list below.
+
 ## 0.7.0 (unreleased)
 
 - **Gateway API 1.5 in the built-in gateway.** HTTPRoute `CORS` (with preflight) and `ExternalAuth` filters, `BackendTLSPolicy` (TLS and mTLS to backends), `timeouts.backendRequest`, session persistence, `ListenerSet`, static Gateway addresses, `matchExpressions` selectors, rule `name`, and basic `TCPRoute` and `UDPRoute`. See `docs/gateway-api-1-5.md`.
