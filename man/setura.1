@@ -3,7 +3,7 @@
 setura \- serve, publish and verify Gateway API routes
 .SH SYNOPSIS
 .B setura
-[\fB\-\-context\fR \fINAME\fR] \fICOMMAND\fR [\fIflags\fR]
+[\fB\-\-context\fR \fINAME\fR[,\fINAME\fR...] | \fB\-\-all\-contexts\fR] \fICOMMAND\fR [\fIflags\fR]
 .SH DESCRIPTION
 .B setura
 forwards Kubernetes Gateway API listeners to IPv4 loopback and verifies
@@ -13,17 +13,20 @@ routes from the client side.
 .B explain URL
 probe a URL from this host, stage by stage
 .TP
-.B check FILE
+.B check FILE [\-\-context a,b]
 run a JSON file of route assertions
 .TP
-.B gate ROUTE URL
+.B gate ROUTE URL [\-\-context a,b]
 require current parent status and a probe streak
 .TP
 .B compare URL \-\-target dns|IP
 probe the same URL via DNS and/or IPs
 .TP
 .B watch URL... [\-\-file FILE]
-re\-probe on an interval, print state changes, serve metrics
+re\-probe on an interval; metrics, \-\-history, \-\-alert\-webhook/\-\-alert\-slack
+.TP
+.B history FILE [\-\-since 24h]
+summarize watch history: uptime, p50/p95, last failure, regressions
 .TP
 .B bench URL
 repeat probes and report latency percentiles and budgets
@@ -86,6 +89,10 @@ print the manual page (roff)
 print the version and build info
 .PP
 Run \fBsetura COMMAND \-h\fR for the flags of a command.
+.SH MULTIPLE CONTEXTS
+\fBcheck\fR, \fBsnapshot\fR, \fBgate\fR and \fBlint\fR accept a comma separated list of kube contexts, or \fB\-\-all\-contexts\fR, and merge the results with a per\-context field. The exit status is unchanged.
+.SH ALERTING
+\fBsetura watch\fR can post failure and recovery transitions with \fB\-\-alert\-webhook\fR and \fB\-\-alert\-slack\fR. The URLs are secrets and are never printed. \fBsetura history\fR summarizes the file written by \fB\-\-history\fR.
 .SH EXIT STATUS
 .TP
 .B 0

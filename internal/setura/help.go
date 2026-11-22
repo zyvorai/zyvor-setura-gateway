@@ -20,10 +20,11 @@ type helpGroup struct {
 var helpGroups = []helpGroup{
 	{"Verify", []helpEntry{
 		{"explain", "URL", "probe a URL from this host, stage by stage"},
-		{"check", "FILE", "run a JSON file of route assertions"},
-		{"gate", "ROUTE URL", "require current parent status and a probe streak"},
+		{"check", "FILE [--context a,b]", "run a JSON file of route assertions"},
+		{"gate", "ROUTE URL [--context a,b]", "require current parent status and a probe streak"},
 		{"compare", "URL --target dns|IP", "probe the same URL via DNS and/or IPs"},
-		{"watch", "URL... [--file FILE]", "re-probe on an interval, print state changes, serve metrics"},
+		{"watch", "URL... [--file FILE]", "re-probe on an interval; metrics, --history, --alert-webhook/--alert-slack"},
+		{"history", "FILE [--since 24h]", "summarize watch history: uptime, p50/p95, last failure, regressions"},
 		{"bench", "URL", "repeat probes and report latency percentiles and budgets"},
 		{"grpc-health", "HOST:PORT", "call grpc.health.v1.Health/Check over TLS (HTTP/2)"},
 	}},
@@ -59,23 +60,25 @@ var helpGroups = []helpGroup{
 var cmdExamples = map[string][]string{
 	"publish":   {"setura publish dev --listener http --port 8080"},
 	"explain":   {"setura explain https://orders.example.test/checkout --address 127.0.0.1 --backend orders-v1"},
-	"check":     {"setura check examples/checks.json --junit results.xml"},
+	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},
 	"gate":      {"setura gate orders http://127.0.0.1:8080/ --gateway dev --backend orders-v2 -n demo"},
 	"compare":   {"setura compare https://orders.example.test/ --target dns --target 10.0.0.5"},
-	"snapshot":  {"setura snapshot -n demo > before.json"},
+	"snapshot":  {"setura snapshot -n demo > before.json", "setura --context prod-eu,prod-us snapshot -n demo"},
 	"diff":      {"setura diff before.json after.json"},
 	"map":       {"setura map -n demo > map.html"},
 	"impact":    {"setura impact Service/demo/orders --snapshot before.json"},
-	"lint":      {"setura lint --snapshot before.json --strict"},
+	"lint":      {"setura lint --snapshot before.json --strict", "setura lint --all-contexts -n demo --format json"},
+	"history":   {"setura history probes.jsonl --since 24h --route orders", "setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\""},
+	"watch":     {"setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\" --alert-cooldown 5m"},
 	"doctor":    {"setura doctor -n demo"},
 	"ai":        {"setura ai report.json --model llama3"},
 }
 
 func writeHelp(w io.Writer, u *ui) {
 	fmt.Fprintf(w, "\n  %s  serve, publish and verify Gateway API routes\n\n", u.bold("setura"))
-	fmt.Fprintf(w, "  %s  setura [--context NAME] [--color auto|always|never] [--ascii] COMMAND [flags]\n", u.gray("Usage"))
+	fmt.Fprintf(w, "  %s  setura [--context NAME[,NAME...] | --all-contexts] [--color auto|always|never] [--ascii] COMMAND [flags]\n", u.gray("Usage"))
 	for _, g := range helpGroups {
 		fmt.Fprintf(w, "\n  %s\n", u.blue(g.title))
 		for _, e := range g.entries {

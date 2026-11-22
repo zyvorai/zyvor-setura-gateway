@@ -69,6 +69,7 @@ func (e usageError) Error() string { return e.msg }
 
 func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error) {
 	var context string
+	var allCtx bool
 	args, topts, terr := extractTermFlags(args)
 	if terr != nil {
 		fmt.Fprintf(stderr, "setura: %s\n", terr)
@@ -88,6 +89,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		case strings.HasPrefix(a, "--context="):
 			context, args = strings.TrimPrefix(a, "--context="), args[1:]
 			continue
+		case a == "--all-contexts" || a == "-all-contexts":
+			allCtx, args = true, args[1:]
+			continue
 		}
 		break
 	}
@@ -104,6 +108,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		return 0, nil
 	}
 	cmd, rest := args[0], args[1:]
+	if done, code, err := multiContext(injected, cmd, &rest, &context, allCtx, stdout, stderr, stdoutTTY); done {
+		return code, err
+	}
 	cluster := injected
 	if cluster == nil {
 		cluster = NewCluster(context)
@@ -613,6 +620,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "watch":
 		return watchCommand(rest, stdout, stderr)
+
+	case "history":
+		return runHistory(fs, rest, stdout, stderr)
 
 	case "man":
 		return 0, Man(stdout)

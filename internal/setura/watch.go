@@ -50,6 +50,7 @@ type watcher struct {
 	out     io.Writer
 	history io.Writer
 	metrics *metricsStore
+	alerts  *alerter
 	OnEvent func(WatchEvent)
 	state   map[string]*targetState
 }
@@ -174,6 +175,10 @@ func (w *watcher) round() error {
 				return err
 			}
 		}
+		if w.alerts != nil {
+			stage, reason := failure(r)
+			w.alerts.observe(r.URL, r.OK, stage, reason, r.ElapsedMS)
+		}
 		w.emit(w.observe(r))
 	}
 	return nil
@@ -188,6 +193,7 @@ func (w *watcher) Run(ctx context.Context) (failing bool, err error) {
 	}
 	tick, cancel := w.newTick(w.interval)
 	defer cancel()
+	defer w.alerts.wait()
 	for rounds := 1; ; rounds++ {
 		if err := w.round(); err != nil {
 			return false, err
@@ -341,6 +347,10 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 	listen := fs.String("listen", "", "serve Prometheus metrics on ADDR, for example 127.0.0.1:9464")
 	allowRemote := fs.Bool("allow-remote", false, "allow --listen on a non-loopback address")
 	history := fs.String("history", "", "append one JSON line per probe to FILE")
+	alertWebhook := fs.String("alert-webhook", "", "POST generic JSON to this URL on failure and recovery (secret; also from $SETURA_ALERT_WEBHOOK)")
+	alertSlack := fs.String("alert-slack", "", "post to this Slack incoming webhook URL on failure and recovery (secret; also from $SETURA_ALERT_SLACK)")
+	alertCooldown := fs.Duration("alert-cooldown", defaultAlertCooldown, "minimum time between alerts for one target")
+	alertRetries := fs.Int("alert-retries", defaultAlertRetries, "delivery retries with exponential backoff")
 	backend := fs.String("backend", "", "expected X-Setura-Backend response header")
 	ca := fs.String("ca", "", "trusted PEM CA bundle")
 	address := fs.String("address", "", "connect to this numeric IP")
@@ -375,8 +385,17 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 		}
 		targets = append(targets, o)
 	}
+	if *alertWebhook == "" {
+		*alertWebhook = os.Getenv("SETURA_ALERT_WEBHOOK")
+	}
+	if *alertSlack == "" {
+		*alertSlack = os.Getenv("SETURA_ALERT_SLACK")
+	}
 	w := newWatcher(targets, *interval, stdout)
 	w.count, w.duration = *count, *duration
+	if w.alerts, err = newAlerter(alertConfig{Webhook: *alertWebhook, Slack: *alertSlack, Cooldown: *alertCooldown, Retries: *alertRetries}, stderr); err != nil {
+		return 0, err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runWatch(w, ctx, *listen, *allowRemote, *history, stderr)
