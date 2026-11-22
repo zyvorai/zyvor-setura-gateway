@@ -164,6 +164,10 @@ func TestLintGatedReload(t *testing.T) {
 	if st.Generation != gen || !strings.Contains(st.LastReload.Error, "lint errors") || !strings.Contains(st.LastReload.Error, "--force") {
 		t.Fatalf("status after refusal: %+v", st.LastReload)
 	}
+	time.Sleep(150 * time.Millisecond) // several more polls of the same rejected file
+	if st := s.Status(); st.LastReload.OK || st.Generation != gen {
+		t.Fatalf("a rejected file must stay reported as rejected: %+v", st.LastReload)
+	}
 	if get(t, s, "x.test", "/").Echo.Name != "a" {
 		t.Fatal("old configuration must keep serving after a refused reload")
 	}

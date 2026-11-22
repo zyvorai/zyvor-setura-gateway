@@ -69,6 +69,7 @@ type Server struct {
 	ports    map[int]*boundPort
 	seq      int64
 	hash     string
+	rejected string
 	status   atomic.Pointer[StatusDoc]
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
@@ -266,7 +267,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	doc.Generation, doc.ConfigHash = s.seq, ld.Hash
 	doc.LastReload = ReloadInfo{OK: true, Time: now.UTC().Format(time.RFC3339)}
 	s.status.Store(doc)
-	s.hash = ld.Hash
+	s.hash, s.rejected = ld.Hash, ""
 	s.ready.Store(true)
 	return nil
 }
@@ -283,6 +284,18 @@ func (s *Server) recordFailure(err error) {
 	}
 	doc.LastReload = ReloadInfo{OK: false, Time: time.Now().UTC().Format(time.RFC3339), Error: err.Error()}
 	s.status.Store(doc)
+}
+
+// markReloadOK clears a recorded failure once the source loads cleanly again
+// with a configuration identical to the one being served.
+func (s *Server) markReloadOK() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old := s.status.Load(); old != nil && !old.LastReload.OK {
+		cp := *old
+		cp.LastReload = ReloadInfo{OK: true, Time: time.Now().UTC().Format(time.RFC3339)}
+		s.status.Store(&cp)
+	}
 }
 
 // Listening describes bound listeners for the operator.
@@ -375,13 +388,18 @@ func (s *Server) Reload(ctx context.Context, src Source) (bool, error) {
 	}
 	s.mu.Lock()
 	same := s.ready.Load() && ld.Hash == s.hash
+	rejected := ld.Hash == s.rejected
 	s.mu.Unlock()
+	if rejected {
+		return false, nil // already refused and reported; wait for the file to change
+	}
 	if same {
+		s.markReloadOK()
 		return false, nil
 	}
 	if err := s.lintGate(ld); err != nil {
 		s.mu.Lock()
-		s.hash = ld.Hash // do not retry (or re-log) an unchanged rejected config
+		s.rejected = ld.Hash
 		s.mu.Unlock()
 		s.recordFailure(err)
 		return false, err

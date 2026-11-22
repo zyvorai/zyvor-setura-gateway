@@ -10,7 +10,7 @@ type Condition struct {
 	Type               string `json:"type"`
 	Status             string `json:"status"`
 	Reason             string `json:"reason"`
-	Message            string `json:"message,omitempty"`
+	Message            string `json:"message"`
 	ObservedGeneration int64  `json:"observedGeneration"`
 	LastTransitionTime string `json:"lastTransitionTime"`
 }
