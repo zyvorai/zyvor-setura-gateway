@@ -278,11 +278,11 @@ Setura is complementary to the tools that read cluster state:
 
 ## Pricing and licensing
 
-Zyvor Setura is **source-available** under the **[Zyvor Production License v1.0](LICENSE)** (SPDX `LicenseRef-Zyvor-Production-1.0`, also in [LICENSES/](LICENSES/LicenseRef-Zyvor-Production-1.0.txt); see [NOTICE](NOTICE)). Evaluation, development, testing, research and education are free for 30 days per organization. Production use requires a commercial license from Zyvor AI Labs Private Limited.
+Zyvor Setura is **source-available** under the **[Zyvor Production Licence v2.0](LICENSE)** (SPDX `LicenseRef-Zyvor-Production-2.0`, also in [LICENSES/](LICENSES/LicenseRef-Zyvor-Production-2.0.txt); see [NOTICE](NOTICE)). A 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge); production and any other use needs a paid Order under the Zyvor Production Licence v2.0.
 
 | Plan | Price | For |
 | --- | --- | --- |
-| **Evaluate** | Free for 30 days per organization | Trying it out and all non-production use |
+| **Evaluate** | 30-day trial on request from sales@zyvor.dev (a paid evaluation Order at no charge) | Trying it out |
 | **Production** | **USD 101** / cluster / year · INR 9,999 incl. 18% GST in India | Each cluster you gate, probe and lint in production |
 | **Team** | **USD 505** / year for up to 10 clusters · INR 49,999 incl. 18% GST in India | Platform teams running several clusters |
 | **Enterprise** | Custom | More than 10 clusters, supported releases, an SLA and a named contact |
