@@ -3,7 +3,6 @@ package gateway
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -113,25 +112,11 @@ func (s *Stats) Snapshot() map[string]any {
 	return map[string]any{"requests": s.total, "unmatched": s.unmatched, "routes": cp(s.routes), "backends": cp(s.backends)}
 }
 
-type logLine struct {
-	Time     string  `json:"time"`
-	Listener string  `json:"listener,omitempty"`
-	Host     string  `json:"host"`
-	Method   string  `json:"method"`
-	Path     string  `json:"path"`
-	Status   int     `json:"status"`
-	Bytes    int64   `json:"bytes"`
-	Millis   float64 `json:"duration_ms"`
-	Route    string  `json:"route,omitempty"`
-	Rule     *int    `json:"rule,omitempty"`
-	Backend  string  `json:"backend,omitempty"`
-	Remote   string  `json:"remote"`
-	Error    string  `json:"error,omitempty"`
-}
-
 type reqState struct {
 	listener, route, backend, errMsg string
 	rule                             *int
+	reqID                            string
+	trace                            traceInfo
 }
 
 func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start time.Time) {
@@ -140,15 +125,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 		status = 200
 	}
 	s.stats.record(st.route, st.backend, status)
-	if s.opts.AccessLog == nil {
-		return
-	}
-	line, _ := json.Marshal(logLine{Time: start.UTC().Format(time.RFC3339Nano), Listener: st.listener, Host: r.Host, Method: r.Method,
-		Path: r.URL.RequestURI(), Status: status, Bytes: rec.bytes, Millis: float64(time.Since(start).Microseconds()) / 1000,
-		Route: st.route, Rule: st.rule, Backend: st.backend, Remote: r.RemoteAddr, Error: st.errMsg})
-	s.logMu.Lock()
-	defer s.logMu.Unlock()
-	s.opts.AccessLog.Write(append(line, '\n'))
+	s.observe(rec, r, st, start, status)
 }
 
 func (s *Server) intn(n int) int {
@@ -169,6 +146,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	start := time.Now()
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}
+	s.beginTrace(rec, r, st)
 	defer func() { s.logRequest(rec, r, st, start) }()
 	t := s.table.Load()
 	var pg *PortGroup
@@ -195,6 +173,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
+	if s.rateLimited(rec, r, st) {
+		return
+	}
 
 	if rule.Redirect != nil {
 		for _, f := range rule.Rule.Filters {
@@ -285,10 +266,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 					}
 				}
 			}
+			injectTrace(pr.Out, st)
 			s.fireMirrors(pr.Out, body, mirrors)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
+			resp.Header.Set(RequestIDHeader, st.reqID)
 			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
 			for _, f := range filters {
 				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
