@@ -200,6 +200,9 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET013` | error | listener `allowedRoutes` does not admit the attaching route |
 | `SET014` | error | negative or overflowing weights, or mixed Service and non-Service backends in one rule |
 | `SET015` | error | shadow-diff block or `setura.zyvor.dev/shadow-diff` annotation is invalid, or names a rule that has no RequestMirror filter |
+| `SET016` | warning | auth policy accepts any audience (JWT without audience) or fetches its JWKS over plain http |
+| `SET017` | warning | auth policy stores an API key or basic auth password in clear text instead of a hash |
+| `SET018` | error | auth block or `setura.zyvor.dev/auth` annotation is invalid or names a rule that does not exist |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
 
