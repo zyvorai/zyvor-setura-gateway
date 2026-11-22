@@ -1,0 +1,20 @@
+  setura top  127.0.0.1:19000 · generation 3
+
+  ▲ 140 requests so far, 10 server errors; 1 endpoint ejected or down
+  Single sample: showing totals since the gateway started. Rates need the live view.
+
+  ROUTES                    requests     err%      p50      p95
+  HTTPRoute/demo/orders          110     9.1%    3.4ms     72ms
+  HTTPRoute/demo/billing          30       0%    3.8ms     23ms
+
+  BACKENDS                  requests     err%      p50      p95
+  orders-v1:80                   110     9.1%    3.4ms     72ms
+  billing-v1:80                   30       0%    3.8ms     23ms
+
+  EJECTED ENDPOINTS
+  ▲ orders-v1:80  127.0.0.1:19102  ejected
+
+  Open connections  2
+
+  RECENT ERRORS
+  03:04:05 502 GET /checkout  HTTPRoute/demo/orders -> orders-v1:80  connection refused

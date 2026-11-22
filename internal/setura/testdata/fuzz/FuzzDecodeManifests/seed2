@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("base: &b {x: 1}\nuse:\n  <<: *b\n  y: 2\n")

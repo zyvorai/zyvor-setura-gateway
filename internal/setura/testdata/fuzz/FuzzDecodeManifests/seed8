@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("k: 'it''s'\nj: \"esc \\u00e9 \\x41\"\ny: yes\nn: 0o17\nz: 0x1F\nd: 1e3\n")

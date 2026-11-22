@@ -38,10 +38,52 @@ Open the printed address (default `http://127.0.0.1:9090/`).
 Empty, loading and error states say what to do next. When a refresh fails the
 page keeps the last good data and shows why.
 
+## First paint
+
+The page is one response: the server inlines the last good state as a JSON
+block (`<script type="application/json" id="boot">`) and renders the headline
+into the HTML, so the first frame shows real routes, not a skeleton, even over
+a slow tunnel. Skeletons appear only when no state exists yet. The response is
+gzip-compressed and carries an `ETag`. It is served `Cache-Control: no-store`
+because it embeds live state, and the stylesheet and script are inline (one
+request, covered by a CSP hash) rather than separate assets. After first paint
+the page opens the event stream and keeps itself current.
+
+## Changes
+
+`#/changes` (the second tab) answers "what changed?" without leaving the
+dashboard. It reads the live configuration and the backups in
+`.setura-history/` next to it (the ones `setura gateway rollout` writes):
+
+- **Since the last rollout**: the live config against the newest backup, in
+  plain words: routes added, removed or changed, traffic splits such as
+  `orders-v1 70% -> 50%`, hostnames, listeners, endpoints.
+- **Rollout history**: a timeline, newest first, with lint state and what each
+  rollout changed.
+- **What would going back do?** opens a read-only sheet for one entry: the
+  changes a rollback would make, a routing preview (the `replay` engine run
+  offline over one probe per declared route match, with live-now and after
+  routing for example requests), the `why` explanation of the first request
+  that would route differently, and the exact `setura gateway rollback --to ID`
+  command to copy. The dashboard never rolls anything back itself.
+
+The gateway wires this automatically from `--config`; `setura ui --config
+live.json` does it for the CLI dashboard. Without a config the page explains
+how to connect one. Deep links: `#/changes`, `#/changes/BACKUP_ID`.
+
+## Jump to (command palette)
+
+`Ctrl K` (`Cmd K` on macOS) or the **Jump to** button opens a palette that
+finds routes, backends, pages and the docs. Arrow keys move, `Enter` opens,
+`Esc` closes. Routes open their sheet, backends filter the route map, docs open
+on GitHub. Search is also a deep link: `/#q=orders` filters the routes and the
+URL follows what you type. `/api/palette` serves the same list as JSON.
+
 ## Keyboard and accessibility
 
 | Key | Action |
 | --- | --- |
+| `Ctrl K` / `Cmd K` | jump to a route, backend, page or doc |
 | `/` | search routes (name, host, path, backend, finding) |
 | `j` / `k` | next or previous route |
 | `Enter` | open the focused route |
@@ -90,6 +132,7 @@ a bearer secret on plain HTTP.
 | `--interval D` | how often to re-read the source, default `5s`, minimum `1s` |
 | `--token VALUE` | bearer token, required for non-loopback `--listen` |
 | `--redact` | mask hostnames, IPs and namespaces |
+| `--config FILE` | live gateway config; enables the Changes page from its `.setura-history/` |
 
 `setura gateway run|up ... --ui ADDR [--ui-token TOKEN]` serves the dashboard
 for the running gateway: the live configuration, lint findings, per-route and
@@ -102,6 +145,10 @@ per-backend request counters, and reload events. `setura watch ... --ui ADDR
 | --- | --- |
 | `/` | the dashboard |
 | `/api/state` | the state document (`setura.ui/v1`), JSON |
+| `/api/palette` | command palette items (`page`, `route`, `backend`, `doc`) |
+| `/api/changes` | live-vs-last-backup diff and the rollout timeline |
+| `/api/changes/ID` | read-only "what would going back do" for one backup |
+| `/?theme=light\|dark\|system` | sets the remembered theme (also `?still` to disable motion) |
 | `/api/events?since=ID` | recent feed events as JSON, for polling |
 | `/events` | Server-Sent Events: `state` (on change) and `feed` frames; honours `Last-Event-ID` |
 | `/healthz` | `ok`, never authenticated |

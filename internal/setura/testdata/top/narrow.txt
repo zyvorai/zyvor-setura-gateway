@@ -1,0 +1,20 @@
+  setura top  127.0.0.1:19000 · generation 3 · every 1s · L…
+
+  ✗ Errors rising on route HTTPRoute/demo/orders (33% of re…
+
+  ROUTES                    req/s     err%      p50      p95
+  HTTPRoute/demo/orders      15.0      33%     44ms     92ms
+  HTTPRoute/demo/billi…       5.0       0%     18ms     24ms
+
+  BACKENDS                  req/s     err%      p50      p95
+  orders-v1:80               15.0      33%     44ms     92ms
+  billing-v1:80               5.0       0%     18ms     24ms
+
+  EJECTED ENDPOINTS
+  ▲ orders-v1:80  127.0.0.1:19102  ejected
+
+  Open connections  2
+
+  RECENT ERRORS
+  03:04:05 502 GET /checkout  HTTPRoute/demo/orders -> orde…
+  q quit  j/k select  enter details  p pause

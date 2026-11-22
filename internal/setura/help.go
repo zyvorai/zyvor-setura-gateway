@@ -27,6 +27,7 @@ var helpGroups = []helpGroup{
 		{"history", "FILE [--since 24h]", "summarize watch history: uptime, p50/p95, last failure, regressions"},
 		{"why", "METHOD URL [--config F|--admin ADDR]", "explain why the built-in gateway routes a request the way it does"},
 		{"bench", "URL", "repeat probes and report latency percentiles and budgets"},
+		{"load", "URL", "keep-alive load generator: requests/s, p50/p90/p99/p99.9, errors, gateway goroutines and memory"},
 		{"grpc-health", "HOST:PORT", "call grpc.health.v1.Health/Check over TLS (HTTP/2)"},
 	}},
 	{"Inspect", []helpEntry{
@@ -37,6 +38,7 @@ var helpGroups = []helpGroup{
 		{"map", "", "render the declared route topology"},
 		{"ui", "[--listen ADDR]", "live read-only web dashboard: route map, lint, traffic, feed"},
 		{"connections", "[--admin ADDR] [--follow]", "who connected to which listener, over what protocol, and where the gateway sent it"},
+		{"top", "[--admin ADDR] [--once]", "live terminal view of requests/s, errors, p50/p95, ejected endpoints and connections"},
 		{"impact", "TARGET", "query what a resource change would affect"},
 	}},
 	{"Analyze", []helpEntry{
@@ -49,10 +51,11 @@ var helpGroups = []helpGroup{
 	{"Publish", []helpEntry{
 		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
 		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored HTTP and gRPC responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
+		{"init", "[--route host=upstream | --openapi FILE]", "scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI JSON file"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
-		{"doctor", "", "check permissions needed by setura"},
+		{"doctor", "[gateway]", "check permissions needed by setura; `doctor gateway` checks a gateway config, ports, certificates and backends"},
 		{"capabilities", "", "list GatewayClasses and controller features"},
 		{"exposure", "", "show Service exposure"},
 		{"completion", "bash|zsh|fish", "print a shell completion script"},
@@ -86,7 +89,8 @@ var cmdExamples = map[string][]string{
 	"shadow":    {"setura shadow --admin 127.0.0.1:19000 --fail-under 99.5", "setura gateway run --config routes.json --shadow-diff 10"},
 	"history":   {"setura history probes.jsonl --since 24h --route orders", "setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\""},
 	"watch":     {"setura watch https://orders.example.test/ --history probes.jsonl --alert-slack \"$SLACK_URL\" --alert-cooldown 5m"},
-	"doctor":    {"setura doctor -n demo"},
+	"doctor":    {"setura doctor -n demo", "setura doctor gateway --config setura.json --admin 127.0.0.1:19000"},
+	"init":      {"setura init --route orders.example.test=127.0.0.1:9001 --out gw", "setura init --openapi api.json --out gw"},
 	"replay": {"setura replay --log access.jsonl --before old.json --after new.json",
 		"zcat access.jsonl.gz | setura replay --log - --before old.json --after new.json --fail-on any --format github",
 		"setura replay --log /var/log/nginx/access.log --default-host shop.example.test --before old.json --after new.json --fail-on route,policy"},
@@ -96,6 +100,7 @@ var cmdExamples = map[string][]string{
 		"setura migrate check --ingress-url http://10.0.0.1 --gateway-url http://10.0.0.2 --probe-extra"},
 	"ai":          {"setura ai report.json --model llama3"},
 	"connections": {"setura connections", "setura connections --follow --filter status=5xx --filter route=orders", "setura connections --admin 127.0.0.1:19000 --format json | jq '.history[0]'"},
+	"top":         {"setura top", "setura top --admin 127.0.0.1:19000 --once", "setura top --format json | jq '.routes[0]'"},
 	"ui":          {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
 }
 
@@ -200,7 +205,7 @@ func unknownCommand(w io.Writer, cmd string) {
 	if s := nearest(cmd, commandNames); s != "" {
 		fmt.Fprintf(w, "  Did you mean %q?\n", s)
 	}
-	fmt.Fprintln(w, `  Run "setura --help" for the list of commands.`)
+	fmt.Fprintln(w, `  Next: setura --help lists every command.`)
 }
 
 // versionVerbose prints build information from runtime/debug.

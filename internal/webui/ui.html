@@ -60,7 +60,7 @@ button{cursor:pointer}
 .search svg{position:absolute;left:11px;top:9px;width:16px;height:16px;color:var(--ink-3);pointer-events:none}
 .search kbd{position:absolute;right:9px;top:6px}
 kbd{font:500 12px/1 var(--mono);color:var(--ink-2);background:var(--card-2);border:1px solid var(--line-2);border-bottom-width:2px;border-radius:6px;padding:3px 6px;min-width:22px;text-align:center;display:inline-block}
-.btn{height:34px;border-radius:980px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-size:14px;display:inline-flex;align-items:center;gap:7px;transition:background .15s}
+.btn{white-space:nowrap;height:34px;border-radius:980px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-size:14px;display:inline-flex;align-items:center;gap:7px;transition:background .15s}
 .btn:hover{background:var(--card-2)}
 .btn.icon{width:34px;padding:0;justify-content:center}
 .live{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
@@ -276,32 +276,118 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
 .hide{display:none!important}
 .low{margin-top:44px}h2.tight{font-size:20px;margin:34px 0 12px}.skel.tall{height:260px}.sub.flat{margin:0}dialog .after{margin:20px 0 0}
 
+
+/* tabs, palette button, changes, palette, sparklines */
+.tabs{display:flex;gap:2px;padding:3px;background:color-mix(in srgb,var(--ink) 6%,transparent);border-radius:980px}
+.tabs a{font-size:14px;font-weight:500;color:var(--ink-2);text-decoration:none;padding:4px 14px;border-radius:980px;transition:background .2s,color .2s}
+.tabs a:hover{color:var(--ink)}
+.tabs a[aria-current="page"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 .5px var(--line)}
+.kbtn svg{width:14px;height:14px;color:var(--ink-3)}
+.kbtn kbd{font-size:11px;padding:2px 5px;min-width:0}
+.plainh{margin:0;font-size:clamp(34px,6.2vw,68px);line-height:1.04;letter-spacing:-.035em;font-weight:700}
+.detail.flush{margin-left:0}
+#v-changes .hero{padding-bottom:8px}
+.cs-h{display:flex;align-items:baseline;gap:12px;margin:40px 0 4px}
+.cs-h h2{margin:0}
+.cs-h .m{color:var(--ink-3);font-size:14px}
+.chgs{display:grid;gap:12px;margin-top:16px}
+.chg{display:grid;grid-template-columns:auto 1fr auto;gap:2px 16px;align-items:start;padding:18px 22px;background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);animation:in .4s var(--ease) both}
+.chg .gl{grid-row:1/3;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font:600 16px/1 var(--font);color:var(--tone);background:color-mix(in srgb,var(--tone) 13%,transparent)}
+.chg[data-k="added"]{--tone:var(--ok)}.chg[data-k="changed"]{--tone:var(--accent)}.chg[data-k="removed"]{--tone:var(--ink-3)}
+.chg h3{margin:3px 0 0;font-size:17px;font-weight:600;letter-spacing:-.012em}
+.chg ul{grid-column:2;margin:8px 0 0;padding:0;list-style:none;display:grid;gap:5px;color:var(--ink-2);font-size:15px}
+.chg li{padding-left:14px;position:relative;overflow-wrap:anywhere}
+.chg li::before{content:"";position:absolute;left:0;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--line-2)}
+.chg .btn{height:30px;font-size:13px;color:var(--accent);grid-column:3;grid-row:1}
+.tl{list-style:none;margin:18px 0 0;padding:0 0 0 26px;position:relative}
+.tl::before{content:"";position:absolute;left:7px;top:10px;bottom:10px;width:2px;background:var(--line);border-radius:2px}
+.tl>li{position:relative;margin:0 0 14px;animation:in .4s var(--ease) both}
+.tl>li::before{content:"";position:absolute;left:-26px;top:24px;width:16px;height:16px;border-radius:50%;background:var(--bg);border:2px solid var(--accent);box-sizing:border-box}
+.tl>li[data-lint="no"]::before{border-color:var(--warn-fill)}
+.tl-card{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:18px 22px}
+.tl-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.tl-head time{font-weight:600;font-size:17px;letter-spacing:-.012em;margin-right:4px}
+.tl-card p{margin:8px 0 0;color:var(--ink-2);font-size:15px}
+.tl-card details{margin-top:12px}
+.tl-card summary{cursor:pointer;color:var(--accent);font-size:14px;font-weight:500;border-radius:8px;width:max-content;list-style:none}
+.tl-card summary::-webkit-details-marker{display:none}
+.tl-card summary::before{content:"\203a";display:inline-block;width:14px;transition:transform .2s var(--ease)}
+.tl-card details[open] summary::before{transform:rotate(90deg)}
+.compact{margin-top:12px}
+a.btn{text-decoration:none}
+.sec .compact{margin-top:0}
+.compact .chg{box-shadow:none;background:var(--card-2);border:1px solid var(--line);padding:14px 16px}
+.tl-act{margin-top:14px}
+.chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 9%,transparent)}
+.chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 9%,transparent)}
+.big{font-size:21px;line-height:1.3;letter-spacing:-.015em;font-weight:600;margin:0}
+.impact{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.impact li{background:var(--card-2);border:1px solid var(--line);border-radius:16px;padding:12px 16px}
+.impact b{display:block;font-size:15px}
+.impact .ex{display:block;margin-top:4px;font:12.5px/1.6 var(--mono);color:var(--ink-2);overflow-wrap:anywhere}
+.impact .ex strong{color:var(--ink);font-weight:600}
+.impact .ex i{font-style:normal;color:var(--ink-3);display:inline-block;min-width:5.6em}
+pre.why{margin:0;padding:14px 16px;border-radius:16px;background:var(--card-2);border:1px solid var(--line);font:12.5px/1.55 var(--mono);overflow:auto;white-space:pre;max-height:320px}
+.cmd{display:flex;gap:8px;align-items:center;background:var(--card-2);border:1px solid var(--line);border-radius:14px;padding:8px 8px 8px 14px}
+.cmd code{flex:1;font:13px var(--mono);overflow-x:auto;white-space:nowrap}
+.cmd .btn{height:30px;font-size:13px}
+.note{font-size:13px;color:var(--ink-3);margin:10px 0 0}
+dialog#pal{padding:0;margin:11vh auto auto;width:min(640px,calc(100vw - 24px));max-width:none;border-radius:22px;overflow:hidden;border:1px solid var(--line)}
+dialog#pal[open]{animation:pop .22s var(--ease)}
+@keyframes pop{from{opacity:0;transform:translateY(-8px) scale(.985)}to{opacity:1;transform:none}}
+.pal-in{display:flex;align-items:center;gap:12px;padding:0 20px;height:62px;border-bottom:1px solid var(--line)}
+.pal-in svg{width:20px;height:20px;color:var(--ink-3);flex:none}
+.pal-in input{flex:1;min-width:0;border:0;background:none;outline:0;font-size:21px;letter-spacing:-.015em;color:var(--ink)}
+.pal-in input::placeholder{color:var(--ink-3)}
+#pallist{list-style:none;margin:0;padding:8px;max-height:min(52vh,420px);overflow:auto;overscroll-behavior:contain}
+#pallist .gh{padding:10px 12px 4px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3)}
+#pallist [role=option]{display:flex;align-items:baseline;gap:12px;padding:10px 12px;border-radius:12px;cursor:pointer}
+#pallist [role=option] b{font-weight:600;font-size:16px;letter-spacing:-.01em;white-space:nowrap}
+#pallist [role=option] span{color:var(--ink-3);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#pallist [role=option] em{margin-left:auto;font-style:normal;font-size:12px;color:var(--ink-3);flex:none}
+#pallist [aria-selected="true"]{background:var(--accent-fill);color:#fff}
+#pallist [aria-selected="true"] span,#pallist [aria-selected="true"] em{color:rgba(255,255,255,.82)}
+#pallist .none{padding:30px 16px;text-align:center;color:var(--ink-2)}
+.pal-foot{display:flex;gap:18px;margin:0;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3)}
+.pal-foot kbd{font-size:11px;padding:1px 5px}
+.spark .l .big2{font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.spark .rng{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3);margin-top:4px;font-variant-numeric:tabular-nums}
+.spark .area{fill:var(--accent-soft);stroke:none}
+.spark svg{height:56px}
 @media (max-width:900px){
   .map{grid-template-columns:1fr;padding:18px}.map svg,.col.side{display:none}
   .grid2{grid-template-columns:1fr}
   .bar-in{padding:10px 16px;gap:8px}main{padding:0 16px 60px}.hero{padding:40px 0 24px}
   .pill,.live span{display:none}.search{width:auto;flex:1}.search kbd{display:none}
+  .bar-in{flex-wrap:wrap}.tabs{order:9;flex:1 0 100%;justify-content:stretch}.tabs a{flex:1;text-align:center}
+  .kbtn .bt,.kbtn kbd{display:none}.kbtn{width:34px;padding:0;justify-content:center}
+  .chg{grid-template-columns:auto 1fr}.chg .btn{grid-column:2;grid-row:auto;justify-self:start;margin-top:8px}
   .sheet{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:86vh;transform:translateY(calc(100% + 24px))}
   .scrim.on{opacity:1;pointer-events:auto}
   .detail{margin-left:0}
   .status{align-items:flex-start}.status .dot{margin-top:.5em}
 }
+@media (max-width:700px){.search{display:none}.brand{margin-right:auto}}
 @media (max-width:560px){.ctools input{width:100%}.ctools label{flex:1 1 140px}.bt{display:none}.search{min-width:110px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+html[data-still] *,html[data-still] *::before,html[data-still] *::after{animation:none!important;transition:none!important}
 @media (forced-colors:active){.seg,.legend i{forced-color-adjust:none}}
 </style>
 </head>
 <body>
+<script type="application/json" id="boot">null</script>
 <a class="sr" href="#main">Skip to content</a>
 <header class="bar"><div class="bar-in">
   <div class="brand"><i aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 22c0-7 18-5 18-12M7 10c0 7 18 5 18 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg></i><span class="bt">Setura</span></div>
   <span class="pill" id="source" hidden></span>
+  <nav class="tabs" id="tabs" aria-label="Pages"><a href="#/" id="tab-over" aria-current="page">Overview</a><a href="#/changes" id="tab-changes">Changes</a></nav>
   <span class="grow"></span>
   <div class="search" id="searchbox" role="search">
     <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
     <input id="q" type="search" placeholder="Search routes" aria-label="Search routes (press / to focus)" autocomplete="off" spellcheck="false" aria-keyshortcuts="/">
     <kbd aria-hidden="true">/</kbd>
   </div>
+  <button class="btn kbtn" id="palbtn" type="button" aria-label="Jump to a route, backend, page or doc" aria-keyshortcuts="Control+K Meta+K"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="bt">Jump to</span><kbd aria-hidden="true" id="palkbd">Ctrl K</kbd></button>
   <span class="live" id="live" data-s="off" role="status"><i aria-hidden="true"></i><span id="livet">Connecting</span></span>
   <button class="btn" id="pause" type="button" aria-pressed="false" hidden>Pause</button>
   <button class="btn icon" id="themebtn" type="button" aria-label="Theme: system" title="Theme">&#9680;</button>
@@ -312,6 +398,7 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
   <div class="sr" id="announce" role="status" aria-live="polite"></div>
   <noscript><div class="banner"><div><b>JavaScript is required</b><p>The dashboard draws itself in the browser. The same data is available as JSON at /api/state.</p></div></div></noscript>
 
+  <div id="v-over">
   <section class="hero" aria-labelledby="headline">
     <div class="status" id="status" data-st="unknown"><span class="dot" aria-hidden="true"></span><h1 id="headline">Loading routes</h1></div>
     <p class="detail" id="detail">Reading the current configuration.</p>
@@ -388,6 +475,16 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
     </div>
   </section>
 
+  </div>
+
+  <div id="v-changes" hidden>
+    <section class="hero" aria-labelledby="chgh">
+      <h1 id="chgh" class="plainh">Changes</h1>
+      <p class="detail flush" id="chgd" aria-live="polite">Reading the history.</p>
+    </section>
+    <div id="chgbody" aria-busy="true"></div>
+  </div>
+
   <p class="foot"><span id="gen"></span><span id="reloadinfo"></span><span>Read-only. Nothing here changes your cluster or gateway.</span></p>
 </main>
 
@@ -398,9 +495,20 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
   <div class="sheet-b" id="sheetb"></div>
 </aside>
 
+<dialog id="pal" aria-label="Jump to">
+  <div class="pal-in">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <input id="palq" type="text" role="combobox" aria-expanded="true" aria-controls="pallist" aria-autocomplete="list" aria-label="Jump to a route, backend, page or doc" placeholder="Jump to a route, backend, page or doc" autocomplete="off" spellcheck="false">
+    <kbd aria-hidden="true">Esc</kbd>
+  </div>
+  <ul id="pallist" role="listbox" aria-label="Results"></ul>
+  <p class="pal-foot" aria-hidden="true"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> open</span></p>
+</dialog>
+
 <dialog id="help" aria-labelledby="helph">
   <h2 id="helph">Keyboard shortcuts</h2>
   <dl>
+    <dt><kbd id="hk">Ctrl</kbd> <kbd>K</kbd></dt><dd>Jump to a route, backend, page or doc</dd>
     <dt><kbd>/</kbd></dt><dd>Search routes</dd>
     <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next or previous route</dd>
     <dt><kbd>Enter</kbd></dt><dd>Open the focused route</dd>
@@ -434,6 +542,10 @@ var NS='http://www.w3.org/2000/svg';
     try{if(m==='system')localStorage.removeItem(KEY);else localStorage.setItem(KEY,m)}catch(x){}
     apply(m);
   });
+  /* /?theme=light|dark|system sets the choice, handy for sharing a link or a screenshot */
+  if(/[?&]still\b/.test(location.search))document.documentElement.setAttribute('data-still','');
+  var tq=/[?&]theme=(light|dark|system)\b/.exec(location.search);
+  if(tq){try{if(tq[1]==='system')localStorage.removeItem(KEY);else localStorage.setItem(KEY,tq[1])}catch(x){}}
   apply(get());
 })();
 
@@ -483,14 +595,14 @@ function render(){
   $('announce').textContent=sm.headline||'';
   $('searchbox').classList.toggle('hide',S.mode==='watch');
   var src=$('source');src.hidden=!S.source;src.textContent=(S.mode?cap(S.mode)+' \u00b7 ':'')+(S.source||'');
-  document.title=(sm.headline?sm.headline+' \u00b7 ':'')+'Setura';
+  if(view==='over')document.title=(sm.headline?sm.headline+' \u00b7 ':'')+'Setura';
   renderError();renderStats(sm);renderAttention();renderHealth();renderShadow();renderMap();renderHistory();renderFoot();
   if(connOn()){if(!C.loaded&&!C.loading){C.loading=true;loadConns(0)}renderConns()}else renderConns();
   if(sel){var r=find(sel);if(r)renderSheet(r,true);else closeSheet()}
   else if(!deepDone){deepDone=true;var m=/^#route=(.+)$/.exec(location.hash);if(m){try{openRoute(decodeURIComponent(m[1]))}catch(x){}}}
 }
 var deepDone=false;
-function setHash(id){try{history.replaceState(null,'',id?'#route='+encodeURIComponent(id):location.pathname+location.search)}catch(x){}}
+function setHash(id){try{history.replaceState(null,'',id?'#route='+encodeURIComponent(id):(view==='changes'?'#/changes':location.pathname+location.search))}catch(x){}}
 function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
 function renderError(){
   var e=S.error;$('err').classList.toggle('hide',!e);
@@ -556,13 +668,16 @@ function renderHistory(){
   var hs=S.history&&S.history.series;$('histsec').classList.toggle('hide',!hs||!hs.length);$('lowsec').classList.toggle('one',!hs||!hs.length);
   if(!hs)return;
   var box=clear($('hist'));
+  function f(v){return String(Math.round(v*100)/100)}
   hs.forEach(function(s){
     var p=(s.points||[]).map(Number).filter(isFinite);if(!p.length)return;
-    var mn=Math.min.apply(0,p),mx=Math.max.apply(0,p),span=mx-mn||1;
-    var pts=p.map(function(v,i){return (p.length===1?50:i*100/(p.length-1)).toFixed(2)+','+(38-((v-mn)/span)*34).toFixed(2)}).join(' ');
-    var svg=sv('svg',{viewBox:'0 0 100 40',preserveAspectRatio:'none',role:'img','aria-label':s.name+' over time, latest '+p[p.length-1]+(s.unit||'')});
+    var mn=Math.min.apply(0,p),mx=Math.max.apply(0,p),span=mx-mn||1,last=p[p.length-1],u=s.unit?' '+s.unit:'';
+    var pts=p.map(function(v,i){return (p.length===1?50:i*100/(p.length-1)).toFixed(2)+','+(36-((v-mn)/span)*30).toFixed(2)}).join(' ');
+    var svg=sv('svg',{viewBox:'0 0 100 40',preserveAspectRatio:'none',role:'img','aria-label':s.name+' over time, latest '+f(last)+u+', low '+f(mn)+', high '+f(mx)});
+    svg.appendChild(sv('polygon',{'class':'area',points:pts+' 100,40 0,40'}));
     svg.appendChild(sv('polyline',{points:pts}));
-    box.appendChild(h('div',{class:'spark'},h('div',{class:'l'},h('span',{text:s.name}),h('span',{class:'mono',text:p[p.length-1]+(s.unit?' '+s.unit:'')})),svg));
+    box.appendChild(h('div',{class:'spark'},h('div',{class:'l'},h('span',{text:s.name}),h('span',{class:'big2',text:f(last)+u})),svg,
+      p.length>1?h('div',{class:'rng'},h('span',{text:'low '+f(mn)}),h('span',{text:'high '+f(mx)})):null));
   });
 }
 function renderFoot(){
@@ -733,16 +848,16 @@ function renderSheet(r,keep){
   if(!keep){body.scrollTop=0;sh.classList.add('open');sh.setAttribute('aria-hidden','false');$('scrim').classList.add('on');$('close').focus()}
   else body.scrollTop=top;
 }
-function closeSheet(){
-  if(!sel&&selConn==null)return;var id=sel,cid=selConn;sel=null;selConn=null;if(id||cid)setHash(null);
+function closeSheet(quiet){
+  if(!sel&&selConn==null&&!selChange)return;var id=sel,cid=selConn,chid=selChange;sel=null;selConn=null;selChange=null;if(!quiet&&(id||cid||chid))setHash(null);
   $('sheet').classList.remove('open');$('sheet').setAttribute('aria-hidden','true');$('scrim').classList.remove('on');
   document.querySelectorAll('.route[aria-current]').forEach(function(b){b.removeAttribute('aria-current')});
   if(cid){var ctr=(cid.charAt(0)==='o'?C.otr:C.tr)[cid];if(ctr)ctr.setAttribute('aria-selected','false')}
-  var back=id?(document.querySelector('.route[data-id="'+cssq(id)+'"]')||opener):(cid&&document.querySelector('#connsec tr[data-id="'+cid+'"] button'))||opener;
+  var back=chid?opener:id?(document.querySelector('.route[data-id="'+cssq(id)+'"]')||opener):(cid&&document.querySelector('#connsec tr[data-id="'+cid+'"] button'))||opener;
   if(back&&back.focus)back.focus();
   hot(null);
 }
-$('close').addEventListener('click',closeSheet);$('scrim').addEventListener('click',closeSheet);
+$('close').addEventListener('click',function(){closeSheet()});$('scrim').addEventListener('click',function(){closeSheet()});
 
 /* ---------- connections ---------- */
 var C={rows:[],open:[],latest:0,cap:500,loaded:false,openAt:0,tr:{},otr:{},sig:''}, selConn=null, CMAX=200;
@@ -985,7 +1100,8 @@ function renderConnSheet(r,keep){
 }
 
 /* ---------- keyboard ---------- */
-$('q').addEventListener('input',function(){query=this.value.trim();render()});
+$('q').addEventListener('input',function(){query=this.value.trim();syncQ();render()});
+function syncQ(){if(view!=='over'||sel||selConn!=null)return;try{history.replaceState(null,'',query?'#q='+encodeURIComponent(query):location.pathname+location.search)}catch(x){}}
 $('helpbtn').addEventListener('click',function(){$('help').showModal()});
 $('helpclose').addEventListener('click',function(){$('help').close()});
 $('pause').addEventListener('click',function(){setPaused(!paused)});
@@ -993,9 +1109,9 @@ document.addEventListener('keydown',function(e){
   if(e.metaKey||e.ctrlKey||e.altKey)return;
   var t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA');
   if(e.key==='Escape'){
-    if($('help').open)return;
-    if(sel||selConn!=null){closeSheet();e.preventDefault()}
-    else if(typing||query){$('q').value='';query='';$('q').blur();render();e.preventDefault()}
+    if($('help').open||$('pal').open)return;
+    if(sel||selConn!=null||selChange){closeSheet();e.preventDefault()}
+    else if(typing||query){$('q').value='';query='';syncQ();$('q').blur();render();e.preventDefault()}
     return;
   }
   if(typing)return;
@@ -1015,6 +1131,7 @@ document.addEventListener('keydown',function(e){
 function addFeed(e,quiet){
   if(e.id&&e.id<=lastEvt)return;if(e.id)lastEvt=e.id;
   if(e.kind==='conns'){onConns(e.data);return}
+  if(e.kind==='reload'&&view==='changes'&&!quiet)setTimeout(loadChanges,400);
   $('feedsec').classList.remove('hide');
   var box=$('feed');var ph=box.querySelector('.empty');if(ph)box.removeChild(ph);
   var row=h('div',{class:'fe','data-l':e.level||'info'},h('time',{datetime:e.time,text:clock(e.time)}),h('span',{class:'dot','aria-hidden':'true'}),
@@ -1075,13 +1192,230 @@ function showErr(e){
 }
 $('retry').addEventListener('click',function(){poll()});
 
+/* ---------- pages: Overview and Changes ---------- */
+var view='over', selChange=null, CH={doc:null,loading:false,err:null,detail:{}};
+var reduced=!!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);
+var mac=/Mac|iPhone|iPad/.test(navigator.platform||'')||/Mac OS/.test(navigator.userAgent||'');
+$('palkbd').textContent=mac?'⌘K':'Ctrl K';$('hk').textContent=mac?'⌘':'Ctrl';
+function parseHash(){
+  var h=location.hash,m;
+  if((m=/^#\/changes(?:\/(.+))?$/.exec(h)))return {v:'changes',id:m[1]?decodeURIComponent(m[1]):null};
+  if(h==='#/connections')return {v:'over',go:'connsec'};
+  if((m=/^#q=(.*)$/.exec(h)))return {v:'over',q:decodeURIComponent(m[1])};
+  if((m=/^#route=(.+)$/.exec(h)))return {v:'over',route:decodeURIComponent(m[1])};
+  return {v:'over'};
+}
+function route(first){
+  var p=parseHash(),was=view;view=p.v;
+  $('v-over').hidden=view!=='over';$('v-changes').hidden=view!=='changes';
+  var to=$('tab-over'),tc=$('tab-changes');
+  if(view==='over'){to.setAttribute('aria-current','page');tc.removeAttribute('aria-current')}else{tc.setAttribute('aria-current','page');to.removeAttribute('aria-current')}
+  if(view==='changes'){
+    document.title='Changes · Setura';
+    if(was!=='changes'||first){window.scrollTo(0,0);loadChanges()}
+    if(p.id)openChange(p.id,null,true);else if(selChange)closeSheet(true);
+    return;
+  }
+  if(S&&S.summary)document.title=(S.summary.headline?S.summary.headline+' · ':'')+'Setura';
+  if(selChange)closeSheet(true);
+  if(p.q!=null&&p.q!==query){query=p.q;$('q').value=query;if(S)render()}
+  if(p.route){if(S&&sel!==p.route)openRoute(p.route)}
+  else if(sel&&!first&&!p.q)closeSheet(true);
+  if(p.go){var el=$(p.go);if(el&&!el.classList.contains('hide'))el.scrollIntoView({behavior:reduced?'auto':'smooth',block:'start'})}
+  else if(was==='changes'){window.scrollTo(0,0)}
+  if(was==='changes')requestAnimationFrame(drawLines);
+}
+window.addEventListener('hashchange',function(){route(false)});
+
+function loadChanges(){
+  if(CH.loading)return;CH.loading=true;renderChanges();
+  fetch('api/changes',{credentials:'same-origin',headers:{Accept:'application/json'}}).then(function(r){
+    if(!r.ok)throw new Error(r.status===401?'This dashboard needs a token. Open it with /?token=YOUR_TOKEN once.':'The server answered '+r.status+'.');return r.json();
+  }).then(function(d){CH.doc=d;CH.err=null;CH.detail={}}).catch(function(e){CH.err=e}).then(function(){CH.loading=false;renderChanges()});
+}
+function empty(title,text,code,btn){
+  return h('div',{class:'card empty'},h('h3',{text:title}),text?h('p',{text:text}):null,code?h('code',{text:code}):null,btn?h('p',null,btn):null);
+}
+var GLYPH={added:'+',changed:'∼',removed:'−'};
+function changeCard(c,link){
+  return h('article',{class:'chg','data-k':c.kind},h('span',{class:'gl','aria-hidden':'true',text:GLYPH[c.kind]||'·'}),h('h3',{text:c.title}),
+    link&&c.group==='route'&&c.kind!=='removed'?h('a',{class:'btn',href:'#q='+encodeURIComponent(c.name),text:'Show route'}):null,
+    (c.lines&&c.lines.length)?h('ul',null,c.lines.map(function(l){return h('li',{text:l})})):null);
+}
+function changeList(cs,link,compact){
+  return h('div',{class:'chgs'+(compact?' compact':'')},(cs||[]).map(function(c){return changeCard(c,link)}));
+}
+function renderChanges(){
+  var body=clear($('chgbody')),d=CH.doc;
+  $('chgbody').setAttribute('aria-busy',String(CH.loading&&!d));
+  if(!d&&CH.loading){
+    $('chgd').textContent='Reading the history.';
+    var g=h('div',{class:'chgs'});for(var i=0;i<3;i++)g.appendChild(h('div',{class:'skel','aria-hidden':'true',style:'height:96px'}));body.appendChild(g);return;
+  }
+  if(!d){
+    $('chgd').textContent='The history did not load.';
+    body.appendChild(empty('Could not read the history',(CH.err&&CH.err.message||'')+' Nothing is wrong with your gateway; only this page could not get its data.',null,h('button',{class:'btn',type:'button',onclick:loadChanges},'Try again')));return;
+  }
+  $('chgd').textContent=(d.headline||'')+(d.available&&d.detail?'. '+d.detail:'');
+  if(d.available===false){
+    body.appendChild(empty(d.headline||'No history',d.detail,d.next));return;
+  }
+  if(d.diff){
+    var cs=d.diff.changes||[];
+    body.appendChild(h('div',{class:'cs-h'},h('h2',{text:'Since the last rollout'}),h('span',{class:'m',text:d.diff.summary||''})));
+    body.appendChild(h('p',{class:'sub flat',text:'What differs in '+(d.config||'the live configuration')+', in plain words.'}));
+    if(cs.length)body.appendChild(changeList(cs,true));
+    else body.appendChild(h('div',{style:'margin-top:16px'},empty('Nothing has changed','The live configuration is identical to the last backup.')));
+  }
+  var tl=d.timeline||[];
+  body.appendChild(h('div',{class:'cs-h'},h('h2',{text:'Rollout history'}),h('span',{class:'m',text:tl.length?plural(tl.length,'rollout','rollouts'):''})));
+  body.appendChild(h('p',{class:'sub flat',text:'Each entry is a configuration that was replaced. Open one to see what going back to it would do. Nothing here changes your gateway.'}));
+  if(!tl.length){body.appendChild(h('div',{style:'margin-top:16px'},empty('No rollouts recorded yet','Guarded rollouts keep a backup of the configuration they replace, and each one appears here.',d.next)));return}
+  var ol=h('ol',{class:'tl','aria-label':'Rollout history, newest first'});
+  tl.forEach(function(m,i){
+    var ch=m.changes||[];
+    var li=h('li',{'data-lint':m.lintOk?'yes':'no',style:'animation-delay:'+Math.min(i,8)*40+'ms'},h('div',{class:'tl-card'},
+      h('div',{class:'tl-head'},h('time',{datetime:m.time,text:m.when||m.time}),h('span',{class:'chip',text:m.reason==='rollback'?'Rollback':'Rollout'}),
+        h('span',{class:'chip',text:'Generation '+m.generation}),h('span',{class:'chip '+(m.lintOk?'ok':'warn'),text:m.lintOk?'Lint clean':'Had lint errors'})),
+      h('p',{text:ch.length?changeHeadline(ch):(m.summary||'No resource changes')}),
+      ch.length?h('details',null,h('summary',{text:'What this rollout changed'}),changeList(ch,false,true)):null,
+      h('div',{class:'tl-act'},h('button',{class:'btn',type:'button','aria-label':'What would going back to '+(m.when||m.time)+' do?',onclick:function(){openChange(m.id,this)}},'What would going back do?'))));
+    ol.appendChild(li);
+  });
+  body.appendChild(ol);
+}
+function changeHeadline(cs){
+  var n={};cs.forEach(function(c){n[c.kind]=(n[c.kind]||0)+1});
+  var parts=['changed','added','removed'].filter(function(k){return n[k]}).map(function(k){return n[k]+' '+k});
+  return 'This rollout made '+plural(cs.length,'change','changes')+(cs.length>1?': '+parts.join(', '):'')+'.';
+}
+function showSheet(){var sh=$('sheet');sh.classList.add('open');sh.setAttribute('aria-hidden','false');$('scrim').classList.add('on');$('close').focus()}
+function openChange(id,from,fromHash){
+  if(selChange===id&&$('sheet').classList.contains('open'))return;
+  if(from)opener=from;
+  if(sel||selConn!=null){var o=sel,c=selConn;sel=null;selConn=null;document.querySelectorAll('.route[aria-current]').forEach(function(b){b.removeAttribute('aria-current')});if(c){var tr=(c.charAt(0)==='o'?C.otr:C.tr)[c];if(tr)tr.setAttribute('aria-selected','false')}}
+  selChange=id;
+  if(!fromHash)try{history.replaceState(null,'','#/changes/'+encodeURIComponent(id))}catch(x){}
+  $('sheett').textContent='What going back would do';clear($('sheetchips'));
+  var body=clear($('sheetb'));body.scrollTop=0;
+  var det=CH.detail[id];
+  if(det){renderChangeSheet(det);showSheet();return}
+  body.appendChild(h('div',{class:'sec'},h('div',{class:'skel','aria-hidden':'true',style:'height:60px'}),h('div',{class:'skel','aria-hidden':'true',style:'height:140px;margin-top:12px'})));
+  showSheet();
+  fetch('api/changes/'+encodeURIComponent(id),{credentials:'same-origin',headers:{Accept:'application/json'}}).then(function(r){
+    if(r.status===404)throw new Error('That backup is no longer on disk, so it cannot be previewed.');
+    if(!r.ok)throw new Error('The server answered '+r.status+'.');return r.json();
+  }).then(function(d){CH.detail[id]=d;if(selChange===id)renderChangeSheet(d)}).catch(function(e){
+    if(selChange!==id)return;var b=clear($('sheetb'));b.appendChild(h('div',{class:'sec'},empty('Could not build the preview',e.message)));
+  });
+}
+var CLASSES={route:'Reaches a different route',backend:'Goes to a different backend',outcome:'Gets a different kind of answer',weights:'Traffic split shifts',policy:'Retry or timeout differs',mirror:'Mirroring differs',unknown:'Depends on request headers'};
+function renderChangeSheet(d){
+  $('sheett').textContent=d.title||'What going back would do';
+  var chips=clear($('sheetchips'));
+  if(d.lintOk!=null)chips.appendChild(h('span',{class:'chip '+(d.lintOk?'ok':'warn'),text:d.lintOk?'Lint clean':'Has lint errors'}));
+  chips.appendChild(h('span',{class:'chip',text:'Generation '+d.generation}));
+  var body=clear($('sheetb'));
+  body.appendChild(h('div',{class:'sec'},h('p',{class:'big',text:d.summary||''})));
+  var r=d.replay;
+  if(r){
+    var sec=h('div',{class:'sec'},h('h3',{text:'Routing preview'}),h('p',{class:'plain',text:r.headline||''}));
+    if((r.classes||[]).length){
+      sec.appendChild(h('ul',{class:'impact',style:'margin-top:12px'},r.classes.map(function(c){
+        var ex=c.example;
+        return h('li',null,h('b',{text:(CLASSES[c.class]||c.class)+' · '+plural(c.requests,'request','requests')}),
+          ex?h('span',{class:'ex'},h('strong',{text:ex.request}),h('br'),h('i',{text:'Live now'}),ex.before,h('br'),h('i',{text:'After'}),ex.after):null);
+      })));
+    }
+    if(r.note)sec.appendChild(h('p',{class:'note',text:r.note}));
+    body.appendChild(sec);
+  }else if(d.replayNote)body.appendChild(h('div',{class:'sec'},h('p',{class:'note',text:d.replayNote})));
+  if(d.why)body.appendChild(h('div',{class:'sec'},h('h3',{text:'Why the first changed request would go there'}),h('pre',{class:'why',tabindex:'0',text:d.why})));
+  if((d.changes||[]).length)body.appendChild(h('div',{class:'sec'},h('h3',{text:'What would change'}),changeList(d.changes,false,true)));
+  if(d.command){
+    var btn=h('button',{class:'btn',type:'button',onclick:function(){
+      var b=this;function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1600)}
+      try{navigator.clipboard.writeText(d.command).then(done,function(){})}catch(x){}
+    }},'Copy');
+    body.appendChild(h('div',{class:'sec'},h('h3',{text:'To do this, run in a terminal'}),h('div',{class:'cmd'},h('code',{text:d.command}),btn),d.note?h('p',{class:'note',text:d.note}):null));
+  }
+}
+
+/* ---------- command palette ---------- */
+var PL={items:[],i:0,res:[]},TYPES={page:'Page',route:'Route',backend:'Backend',doc:'Docs'},GROUPS={page:'Pages',route:'Routes',backend:'Backends',doc:'Docs'};
+function localItems(){
+  var it=[{type:'page',title:'Overview',subtitle:'Status, routes and health',hash:'#/'},{type:'page',title:'Changes',subtitle:'What changed and what a rollback would do',hash:'#/changes'}];
+  if(connOn())it.push({type:'page',title:'Connections',subtitle:'Recent and open connections',hash:'#/connections'});
+  var seen={};
+  routes().forEach(function(r){it.push({type:'route',title:r.name,subtitle:(r.hostnames||[]).join(', ')||'any host',hash:'#route='+encodeURIComponent(r.id)});
+    (r.rules||[]).forEach(function(u){(u.backends||[]).forEach(function(b){if(!seen[b.name]){seen[b.name]=1;it.push({type:'backend',title:b.name,subtitle:'Backend · show the routes that use it',hash:'#q='+encodeURIComponent(b.name)})}})})});
+  return it;
+}
+function filterPal(q){
+  q=q.trim().toLowerCase();
+  if(!q){var cap={page:9,route:6,backend:4,doc:4},n={};return PL.items.filter(function(i){n[i.type]=(n[i.type]||0)+1;return n[i.type]<=(cap[i.type]||4)})}
+  var toks=q.split(/\s+/),out=[];
+  PL.items.forEach(function(it,idx){
+    var tl=it.title.toLowerCase(),hay=tl+' '+(it.subtitle||'').toLowerCase()+' '+it.type,sc=0;
+    for(var i=0;i<toks.length;i++){var t=toks[i];if(hay.indexOf(t)<0)return;sc+=tl===t?6:tl.indexOf(t)===0?4:tl.indexOf(t)>=0?3:1}
+    out.push([sc+(it.type==='page'?.5:0),idx,it]);
+  });
+  out.sort(function(a,b){return b[0]-a[0]||a[1]-b[1]});
+  return out.slice(0,30).map(function(x){return x[2]});
+}
+function renderPal(){
+  var ul=clear($('pallist')),q=$('palq').value;PL.res=filterPal(q);if(PL.i>=PL.res.length)PL.i=Math.max(0,PL.res.length-1);
+  if(!PL.res.length){ul.appendChild(h('li',{class:'none',role:'presentation',text:'Nothing matches “'+q.trim()+'”. Try a route name, a hostname or a backend.'}));$('palq').removeAttribute('aria-activedescendant');return}
+  var last='';
+  PL.res.forEach(function(it,i){
+    if(!q.trim()&&it.type!==last){last=it.type;ul.appendChild(h('li',{class:'gh',role:'presentation',text:GROUPS[it.type]||it.type}))}
+    ul.appendChild(h('li',{role:'option',id:'po'+i,'aria-selected':i===PL.i?'true':'false',
+      onclick:function(){palGo(it)},onmousemove:function(){palSel(i,true)}},h('b',{text:it.title}),h('span',{text:it.subtitle||''}),h('em',{text:TYPES[it.type]||''})));
+  });
+  $('palq').setAttribute('aria-activedescendant','po'+PL.i);
+}
+function palSel(i,noScroll){
+  var old=$('po'+PL.i),nw=$('po'+i);if(!nw)return;if(old)old.setAttribute('aria-selected','false');
+  PL.i=i;nw.setAttribute('aria-selected','true');$('palq').setAttribute('aria-activedescendant','po'+i);
+  if(!noScroll)nw.scrollIntoView({block:'nearest'});
+}
+function palGo(it){
+  $('pal').close();
+  if(it.url){window.open(it.url,'_blank','noopener');return}
+  if(location.hash===it.hash){route(false);return}
+  location.hash=it.hash;
+}
+function openPal(){
+  if($('pal').open||$('help').open)return;
+  PL.i=0;$('palq').value='';PL.items=localItems();renderPal();$('pal').showModal();$('palq').focus();
+  fetch('api/palette',{credentials:'same-origin',headers:{Accept:'application/json'}}).then(function(r){return r.ok?r.json():null}).then(function(d){
+    if(d&&d.items&&$('pal').open){PL.items=d.items;renderPal()}
+  }).catch(function(){});
+}
+$('palbtn').addEventListener('click',openPal);
+$('palq').addEventListener('input',function(){PL.i=0;renderPal()});
+$('palq').addEventListener('keydown',function(e){
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(PL.res.length)palSel((PL.i+(e.key==='ArrowDown'?1:PL.res.length-1))%PL.res.length)}
+  else if(e.key==='Enter'){e.preventDefault();if(PL.res[PL.i])palGo(PL.res[PL.i])}
+  else if(e.key==='Tab'){e.preventDefault()}
+});
+$('pal').addEventListener('click',function(e){if(e.target===this)this.close()});
+document.addEventListener('keydown',function(e){
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==='k'){e.preventDefault();if($('pal').open)$('pal').close();else openPal()}
+},true);
+
 /* ---------- start ---------- */
 (function(){
-  clear($('stats'));for(var i=0;i<4;i++)$('stats').appendChild(h('div',{class:'skel','aria-hidden':'true',style:'height:92px'}));
+  var boot=null;
+  try{var be=$('boot');if(be&&be.textContent.trim()!=='null')boot=JSON.parse(be.textContent)}catch(x){}
+  route(true);
+  if(boot){lastGood=Date.now();apply(boot)}
+  else{clear($('stats'));for(var i=0;i<4;i++)$('stats').appendChild(h('div',{class:'skel','aria-hidden':'true',style:'height:92px'}))}
+  if(/[?&]palette\b/.test(location.search))openPal();
   fetch('api/events',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
     feedLive=!!j.live;if(feedLive){$('pause').hidden=false;$('feedsec').classList.remove('hide');(j.events||[]).forEach(function(e){addFeed(e,true)});if(!j.events.length){$('feed').appendChild(h('div',{class:'empty',style:'padding:28px 22px',text:'Waiting for the first event. Changes and traffic show up here as they happen.'}))}}
     else $('pause').hidden=false;
-  }).catch(function(){}).then(function(){poll();connect()});
+  }).catch(function(){}).then(function(){if(!boot)poll();connect()});
   setInterval(function(){if(!paused&&C.open.length)paintOpen()},1000);
   setInterval(function(){if(S&&S.health)renderHealth();if(S&&S.generated&&!paused)renderFoot()},5000);
 })();
