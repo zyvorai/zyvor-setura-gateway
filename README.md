@@ -130,10 +130,12 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | `bench URL` | Repeated probes with p50/p90/p99 latency, error rate and status histogram, and budget flags that fail the run. |
 | `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
 | `certs HOST:PORT` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. |
+| `ui` | A read-only live dashboard: route map, traffic split, findings with fixes, live feed. Also `--ui ADDR` on `gateway run` and `watch`. Loopback by default. |
+| `migrate check` | Compares Ingress rules with their converted HTTPRoutes (offline or live) and flags nginx annotations with no Gateway API equivalent. |
+| `history FILE` | Per-route uptime, p50/p95 and regressions from a `watch --history` file. |
 | `lint` | Static analysis of Gateway, HTTPRoute, GRPCRoute and TLSRoute specs with stable rule IDs. Text, JSON, SARIF and GitHub output, baselines, offline. |
 | `gate ROUTE URL` | Requires current parent status and consecutive passing probes before a rollout proceeds. |
 | `compare URL --target dns --target IP` | Probes one URL through DNS and specific addresses to find the node that answers differently. |
-| `publish GATEWAY --listener NAME` | Finds the single matching Envoy Service and runs `kubectl port-forward` on `127.0.0.1`. `--dry-run` prints the exact command. |
 | `inspect ROUTE` | Per-parent route conditions with observed generation, Service ports and EndpointSlice readiness counts. |
 | `listeners GATEWAY` | Listener attachment, supported kinds and conditions. |
 | `snapshot` / `diff BEFORE AFTER` | Capture Gateway, route and ReferenceGrant specs, then compare. `diff` exits 1 when they differ. |

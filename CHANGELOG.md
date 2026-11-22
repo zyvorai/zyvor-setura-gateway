@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+The built-in gateway grows up, and Setura gets a dashboard and a migration check.
+
+- **GRPCRoute and TLSRoute.** gRPC over h2c and h2 with service and method matching, streaming and trailers, and gateway errors returned as gRPC statuses. TLS passthrough routes by SNI (exact and wildcard hostnames, weighted backends) without terminating TLS. See `docs/grpc-tls-routes.md`.
+- **Resilience.** Route `retry` (codes, attempts, backoff) with a retry budget, passive outlier ejection with exponential backoff, active health thresholds, and weights that renormalise around unavailable backends. See `docs/resilience.md`.
+- **Observability and protection.** Structured JSON or text access logs, W3C trace propagation with optional OTLP/HTTP export, local token-bucket rate limiting by IP, route or header, and Prometheus `/metrics` on the admin endpoint. See `docs/observability.md`.
+- **`setura ui`.** A read-only, dependency-free live dashboard with an interactive route map, traffic-split bars and a live feed, also available as `--ui` on `gateway` and `watch`. Loopback by default, a bearer token is required elsewhere. See `docs/ui.md`.
+- **`setura migrate check`.** Compares Ingress rules with their converted Gateway API routes, offline or live, and flags nginx annotations that have no equivalent. Handles named ports, GRPCRoute, TLSRoute, IngressClass and TLS secrets. See `docs/migrate.md`.
+- **Multi-cluster and history.** `--context a,b,c` and `--all-contexts` on `check`, `snapshot`, `gate` and `lint`; `setura history` summarises uptime, latency and regressions from `watch --history`; `watch` alerts to a webhook or Slack on failure and recovery only. See `docs/multi-cluster.md` and `docs/alerting.md`.
+- **Conformance harness.** A separate module and weekly workflow that run the upstream Gateway API conformance suite (v1.7.0, GATEWAY-HTTP) against the built-in gateway. No results are published yet and the gateway makes no conformance claim.
+- **Toolchain.** Go 1.27 and current GitHub Actions.
+
+Known limits: retries move between endpoints of one Service only; ejection state resets on reload; rate limits are per process; no circuit breaking, TCPRoute or UDPRoute.
+
 ## 0.5.1
 
 The first release with everything below. `v0.5.0` was tagged but never released: its release build stopped at a flaky hot-reload test (a test race, not a gateway bug), so 0.5.1 carries the fixed test and no code changes to the gateway itself.
