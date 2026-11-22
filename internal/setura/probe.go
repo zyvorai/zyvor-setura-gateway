@@ -135,6 +135,9 @@ type ProbeOptions struct {
 	WarnExpiryDays int
 	MinCertDays    int
 	HTTP2          bool // require ALPN h2 over TLS and speak HTTP/2
+
+	// capture, when set, sees the response head before assertions run (used by migrate).
+	capture func(*http.Response)
 }
 
 // NewProbe returns options with the default expected status (200) and timeout (4s).
@@ -345,6 +348,9 @@ func Probe(o ProbeOptions) (*Report, error) {
 		r.Steps[stage] = &Step{{"state", "ok"}, {"status", resp.StatusCode}, {"expected", o.Status}}
 		if o.HTTP2 {
 			r.Steps[stage].Set("proto", resp.Proto)
+		}
+		if o.capture != nil {
+			o.capture(resp)
 		}
 		if resp.StatusCode != o.Status {
 			return fmt.Errorf("expected HTTP %d, received %d", o.Status, resp.StatusCode)

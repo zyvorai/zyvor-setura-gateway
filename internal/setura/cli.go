@@ -636,6 +636,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "bench":
 		return runBench(fs, rest, stdout, stderr)
 
+	case "migrate":
+		return runMigrate(cluster, fs, rest, stdout, stderr, u, stdoutTTY)
+
 	case "completion":
 		pos, err := parse(fs, rest)
 		if err != nil {

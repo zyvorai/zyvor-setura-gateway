@@ -42,7 +42,7 @@ func Man(w io.Writer) error {
 	p(".PP\nRun \\fBsetura COMMAND \\-h\\fR for the flags of a command.\n")
 	p(".SH MULTIPLE CONTEXTS\n\\fBcheck\\fR, \\fBsnapshot\\fR, \\fBgate\\fR and \\fBlint\\fR accept a comma separated list of kube contexts, or \\fB\\-\\-all\\-contexts\\fR, and merge the results with a per\\-context field. The exit status is unchanged.\n")
 	p(".SH ALERTING\n\\fBsetura watch\\fR can post failure and recovery transitions with \\fB\\-\\-alert\\-webhook\\fR and \\fB\\-\\-alert\\-slack\\fR. The URLs are secrets and are never printed. \\fBsetura history\\fR summarizes the file written by \\fB\\-\\-history\\fR.\n")
-	p(".SH EXIT STATUS\n.TP\n.B 0\nsuccess\n.TP\n.B 1\nthe check, gate or lint failed\n.TP\n.B 2\nusage or input error\n")
+	p(".SH EXIT STATUS\n.TP\n.B 0\nsuccess\n.TP\n.B 1\nthe check, gate, lint or migrate check failed or found differences\n.TP\n.B 2\nusage or input error\n")
 	p(".SH SEE ALSO\nhttps://github.com/zyvorai/zyvor\\-setura\\-gateway\n")
 	_, err := io.WriteString(w, b.String())
 	return err

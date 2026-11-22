@@ -16,6 +16,7 @@ var commandNames = []string{
 	"compare",
 	"snapshot",
 	"diff",
+	"migrate",
 	"map",
 	"impact",
 	"lint",
