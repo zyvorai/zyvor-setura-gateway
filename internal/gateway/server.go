@@ -55,6 +55,8 @@ type Options struct {
 	OCSPStaple bool
 	// AuthClock replaces the clock of token validation (tests).
 	AuthClock func() time.Time
+	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
+	Cert CertOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -120,6 +122,10 @@ type Server struct {
 	pprofSrv *http.Server
 	ocsp     atomic.Pointer[ocspManager]
 	authQ    atomic.Pointer[[]string] // query parameters API key policies read, redacted from logs
+	dx       sync.Map                 // derived (h2c, PROXY protocol) backend transports
+	proxyOut atomic.Bool              // some backend sends PROXY headers
+	acme     *acmeManager             // nil without --acme-dir
+	acmeErr  error                    // reported by the first Apply
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -139,6 +145,7 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 	s.shadowP = s.startShadowPersist()
+	s.initCert()
 	return s
 }
 
@@ -212,6 +219,7 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 	if err != nil {
 		return err
 	}
+	ln = s.wrapProxyProtocol(spec, ln)
 	if pg.L4 == "TCP" {
 		s.ports[spec] = &boundPort{ln: ln, raw: s.startTCP(ln, spec), kind: pg.kind()}
 		return nil
@@ -224,14 +232,18 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s.inflight.Add(1)
 			defer s.inflight.Add(-1)
+			if s.edgeRequest(w, r, pg.TLS) {
+				return
+			}
+			r = s.withProxyClient(r)
 			s.serveHTTP(w, r, spec)
 		})}
 	enableH2C(srv, pg.TLS)
 	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
 	s.ports[spec] = bp
 	if pg.TLS {
-		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"},
-			GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.certFor(spec, h.ServerName) }}
+		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: s.httpProtos(),
+			GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.acmeHello(spec, h) }}
 		base.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) { return s.clientTLSConfig(base, spec, h) }
 		srv.TLSConfig = base
 		go srv.ServeTLS(ln, "", "")
@@ -252,6 +264,12 @@ func (s *Server) certFor(port int, sni string) (*tls.Certificate, error) {
 	var l *RTListener
 	if sni != "" {
 		l = pg.pickListener(sni)
+	}
+	if l != nil && len(l.Certs) == 0 && l.ACME && s.acme != nil {
+		if c := s.acme.cert(sni); c != nil {
+			return s.stapled(c), nil
+		}
+		return nil, errors.New("ACME certificate for " + sni + " is not issued yet")
 	}
 	if l == nil || len(l.Certs) == 0 {
 		l = nil
@@ -285,6 +303,10 @@ func (s *Server) closePort(bp *boundPort) {
 func (s *Server) Apply(ld *Loaded) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.acmeErr != nil {
+		return s.acmeErr
+	}
+	ld.Config.ACME, ld.Config.ACMEDNS = s.acme != nil, s.acme != nil && s.opts.Cert.ACME.DNSHook != ""
 	s.seq++
 	cfg := ld.Config
 	for _, g := range cfg.Gateways {
@@ -552,6 +574,7 @@ func (s *Server) Close() {
 		s.pprofSrv.Close()
 	}
 	s.ocsp.Load().close()
+	s.acme.close()
 	s.mirrorWG.Wait()
 	s.hist.close()
 	s.res.closeTransports()
@@ -616,6 +639,7 @@ func (s *Server) startAdmin() error {
 		return nil
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
+	mux.HandleFunc("/acme", jsonOut(func() any { return s.ACMEInfo() }))
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)

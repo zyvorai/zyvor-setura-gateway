@@ -425,6 +425,10 @@ func (e errTransport) RoundTrip(*http.Request) (*http.Response, error) { return 
 // backendTransport is the HTTP transport for b: the shared pools for plain and
 // insecure upstreams, a policy specific one when a BackendTLSPolicy applies.
 func (s *Server) backendTransport(b *Backend) http.RoundTripper {
+	return s.derivedTransport(b, s.backendTransportBase(b), false)
+}
+
+func (s *Server) backendTransportBase(b *Backend) http.RoundTripper {
 	switch {
 	case b.TLSErr != "":
 		return errTransport{errors.New(b.TLSErr)}
@@ -442,6 +446,10 @@ func (s *Server) backendTransport(b *Backend) http.RoundTripper {
 
 // grpcTransport is backendTransport for gRPC (HTTP/2 only).
 func (s *Server) grpcTransport(b *Backend, scheme string) http.RoundTripper {
+	return s.derivedTransport(b, s.grpcTransportBase(b, scheme), true)
+}
+
+func (s *Server) grpcTransportBase(b *Backend, scheme string) http.RoundTripper {
 	switch {
 	case b.TLSErr != "":
 		return errTransport{errors.New(b.TLSErr)}
@@ -463,6 +471,7 @@ func (s *Server) closeBackendTLSTransports() {
 		v.(*http.Transport).CloseIdleConnections()
 		return true
 	})
+	s.closeDerivedTransports()
 }
 
 // resolveCAPath makes a CADef file path absolute against the config directory.

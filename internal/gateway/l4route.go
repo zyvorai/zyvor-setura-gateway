@@ -284,6 +284,11 @@ func (s *Server) tcpProxy(rl *rawListener, c net.Conn, port int) {
 	backendKey, line.BackendWeight = ref.B.Key, ref.Weight
 	open.set(func(v *OpenView) { v.Listener, v.Route, v.Backend = l.Key, routeKey, backendKey })
 	up, ep, attempts, dialTime, err := s.dialBackend(ref.B, "tcp")
+	if err == nil {
+		if err = writeProxyTo(up, ref.B, c); err != nil {
+			up.Close()
+		}
+	}
 	if len(attempts) > 1 {
 		line.Attempts = attempts
 	}

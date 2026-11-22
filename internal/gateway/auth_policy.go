@@ -454,6 +454,8 @@ func (s *Server) authNow() time.Time {
 // certificates and the list of query parameters that carry credentials.
 func (s *Server) postApply(t *Table) {
 	s.ocspSync(t)
+	s.acmeSync(t)
+	s.proxySync(t)
 	var names []string
 	for _, r := range t.Cfg.Routes {
 		for _, rule := range r.Rules {

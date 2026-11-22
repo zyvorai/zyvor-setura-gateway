@@ -68,9 +68,14 @@ another namespace than the snapshot `namespace`.
   to a string, a list, or an object. Endpoints are `host:port` or `http(s)://host:port`.
   Endpoints are used round-robin; with a `healthCheck`, unhealthy ones are skipped (when
   all are unhealthy, all are tried). `timeout` bounds the whole upstream request.
-  `insecureSkipVerify` is available for https upstreams.
+  `insecureSkipVerify` is available for https upstreams. `protocol: "h2c"` speaks HTTP/2 with prior
+  knowledge to plain `http://` endpoints (a Service port with `appProtocol: kubernetes.io/h2c` does the
+  same); `proxyProtocol: "v1"|"v2"` sends a PROXY protocol header on every upstream connection (HTTP,
+  gRPC, TLS passthrough and TCPRoute). See [certificates](certificates.md).
 * `secrets` resolves a listener's `certificateRefs`; files are relative to the config file
-  or inline PEM (`cert`, `key`). Rotating a certificate file triggers a reload.
+  or inline PEM (`cert`, `key`). Rotating a certificate or CA bundle file triggers a reload (found by
+  file size and modification time, no inotify). An HTTPS listener with a `hostname` and no
+  `certificateRefs` gets an ACME certificate when `--acme-dir` is set; see [certificates](certificates.md).
 * `caCertificates` maps `[namespace/]name` to `{"pem": "..."}` or `{"file": "ca.crt"}`; it is
   what a BackendTLSPolicy's `caCertificateRefs` (kind ConfigMap or Secret) resolve to in a file.
   Besides Gateways and HTTPRoutes the `resources` section may hold GRPCRoutes, TLSRoutes,
@@ -174,8 +179,11 @@ converged cluster sees no writes and drift is repaired on the next event or resy
   stream over plain `net/http`. Bookmarks advance the version, events trigger one coalesced
   reload, a `410 Gone` (HTTP or in-stream) forces a relist, dropped streams reconnect with
   jittered backoff (500 ms up to 30 s), and a collection whose API refuses watches is
-  polled every 5 s while the watch is retried. Secrets are fetched, not watched, so a
-  safety relist runs every `--resync` (default 1 m). `--poll` restores the old behaviour
+  polled every 5 s while the watch is retried. Every Secret and ConfigMap the last load
+  fetched (listener certificates, client CA bundles, BackendTLSPolicy CAs) has its own watch
+  selected by `metadata.name`, so a cert-manager renewal reaches the listener in seconds; a safety
+  relist still runs every `--resync` (default 1 m). RBAC needs `list` and `watch` on Secrets and
+  ConfigMaps for that (`install` grants it); without it the relist is the only refresh. `--poll` restores the old behaviour
   (reload every `--interval`, default 5 s) and uses no watch requests.
 * **Leader election.** With `--leader-elect` the replicas contend for a
   `coordination.k8s.io/v1` Lease (`--lease-name`, `--lease-namespace`, `--lease-duration`
@@ -220,12 +228,20 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   not been run through the upstream Gateway API conformance suite yet (a harness exists
   under `conformance/`; see `docs/conformance`). `conformance_test.go` is a self-check
   named after the suite's tests.
-* Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, TLS
-  passthrough by SNI, and plain TCP and UDP. No HTTP/3. Client certificates are validated on
+* Clients: HTTP/1.1, HTTP/2 over TLS, h2c, WebSocket and other Upgrade requests, TLS
+  passthrough by SNI, and plain TCP and UDP. No HTTP/3 (see [http3](http3.md); `--alt-svc`
+  can advertise one served by an edge in front). Client certificates are validated on
   HTTPS listeners (Gateway API frontend TLS validation) but not on `TLS` terminate listeners;
   see [security](security.md).
-  Upstreams are spoken to with HTTP/1.1 (HTTP/2 only for https upstreams).
-* Kubernetes mode: Secrets are not watched (picked up by the `--resync` relist), and a
+  Upstreams are spoken to with HTTP/1.1, HTTP/2 for https upstreams that negotiate `h2` by ALPN
+  (falling back to HTTP/1.1 when they do not), and h2c for backends marked `protocol: h2c`.
+* ACME: one certificate per hostname, no external account binding, no OCSP must-staple handling, no
+  ARI (renewal timing is 2/3 of the lifetime with jitter), and wildcards need your own DNS hook. See
+  [certificates](certificates.md).
+* PROXY protocol: inbound v1 and v2 per listener from named source networks; outbound v1 and v2 per
+  backend. Outbound HTTP connections are never reused (one header names one client), which costs a
+  connect per request; TLS terminate listeners forwarding to TCP backends do not send it.
+* Kubernetes mode: a
   leader that loses the API for longer than the renew deadline steps down, so status can
   lag during an API outage while traffic keeps flowing. `install` generates one
   Service with ports 80 and 443; use `--expose-gateway-ports` (or add ports yourself) for
@@ -242,7 +258,7 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   `SETURA_GATEWAY_SESSION_KEY` is set, so they do not survive a restart or move between
   replicas by default. TCPRoute and UDPRoute have nothing to match on: a listener sends all
   traffic to the oldest attached route's first rule with a backend. UDP is not retried, not
-  health checked and not rate limited; neither TCP nor UDP supports PROXY protocol.
+  health checked and not rate limited; UDP has no PROXY protocol (TCP does, see above).
 * ListenerSet listeners follow the Gateway's rules for conflicts (the Gateway's own listeners
   win, then older sets). BackendTLSPolicy is not applied to TLSRoute Terminate listeners.
 * Traffic security is per HTTPRoute rule and opt-in: JWT, API key, basic auth, client address
@@ -260,7 +276,7 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   on restart. `/config` never includes secret material (keys, passwords and JWKS URL
   credentials are redacted).
 * TLS Terminate on `TLS` listeners forwards plain TCP: no re-encryption to the backend and
-  no PROXY protocol. gRPC retries and mirroring need a unary call that fits in memory;
+  no outbound PROXY protocol. gRPC retries and mirroring need a unary call that fits in memory;
   streaming calls pass through untouched.
 * The redirect filter keeps the port from the request `Host` header when no scheme or
   port is given (the spec says listener port; that is wrong behind a port remap).

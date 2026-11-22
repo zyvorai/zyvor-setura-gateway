@@ -52,6 +52,7 @@ type RTListener struct {
 	Host       string
 	Certs      []tls.Certificate
 	Client     *ClientValidation // frontend TLS validation of an HTTPS listener, nil without
+	ACME       bool              // certificate comes from the ACME manager
 	Terminate  bool              // TLS listener that terminates (mode Terminate) instead of passing through
 	Entries    []*Entry
 	TLSEntries []*TLSEntry  // TLSRoute entries (passthrough listeners)
@@ -164,12 +165,14 @@ type Backend struct {
 	PortName  string
 	// TLS is the BackendTLSPolicy applied to this backend; TLSErr is set when a
 	// policy targets it but cannot be satisfied (connections then fail, 5xx).
-	TLS       *BackendTLS
-	TLSErr    string
-	TLSPolicy string
-	rr        atomic.Uint64
-	hmu       *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
-	CB        *CircuitOptions
+	TLS        *BackendTLS
+	TLSErr     string
+	TLSPolicy  string
+	rr         atomic.Uint64
+	hmu        *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
+	CB         *CircuitOptions
+	H2C        bool   // HTTP/2 prior knowledge to http:// endpoints
+	ProxyProto string // "v1", "v2" or "": PROXY protocol header on upstream connections
 }
 
 // pick returns the next healthy endpoint, or any endpoint when none is.
@@ -211,6 +214,9 @@ func newBackend(key, name string, def *BackendDef) (*Backend, error) {
 	}
 	if len(b.Eps) == 0 {
 		return nil, fmt.Errorf("backend %s: no endpoints", key)
+	}
+	if err := b.applyProtocol(def); err != nil {
+		return nil, fmt.Errorf("backend %s: %w", key, err)
 	}
 	return b, nil
 }
@@ -377,6 +383,19 @@ func BuildTable(cfg *Config) *Table {
 
 func (c *Config) resolveCerts(l *RTListener) {
 	if c.skipCerts {
+		return
+	}
+	if (l.L.TLS == nil || len(l.L.TLS.CertificateRefs) == 0) && c.ACME {
+		switch {
+		case l.Host == "":
+			l.Resolved = fact{false, "InvalidCertificateRef", "ACME needs a listener hostname to order a certificate for"}
+		case strings.HasPrefix(l.Host, "*.") && !c.ACMEDNS:
+			l.Resolved = fact{false, "InvalidCertificateRef", "ACME cannot issue the wildcard " + l.Host + " without the DNS-01 challenge: set --acme-dns-hook CMD or provide a Secret"}
+		default:
+			l.ACME = true
+			l.Resolved.Reason = "ResolvedRefs"
+			c.resolveClientCA(l)
+		}
 		return
 	}
 	if l.L.TLS == nil || len(l.L.TLS.CertificateRefs) == 0 {
