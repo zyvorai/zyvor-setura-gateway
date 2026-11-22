@@ -36,7 +36,9 @@ func probeFile(t *testing.T, fn func(ago time.Duration) (ok bool, ms float64)) s
 	return path
 }
 
-func asciiUI() *ui { return newUI(false, termOptions{ASCII: true}, func(string) string { return "" }) }
+func sloASCIIUI() *ui {
+	return newUI(false, termOptions{ASCII: true}, func(string) string { return "" })
+}
 
 func runSLOArgs(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
@@ -44,7 +46,7 @@ func runSLOArgs(t *testing.T, args ...string) (int, string, string) {
 	sloNow = func() time.Time { return sloT0 }
 	defer func() { sloNow = old }()
 	var out, errb strings.Builder
-	code, err := runSLO(newFlagSet("slo", &errb), args, &out, &errb, asciiUI())
+	code, err := runSLO(newFlagSet("slo", &errb), args, &out, &errb, sloASCIIUI())
 	if err != nil {
 		t.Fatalf("runSLO: %v\n%s", err, errb.String())
 	}
@@ -248,7 +250,7 @@ func TestHistorySLOFlag(t *testing.T) {
 	sloNow = func() time.Time { return sloT0 }
 	defer func() { sloNow = old }()
 	var out, errb strings.Builder
-	code, err := runHistory(newFlagSet("history", &errb), []string{f, "--slo", "--slo-config", cfg, "--format", "json"}, &out, &errb, asciiUI())
+	code, err := runHistory(newFlagSet("history", &errb), []string{f, "--slo", "--slo-config", cfg, "--format", "json"}, &out, &errb, sloASCIIUI())
 	if err != nil || code != 1 {
 		t.Fatalf("code %d err %v %s", code, err, errb.String())
 	}
@@ -307,7 +309,7 @@ func runAt(t *testing.T, now time.Time, args ...string) *SLOReport {
 	sloNow = func() time.Time { return now }
 	defer func() { sloNow = old }()
 	var out, errb strings.Builder
-	_, err := runSLO(newFlagSet("slo", &errb), append(args, "--format", "json", "--fail-on", "never"), &out, &errb, asciiUI())
+	_, err := runSLO(newFlagSet("slo", &errb), append(args, "--format", "json", "--fail-on", "never"), &out, &errb, sloASCIIUI())
 	if err != nil {
 		t.Fatalf("%v %s", err, errb.String())
 	}
@@ -360,7 +362,7 @@ func TestSLOFromGatewayMetricsAcrossRuns(t *testing.T) {
 func TestSLOGatewayUnreachableIsAnError(t *testing.T) {
 	var errb strings.Builder
 	var out strings.Builder
-	_, err := runSLO(newFlagSet("slo", &errb), []string{"--admin", "127.0.0.1:1"}, &out, &errb, asciiUI())
+	_, err := runSLO(newFlagSet("slo", &errb), []string{"--admin", "127.0.0.1:1"}, &out, &errb, sloASCIIUI())
 	if err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Errorf("err %v", err)
 	}
@@ -369,7 +371,7 @@ func TestSLOGatewayUnreachableIsAnError(t *testing.T) {
 func TestSLOFlagErrors(t *testing.T) {
 	for _, args := range [][]string{{"--format", "xml"}, {"--fail-on", "sometimes"}, {"extra"}, {"--objective", "100", "--history", "x"}} {
 		var errb, out strings.Builder
-		code, _ := runSLO(newFlagSet("slo", &errb), args, &out, &errb, asciiUI())
+		code, _ := runSLO(newFlagSet("slo", &errb), args, &out, &errb, sloASCIIUI())
 		if code != 2 && !(len(args) == 4) {
 			t.Errorf("%v: code %d", args, code)
 		}
