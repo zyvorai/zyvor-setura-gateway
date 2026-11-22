@@ -40,7 +40,7 @@ func Man(w io.Writer) error {
 		p(".TP\n.B %s\n%s\n", roff(c[0]), roff(c[1]))
 	}
 	p(".PP\nRun \\fBsetura COMMAND \\-h\\fR for the flags of a command.\n")
-	p(".SH EXIT STATUS\n.TP\n.B 0\nsuccess\n.TP\n.B 1\nthe check, gate or lint failed\n.TP\n.B 2\nusage or input error\n")
+	p(".SH EXIT STATUS\n.TP\n.B 0\nsuccess\n.TP\n.B 1\nthe check, gate, lint or migrate check failed or found differences\n.TP\n.B 2\nusage or input error\n")
 	p(".SH SEE ALSO\nhttps://github.com/zyvorai/zyvor\\-setura\\-gateway\n")
 	_, err := io.WriteString(w, b.String())
 	return err

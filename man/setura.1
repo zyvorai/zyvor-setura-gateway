@@ -55,6 +55,9 @@ statically analyze specs (offline)
 .B diff BEFORE AFTER
 compare two snapshots
 .TP
+.B migrate check [\-\-ingress F] [\-\-routes F]
+compare Ingress rules with their converted HTTPRoutes
+.TP
 .B ai REPORT [\-\-model NAME]
 explain saved evidence, optionally with local Ollama
 .TP
@@ -92,7 +95,7 @@ Run \fBsetura COMMAND \-h\fR for the flags of a command.
 success
 .TP
 .B 1
-the check, gate or lint failed
+the check, gate, lint or migrate check failed or found differences
 .TP
 .B 2
 usage or input error

@@ -1,0 +1,41 @@
+# An ingress-nginx Ingress for a small shop, as it runs today.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: demo
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [shop.example.test]
+      secretName: shop-tls
+  rules:
+    - host: shop.example.test
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8080
+          - path: /cart
+            pathType: Exact
+            backend:
+              service:
+                name: cart
+                port:
+                  number: 8080
+          - path: /legacy
+            pathType: Prefix
+            backend:
+              service:
+                name: legacy
+                port:
+                  number: 80
