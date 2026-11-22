@@ -3,7 +3,7 @@ class Setura < Formula
   desc "Publish and diagnose a local Envoy gateway"
   homepage "https://github.com/zyvorai/zyvor-setura-gateway"
   version "@VERSION@"
-  license :cannot_represent # LicenseRef-Zyvor-Production-1.0
+  license :cannot_represent # LicenseRef-Zyvor-Production-2.0
 
   on_macos do
     on_arm do
