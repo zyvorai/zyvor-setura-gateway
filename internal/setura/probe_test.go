@@ -151,10 +151,11 @@ func TestExplainTextOutputOrder(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
+	// Line 0 is the URL header, line 1 is blank, then one row per stage.
 	for i, want := range []string{"dns", "tcp", "tls", "http", "backend"} {
-		if !strings.HasPrefix(lines[i], want) {
-			t.Fatalf("line %d = %q, want prefix %q", i, lines[i], want)
+		if !strings.Contains(lines[i+2], " "+want+" ") {
+			t.Fatalf("line %d = %q, want stage %q", i+1, lines[i+1], want)
 		}
 	}
-	contains(t, lines[3], "status=200 expected=200")
+	contains(t, lines[5], "status=200 expected=200")
 }
