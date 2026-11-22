@@ -83,6 +83,7 @@ type KubeSource struct {
 	classes map[string]json.RawMessage // our GatewayClasses, raw
 	gwRaw   map[string]json.RawMessage
 	rtRaw   map[string]json.RawMessage
+	extra   map[string]extraRaw // GRPCRoutes and TLSRoutes by status key
 }
 
 // NewKubeSource builds a source for the API at base.
@@ -263,6 +264,11 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}
 
+	extra, err := k.loadExtraRoutes(ctx, cfg, mine)
+	if err != nil {
+		return nil, err
+	}
+
 	// Services and ready endpoints become backends.
 	slices, _ := decode(sliceItems)
 	type slice struct {
@@ -381,7 +387,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 	}
 
 	k.mu.Lock()
-	k.classes, k.gwRaw, k.rtRaw = ours, gwRaw, rtRaw
+	k.classes, k.gwRaw, k.rtRaw, k.extra = ours, gwRaw, rtRaw, extra
 	k.mu.Unlock()
 	sig, _ := json.Marshal(struct {
 		G []*Gateway
@@ -390,7 +396,9 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		S map[string]SecretDef
 		P []Grant
 		N map[string]map[string]string
-	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces})
+		X []*GRPCRoute
+		T []*TLSRoute
+	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes})
 	sum := sha256.Sum256(sig)
 	return &Loaded{Config: cfg, Hash: hex.EncodeToString(sum[:])}, nil
 }
@@ -441,7 +449,7 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		return nil
 	}
 	k.mu.Lock()
-	classes, gwRaw, rtRaw := k.classes, k.gwRaw, k.rtRaw
+	classes, gwRaw, rtRaw, extra := k.classes, k.gwRaw, k.rtRaw, k.extra
 	k.mu.Unlock()
 	var errs []error
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -485,36 +493,46 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		}
 	}
 	for key, raw := range rtRaw {
-		want := doc.Routes[key]
-		if want == nil {
-			continue
+		if err := k.writeRouteStatus(ctx, apiGatewayV1, "httproutes", raw, doc.Routes[key]); err != nil {
+			errs = append(errs, err)
 		}
-		var o kobj
-		json.Unmarshal(raw, &o)
-		var st struct {
-			Parents []ParentStatus `json:"parents"`
-		}
-		json.Unmarshal(o.Status, &st)
-		var others, mine []ParentStatus
-		for _, p := range st.Parents {
-			if p.ControllerName == ControllerName {
-				mine = append(mine, p)
-			} else {
-				others = append(others, p)
-			}
-		}
-		same := len(mine) == len(want.Parents)
-		for i := 0; same && i < len(mine); i++ {
-			same = reflect.DeepEqual(mine[i].ParentRef, want.Parents[i].ParentRef) && sameConds(mine[i].Conditions, want.Parents[i].Conditions)
-		}
-		if same {
-			continue
-		}
-		path := apiGatewayV1 + "/namespaces/" + url.PathEscape(o.Metadata.Namespace) + "/httproutes/" + url.PathEscape(o.Metadata.Name)
-		// A merge patch replaces arrays wholesale, so keep other controllers' entries.
-		if err := k.patchStatus(ctx, path, map[string]any{"parents": append(others, want.Parents...)}); err != nil {
+	}
+	for key, x := range extra {
+		if err := k.writeRouteStatus(ctx, x.base, x.plural, x.raw, doc.Routes[key]); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// writeRouteStatus patches one route's status.parents when it differs from
+// what the latest Load saw.
+func (k *KubeSource) writeRouteStatus(ctx context.Context, base, plural string, raw json.RawMessage, want *RouteStatus) error {
+	if want == nil {
+		return nil
+	}
+	var o kobj
+	json.Unmarshal(raw, &o)
+	var st struct {
+		Parents []ParentStatus `json:"parents"`
+	}
+	json.Unmarshal(o.Status, &st)
+	var others, mine []ParentStatus
+	for _, p := range st.Parents {
+		if p.ControllerName == ControllerName {
+			mine = append(mine, p)
+		} else {
+			others = append(others, p)
+		}
+	}
+	same := len(mine) == len(want.Parents)
+	for i := 0; same && i < len(mine); i++ {
+		same = reflect.DeepEqual(mine[i].ParentRef, want.Parents[i].ParentRef) && sameConds(mine[i].Conditions, want.Parents[i].Conditions)
+	}
+	if same {
+		return nil
+	}
+	path := base + "/namespaces/" + url.PathEscape(o.Metadata.Namespace) + "/" + plural + "/" + url.PathEscape(o.Metadata.Name)
+	// A merge patch replaces arrays wholesale, so keep other controllers' entries.
+	return k.patchStatus(ctx, path, map[string]any{"parents": append(others, want.Parents...)})
 }

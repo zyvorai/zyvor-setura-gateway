@@ -166,6 +166,10 @@ func plain(w http.ResponseWriter, code int, msg string) {
 
 // serveHTTP is the data-plane handler for one port.
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
+	if isGRPC(r) {
+		s.serveGRPC(w, r, port)
+		return
+	}
 	start := time.Now()
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}

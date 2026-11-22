@@ -94,6 +94,7 @@ type ParentRef struct {
 
 // Route is an HTTPRoute.
 type Route struct {
+	Kind       string // "" for HTTPRoute; "GRPCRoute" or "TLSRoute" for stand-ins of those kinds
 	NS, Name   string
 	Generation int64
 	Created    time.Time
@@ -104,6 +105,15 @@ type Route struct {
 
 // Key is namespace/name.
 func (r *Route) Key() string { return r.NS + "/" + r.Name }
+
+// StatusKey is the key in the status document: namespace/name for HTTPRoute,
+// Kind/namespace/name for the other kinds (names may repeat across kinds).
+func (r *Route) StatusKey() string {
+	if r.Kind == "" {
+		return r.Key()
+	}
+	return r.Kind + "/" + r.Key()
+}
 
 // Rule is one HTTPRoute rule.
 type Rule struct {
@@ -314,6 +324,9 @@ type Config struct {
 	Namespaces map[string]map[string]string // namespace -> labels
 	// ClassStatus lets a source learn about GatewayClass handling.
 	Classes []string
+	// GRPCRoutes and TLSRoutes are the additional route kinds.
+	GRPCRoutes []*GRPCRoute
+	TLSRoutes  []*TLSRoute
 }
 
 type fileConfig struct {
@@ -381,6 +394,10 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		case grpcRouteKey, tlsRouteKey:
+			if err := cfg.parseExtraRoute(kind, rns, name, fc.Resources[key]); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
 		}
 	}
 	for k, v := range fc.Backends {
