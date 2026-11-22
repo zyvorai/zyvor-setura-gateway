@@ -35,6 +35,9 @@ type Event struct {
 	Level  string `json:"level"`  // ok, warn, info
 	Target string `json:"target"` // route, URL or listener the event is about
 	Text   string `json:"text"`
+	// Data carries a structured payload for kinds the page handles itself
+	// (for example "conns"); such events are not shown in the feed.
+	Data any `json:"data,omitempty"`
 }
 
 // Hub keeps a ring buffer of recent events and fans them out to subscribers.
@@ -79,6 +82,25 @@ func (h *Hub) Publish(e Event) Event {
 	return e
 }
 
+// Broadcast fans an event out to live subscribers without keeping it in the
+// replay buffer, for high-volume structured updates that a reconnecting page
+// refetches from its own endpoint instead.
+func (h *Hub) Broadcast(e Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.next++
+	e.ID = h.next
+	if e.Time == "" {
+		e.Time = time.Now().UTC().Format(time.RFC3339)
+	}
+	for c := range h.subs {
+		select {
+		case c <- e:
+		default:
+		}
+	}
+}
+
 // Since returns events with an ID greater than id, oldest first.
 func (h *Hub) Since(id int64) []Event {
 	h.mu.Lock()
@@ -111,6 +133,10 @@ type Options struct {
 	State func() any
 	// Hub supplies the live feed; nil disables it (the UI hides the feed).
 	Hub *Hub
+	// Connections returns the recent-connections document served at
+	// /api/connections?limit=&since=. It must not contain header values or
+	// query strings. Nil hides the Connections section.
+	Connections func(limit int, since int64) any
 	// Token, when set, is required as a Bearer token or session cookie.
 	Token string
 	// Interval is how often an SSE client checks for a changed state.
@@ -146,6 +172,7 @@ func New(o Options) http.Handler {
 	mux.HandleFunc("/", s.index)
 	mux.HandleFunc("/api/state", s.guard(s.state))
 	mux.HandleFunc("/api/events", s.guard(s.events))
+	mux.HandleFunc("/api/connections", s.guard(s.connections))
 	mux.HandleFunc("/events", s.guard(s.stream))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 	return s.base(mux)
@@ -268,6 +295,22 @@ func (s *srv) state(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
+}
+
+func (s *srv) connections(w http.ResponseWriter, r *http.Request) {
+	if s.o.Connections == nil {
+		http.NotFound(w, r)
+		return
+	}
+	limit, since := 200, int64(0)
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 5000 {
+		limit = n
+	}
+	if n, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64); err == nil && n > 0 {
+		since = n
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.o.Connections(limit, since))
 }
 
 func (s *srv) events(w http.ResponseWriter, r *http.Request) {

@@ -47,6 +47,8 @@ Flags for run and up:
   --outlier-max-ejection DUR   ejection time cap (default 5m)
   --health-path PATH    active-check every backend without its own healthCheck (default off)
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
+  --log-query           keep query strings in logged and dashboard paths (default: stripped)
+  --conn-history N      recent requests kept for /connections and the dashboard (default 500, 0 = off)
   --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
                         a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
@@ -67,6 +69,7 @@ type runFlags struct {
 	bindFlagFS *flag.FlagSet
 	obs        obsFlags
 	outlier    int
+	connHist   int
 	uiAddr     string
 	uiToken    string
 }
@@ -89,6 +92,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&r.HealthPath, "health-path", "", "default active health check path")
 	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
 	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
+	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
@@ -116,6 +120,13 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	if f.opts.Resilience.RetryBudgetPercent < 1 || f.opts.Resilience.RetryBudgetPercent > 100 {
 		return nil, fmt.Errorf("--retry-budget %d: want 1-100", f.opts.Resilience.RetryBudgetPercent)
+	}
+	if f.connHist < 0 {
+		return nil, fmt.Errorf("--conn-history %d: want 0 (off) or a positive count", f.connHist)
+	}
+	f.opts.ConnHistory = f.connHist
+	if f.connHist == 0 {
+		f.opts.ConnHistory = -1
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint

@@ -176,6 +176,7 @@ type resTransport struct {
 
 	tried   map[*Endpoint]bool
 	retries int
+	st      *reqState // receives upstream details; may be nil
 }
 
 func (s *Server) newTransport(b *Backend, first *Endpoint, retry *CRetry, replay []byte, canReplay bool) *resTransport {
@@ -204,12 +205,22 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			ep = t.b.choose(rs.now(), t.tried)
 		}
 		t.tried[ep] = true
-		out := req.Clone(ctx)
+		rctx, health := ctx, ""
+		var tr *attemptTrace
+		if t.st != nil {
+			rctx, tr = t.st.up.begin(ctx)
+			health = t.b.state(ep, rs.now())
+		}
+		out := req.Clone(rctx)
 		out.URL.Scheme, out.URL.Host = ep.URL.Scheme, ep.URL.Host
 		if t.retry != nil && t.canReplay && !bodyless {
 			out.Body = io.NopCloser(bytes.NewReader(t.replay))
 		}
 		resp, err := t.base.RoundTrip(out)
+		if t.st != nil {
+			t.st.up.end(tr, ep, health, resp, err)
+			t.st.noteUpstream()
+		}
 		cancelled := err != nil && ctx.Err() != nil
 		if !cancelled {
 			rs.observe(t.b, ep, err != nil || resp.StatusCode >= 500, rs.now())

@@ -23,17 +23,18 @@ const DefaultAdmin = "127.0.0.1:19000"
 
 // Options configures a Server.
 type Options struct {
-	Bind       string      // listener bind address, default 127.0.0.1
-	PortMap    map[int]int // spec port -> bound port (0 asks the OS for a free port)
-	PortOffset int         // added to spec ports below 1024 that PortMap does not name
-	Admin      string      // admin address; "off" disables, empty means DefaultAdmin
-	Force      bool        // apply configs that have lint errors
-	AccessLog  io.Writer   // JSON-lines access log, nil to disable
-	Diag       io.Writer   // human diagnostics, nil to discard
-	Rand       func(n int) int
-	Obs        ObsOptions        // access log format, tracing export, rate limiting
-	ShadowDiff int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
-	Resilience ResilienceOptions // retries, outlier ejection, default health checks
+	Bind        string      // listener bind address, default 127.0.0.1
+	PortMap     map[int]int // spec port -> bound port (0 asks the OS for a free port)
+	PortOffset  int         // added to spec ports below 1024 that PortMap does not name
+	Admin       string      // admin address; "off" disables, empty means DefaultAdmin
+	Force       bool        // apply configs that have lint errors
+	AccessLog   io.Writer   // JSON-lines access log, nil to disable
+	Diag        io.Writer   // human diagnostics, nil to discard
+	Rand        func(n int) int
+	ConnHistory int               // recent request records kept for /connections (0 = 500, negative disables)
+	Obs         ObsOptions        // access log format, tracing export, rate limiting
+	ShadowDiff  int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
+	Resilience  ResilienceOptions // retries, outlier ejection, default health checks
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -68,6 +69,7 @@ type Server struct {
 	table atomic.Pointer[Table]
 	stats *Stats
 	obs   *obs
+	conns *connTable // nil when connection history is disabled
 
 	mu       sync.Mutex
 	ports    map[int]*boundPort
@@ -98,7 +100,11 @@ func New(opts Options) *Server {
 			MaxIdleConns: 256, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}}
 	}
-	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	hist := opts.ConnHistory
+	if hist == 0 {
+		hist = DefaultConnHistory
+	}
+	return &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -484,6 +490,7 @@ func (s *Server) startAdmin() error {
 		}
 	}
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.metrics(w, r); s.WriteMetrics(w) })
+	mux.HandleFunc("/connections", s.connectionsHandler)
 	mux.HandleFunc("/shadow", jsonOut(func() any { return s.shadow.Summary() }))
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {
