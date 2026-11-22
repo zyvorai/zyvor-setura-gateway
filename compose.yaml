@@ -1,0 +1,34 @@
+# Demo stack: the built-in gateway, two identity backends and the dashboard.
+# Everything binds to loopback on the host unless SETURA_BIND is set
+# (scripts/deploy-remote.sh does that only with PUBLIC=1).
+name: zyvor-setura-gateway
+services:
+  echo-v1:
+    build: {context: ., args: {VERSION: "${VERSION:-dev}"}}
+    image: zyvor-setura-gateway:local
+    command: ["echo", "--name", "orders-v1", "--listen", "0.0.0.0:8080"]
+    restart: unless-stopped
+  echo-v2:
+    image: zyvor-setura-gateway:local
+    command: ["echo", "--name", "orders-v2", "--listen", "0.0.0.0:8080"]
+    restart: unless-stopped
+    depends_on: [echo-v1]
+  gateway:
+    image: zyvor-setura-gateway:local
+    command:
+      - gateway
+      - run
+      - --config=/etc/setura/gateway.json
+      - --bind=0.0.0.0
+      - --admin=0.0.0.0:19000
+      - --ui=0.0.0.0:9090
+    environment:
+      SETURA_UI_TOKEN: "${SETURA_UI_TOKEN:?set SETURA_UI_TOKEN in .env}"
+    volumes:
+      - ./deploy/gateway.json:/etc/setura/gateway.json:ro
+    ports:
+      - "${SETURA_BIND:-127.0.0.1}:${SETURA_PORT:-18090}:8080"
+      - "127.0.0.1:${SETURA_UI_PORT:-18091}:9090"
+      - "127.0.0.1:${SETURA_ADMIN_PORT:-18092}:19000"
+    restart: unless-stopped
+    depends_on: [echo-v1, echo-v2]

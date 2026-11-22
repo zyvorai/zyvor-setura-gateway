@@ -1,0 +1,40 @@
+{
+  "schema": "setura.route-specs/v1",
+  "namespace": "setura-demo",
+  "resources": {
+    "gateways.gateway.networking.k8s.io/dev": {
+      "gatewayClassName": "setura",
+      "listeners": [{"name": "web", "protocol": "HTTP", "port": 8080}]
+    },
+    "httproutes.gateway.networking.k8s.io/orders": {
+      "parentRefs": [{"name": "dev", "sectionName": "web"}],
+      "rules": [
+        {
+          "matches": [{"path": {"type": "PathPrefix", "value": "/checkout"}}],
+          "backendRefs": [
+            {"name": "orders-v1", "port": 80, "weight": 90},
+            {"name": "orders-v2", "port": 80, "weight": 10}
+          ]
+        },
+        {
+          "matches": [{"path": {"type": "PathPrefix", "value": "/old"}}],
+          "filters": [
+            {"type": "RequestRedirect", "requestRedirect": {"path": {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/checkout"}, "statusCode": 301}}
+          ]
+        },
+        {
+          "matches": [{"path": {"type": "PathPrefix", "value": "/api"}}],
+          "filters": [
+            {"type": "URLRewrite", "urlRewrite": {"path": {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/"}}},
+            {"type": "ResponseHeaderModifier", "responseHeaderModifier": {"set": [{"name": "X-Served-By", "value": "setura"}]}}
+          ],
+          "backendRefs": [{"name": "orders-v1", "port": 80}]
+        }
+      ]
+    }
+  },
+  "backends": {
+    "orders-v1:80": {"endpoints": ["echo-v1:8080"], "timeout": "5s"},
+    "orders-v2:80": {"endpoints": ["echo-v2:8080"], "timeout": "5s"}
+  }
+}
