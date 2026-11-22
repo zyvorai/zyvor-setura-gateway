@@ -24,6 +24,8 @@ var helpGroups = []helpGroup{
 		{"gate", "ROUTE URL", "require current parent status and a probe streak"},
 		{"compare", "URL --target dns|IP", "probe the same URL via DNS and/or IPs"},
 		{"watch", "URL... [--file FILE]", "re-probe on an interval, print state changes, serve metrics"},
+		{"bench", "URL", "repeat probes and report latency percentiles and budgets"},
+		{"grpc-health", "HOST:PORT", "call grpc.health.v1.Health/Check over TLS (HTTP/2)"},
 	}},
 	{"Inspect", []helpEntry{
 		{"inspect", "ROUTE", "show route conditions and backend inventory"},

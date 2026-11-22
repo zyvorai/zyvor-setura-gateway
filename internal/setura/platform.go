@@ -309,7 +309,15 @@ func Snapshot(c *Cluster, namespace string) (obj, error) {
 			resources[kind+"/"+asStr(req(asMap(req(m, "metadata")), "name"))] = req(m, "spec")
 		}
 	}
-	return obj{"schema": snapshotSchema, "namespace": namespace, "resources": resources}, nil
+	snap := obj{"schema": snapshotSchema, "namespace": namespace, "resources": resources}
+	captured, foreign := captureExtras(c, namespace, resources)
+	if len(captured) > 0 {
+		snap["captured"] = captured
+	}
+	if len(foreign) > 0 {
+		snap["foreign"] = foreign
+	}
+	return snap, nil
 }
 
 func readSnapshot(path string) (obj, error) {

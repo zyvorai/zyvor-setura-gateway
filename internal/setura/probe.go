@@ -134,6 +134,7 @@ type ProbeOptions struct {
 	MinTLS         string
 	WarnExpiryDays int
 	MinCertDays    int
+	HTTP2          bool // require ALPN h2 over TLS and speak HTTP/2
 }
 
 // NewProbe returns options with the default expected status (200) and timeout (4s).
@@ -192,6 +193,9 @@ func Probe(o ProbeOptions) (*Report, error) {
 	}
 	if o.MaxMS < 0 || math.IsNaN(o.MaxMS) {
 		return nil, userError("max latency must not be negative")
+	}
+	if o.HTTP2 && !secure {
+		return nil, userError("--http2 needs an https:// URL (ALPN h2 is negotiated over TLS)")
 	}
 	if o.Address != "" && net.ParseIP(o.Address) == nil {
 		return nil, userErrorf("%s does not appear to be an IPv4 or IPv6 address", pyRepr(o.Address))
@@ -278,7 +282,7 @@ func Probe(o ProbeOptions) (*Report, error) {
 
 		if secure {
 			stage = "tls"
-			cfg := &tls.Config{ServerName: host}
+			cfg := &tls.Config{ServerName: host, NextProtos: alpnProtos(o)}
 			if o.CA != "" {
 				pem, err := os.ReadFile(o.CA)
 				if err != nil {
@@ -302,8 +306,14 @@ func Probe(o ProbeOptions) (*Report, error) {
 			}
 			step, reason := o.tlsOpts().tlsStep(tc.ConnectionState(), mst)
 			r.Steps[stage] = step
+			if o.HTTP2 {
+				r.Steps[stage].Set("alpn", tc.ConnectionState().NegotiatedProtocol)
+			}
 			if reason != "" {
 				return fmt.Errorf("%s", reason)
+			}
+			if neg := tc.ConnectionState().NegotiatedProtocol; o.HTTP2 && neg != "h2" {
+				return fmt.Errorf("server did not negotiate h2 (ALPN %q)", neg)
 			}
 		}
 
@@ -316,15 +326,26 @@ func Probe(o ProbeOptions) (*Report, error) {
 			path += "?" + u.RawQuery
 		}
 		_ = conn.SetDeadline(time.Now().Add(timeout))
-		if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: zyvor-setura\r\n\r\n", path, u.Host); err != nil {
-			return err
-		}
-		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "GET"})
-		if err != nil {
-			return err
+		var resp *http.Response
+		if o.HTTP2 {
+			var err error
+			if resp, err = h2Get(conn, u, path, timeout); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: zyvor-setura\r\n\r\n", path, u.Host); err != nil {
+				return err
+			}
+			var err error
+			if resp, err = http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "GET"}); err != nil {
+				return err
+			}
 		}
 		defer resp.Body.Close()
 		r.Steps[stage] = &Step{{"state", "ok"}, {"status", resp.StatusCode}, {"expected", o.Status}}
+		if o.HTTP2 {
+			r.Steps[stage].Set("proto", resp.Proto)
+		}
 		if resp.StatusCode != o.Status {
 			return fmt.Errorf("expected HTTP %d, received %d", o.Status, resp.StatusCode)
 		}

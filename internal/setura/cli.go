@@ -205,6 +205,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		sni := fs.String("tls-server-name", "", "TLS SNI and verification name (default: URL host)")
 		minTLS := fs.String("min-tls", "", "minimum TLS version, 1.2 or 1.3")
 		warnDays := fs.Int("warn-expiry-days", 0, "add expiry_warning when the server certificate expires sooner than N days")
+		http2 := fs.Bool("http2", false, "negotiate ALPN h2 over TLS and speak HTTP/2")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -213,7 +214,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			return 2, err
 		}
 		o := ProbeOptions{URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
-			BodyContains: *body, MaxMS: *maxMS,
+			BodyContains: *body, MaxMS: *maxMS, HTTP2: *http2,
 			Cert: *cert, Key: *key, ServerName: *sni, MinTLS: *minTLS, WarnExpiryDays: *warnDays}
 		for _, h := range headers {
 			name, value, ok := strings.Cut(h, ":")
@@ -613,6 +614,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "man":
 		return 0, Man(stdout)
 
+	case "grpc-health":
+		return runGRPCHealth(fs, rest, stdout, stderr)
+
+	case "bench":
+		return runBench(fs, rest, stdout, stderr)
+
 	case "completion":
 		pos, err := parse(fs, rest)
 		if err != nil {
@@ -709,7 +716,7 @@ func Check(path string) ([]*Report, error) {
 		return nil, userError("check file must be a nonempty JSON array")
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
-		"headers": true, "body_contains": true, "max_ms": true}
+		"headers": true, "body_contains": true, "max_ms": true, "http2": true}
 	for _, k := range mtlsCheckKeys {
 		allowed[k] = true
 	}
@@ -763,6 +770,13 @@ func Check(path string) ([]*Report, error) {
 		}
 		if err := applyCheckTLS(m, &o); err != nil {
 			return nil, err
+		}
+		if h, ok := m["http2"]; ok {
+			b, isBool := h.(bool)
+			if !isBool {
+				return nil, userError("http2 must be true or false")
+			}
+			o.HTTP2 = b
 		}
 		r, err := Probe(o)
 		if err != nil {

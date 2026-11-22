@@ -20,12 +20,17 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET001", SeverityError, "HTTPRoute has no parentRefs, so no Gateway will ever serve it"},
 	{"SET002", SeverityError, "every backendRef in a rule has weight 0, so matching requests are dropped"},
 	{"SET003", SeverityWarning, "rule has no backendRefs and no redirect filter, so matching requests get a 500"},
-	{"SET004", SeverityWarning, "backendRef points at another namespace and needs a ReferenceGrant there"},
+	{"SET004", SeverityWarning, "backendRef points at another namespace and needs a ReferenceGrant there (error when the snapshot captured ReferenceGrants and none matches)"},
 	{"SET005", SeverityError, "parentRef names a listener (sectionName) the Gateway does not declare"},
 	{"SET006", SeverityWarning, "route hostnames do not intersect the hostname of the listener it attaches to"},
 	{"SET007", SeverityError, "HTTPS or TLS listener has no tls configuration"},
 	{"SET008", SeverityError, "two listeners on one Gateway share a name or the same port, protocol and hostname"},
 	{"SET009", SeverityWarning, "two routes match the same hostname and path on the same parent, so one shadows the other"},
+	{"SET010", SeverityError, "GRPCRoute has no parentRefs or no rules, so it can never serve traffic"},
+	{"SET011", SeverityWarning, "GRPCRoute or TLSRoute hostnames do not intersect the hostname of the listener it attaches to"},
+	{"SET012", SeverityWarning, "ReferenceGrant has an empty from or to list and permits nothing"},
+	{"SET013", SeverityError, "listener allowedRoutes (namespaces or kinds) does not admit the attaching route"},
+	{"SET014", SeverityError, "route rule has a negative or overflowing backendRef weight, or mixes Service and non-Service backendRefs"},
 }
 
 func ruleSeverity(id string) string {
@@ -49,7 +54,7 @@ func hostsOverlap(a, b string) bool {
 }
 
 // Lint statically analyzes a Setura route snapshot. It reads declared specs
-// only; it cannot see ReferenceGrants, status or runtime behavior.
+// only; ReferenceGrants are known only when the snapshot captured them.
 func Lint(snapshot obj) (obj, error) {
 	if snapshot["schema"] != snapshotSchema {
 		return nil, userError("expected a Setura route snapshot")
@@ -129,7 +134,10 @@ func Lint(snapshot obj) (obj, error) {
 					allZero = false
 				}
 				if rn := str(ref, "namespace", ns); rn != ns {
-					add("SET004", id, fmt.Sprintf("%s: backendRef %s/%s needs a ReferenceGrant in namespace %s", where, rn, asStr(ref["name"]), rn))
+					if sev := refGrantSeverity(snapshot, ns, "HTTPRoute", ref); sev != "" {
+						findings = append(findings, obj{"id": "SET004", "severity": sev, "resource": id,
+							"message": fmt.Sprintf("%s: backendRef %s/%s needs a ReferenceGrant in namespace %s", where, rn, asStr(ref["name"]), rn)})
+					}
 				}
 			}
 			if allZero {
@@ -203,6 +211,7 @@ func Lint(snapshot obj) (obj, error) {
 		}
 	}
 
+	findings = append(findings, extraRules(snapshot, specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

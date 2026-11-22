@@ -21,6 +21,8 @@ var commandNames = []string{
 	"lint",
 	"ai",
 	"certs",
+	"grpc-health",
+	"bench",
 	"doctor",
 	"capabilities",
 	"exposure",
