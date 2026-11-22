@@ -12,27 +12,60 @@ import (
 
 const defaultAccessLogBuffer = 4096
 
+// logLine is one access log line and one /connections history record.
+// Fields that are unknown for a request are omitted.
 type logLine struct {
-	Time      string  `json:"time"`
-	Listener  string  `json:"listener,omitempty"`
-	Host      string  `json:"host"`
-	Method    string  `json:"method"`
-	Path      string  `json:"path"`
-	Status    int     `json:"status"`
-	Bytes     int64   `json:"bytes"`
-	Millis    float64 `json:"duration_ms"`
-	Route     string  `json:"route,omitempty"`
-	Rule      *int    `json:"rule,omitempty"`
-	Backend   string  `json:"backend,omitempty"`
-	Remote    string  `json:"remote"`
-	RequestID string  `json:"request_id,omitempty"`
-	TraceID   string  `json:"trace_id,omitempty"`
-	SpanID    string  `json:"span_id,omitempty"`
-	Error     string  `json:"error,omitempty"`
+	ID                int64        `json:"id,omitempty"` // history sequence number, not part of log lines
+	Time              string       `json:"time"`
+	Listener          string       `json:"listener,omitempty"`
+	ListenerPort      int          `json:"listener_port,omitempty"`
+	Host              string       `json:"host"`
+	Method            string       `json:"method"`
+	Path              string       `json:"path"`
+	Status            int          `json:"status"`
+	Bytes             int64        `json:"bytes"`
+	Millis            float64      `json:"duration_ms"`
+	Route             string       `json:"route,omitempty"`
+	Rule              *int         `json:"rule,omitempty"`
+	Match             *int         `json:"match,omitempty"`
+	Backend           string       `json:"backend,omitempty"`
+	BackendWeight     int          `json:"backend_weight,omitempty"`
+	Remote            string       `json:"remote"`
+	ClientIP          string       `json:"client_ip,omitempty"`
+	ClientPort        int          `json:"client_port,omitempty"`
+	Protocol          string       `json:"protocol,omitempty"`
+	HTTPVersion       string       `json:"http_version,omitempty"`
+	TLSVersion        string       `json:"tls_version,omitempty"`
+	TLSCipher         string       `json:"tls_cipher,omitempty"`
+	TLSSNI            string       `json:"tls_sni,omitempty"`
+	TLSALPN           string       `json:"tls_alpn,omitempty"`
+	TLSClientCert     string       `json:"tls_client_cert_subject,omitempty"`
+	UserAgent         string       `json:"user_agent,omitempty"`
+	XFF               string       `json:"x_forwarded_for,omitempty"` // as received, never trusted
+	GRPCService       string       `json:"grpc_service,omitempty"`
+	GRPCMethod        string       `json:"grpc_method,omitempty"`
+	GRPCStatus        *int         `json:"grpc_status,omitempty"`
+	RateLimited       bool         `json:"rate_limited,omitempty"`
+	RequestBytes      int64        `json:"request_bytes,omitempty"`
+	ResponseBytes     int64        `json:"response_bytes,omitempty"`
+	UpstreamAddr      string       `json:"upstream_addr,omitempty"`
+	UpstreamProto     string       `json:"upstream_protocol,omitempty"`
+	UpstreamTLS       *bool        `json:"upstream_tls,omitempty"`
+	UpstreamReused    *bool        `json:"upstream_reused,omitempty"`
+	UpstreamConnectMS float64      `json:"upstream_connect_ms,omitempty"`
+	UpstreamTTFBMS    float64      `json:"upstream_ttfb_ms,omitempty"`
+	UpstreamStatus    int          `json:"upstream_status,omitempty"`
+	UpstreamHealth    string       `json:"upstream_health,omitempty"`
+	Retries           int          `json:"retries,omitempty"`
+	Attempts          []attemptRec `json:"attempts,omitempty"`
+	RequestID         string       `json:"request_id,omitempty"`
+	TraceID           string       `json:"trace_id,omitempty"`
+	SpanID            string       `json:"span_id,omitempty"`
+	Error             string       `json:"error,omitempty"`
 }
 
 func (l *logLine) text() []byte {
-	b := make([]byte, 0, 256)
+	b := make([]byte, 0, 512)
 	kv := func(k, v string) {
 		if v == "" {
 			return
@@ -42,15 +75,92 @@ func (l *logLine) text() []byte {
 		b = strconv.AppendQuote(b, v)
 		b = append(b, ' ')
 	}
+	ki := func(k string, v int64) {
+		if v == 0 {
+			return
+		}
+		b = append(b, k...)
+		b = append(b, '=')
+		b = strconv.AppendInt(b, v, 10)
+		b = append(b, ' ')
+	}
+	kf := func(k string, v float64) {
+		if v == 0 {
+			return
+		}
+		b = append(b, k...)
+		b = append(b, '=')
+		b = strconv.AppendFloat(b, v, 'f', 3, 64)
+		b = append(b, ' ')
+	}
+	kb := func(k string, v *bool) {
+		if v == nil {
+			return
+		}
+		b = append(b, k...)
+		b = append(b, '=')
+		b = strconv.AppendBool(b, *v)
+		b = append(b, ' ')
+	}
 	kv("time", l.Time)
 	kv("listener", l.Listener)
+	ki("listener_port", int64(l.ListenerPort))
 	kv("host", l.Host)
 	kv("method", l.Method)
 	kv("path", l.Path)
 	b = append(b, "status="+strconv.Itoa(l.Status)+" bytes="+strconv.FormatInt(l.Bytes, 10)+" duration_ms="+strconv.FormatFloat(l.Millis, 'f', 3, 64)+" "...)
 	kv("route", l.Route)
+	if l.Rule != nil {
+		b = append(b, "rule="+strconv.Itoa(*l.Rule)+" "...)
+	}
+	if l.Match != nil {
+		b = append(b, "match="+strconv.Itoa(*l.Match)+" "...)
+	}
 	kv("backend", l.Backend)
+	ki("backend_weight", int64(l.BackendWeight))
 	kv("remote", l.Remote)
+	kv("client_ip", l.ClientIP)
+	ki("client_port", int64(l.ClientPort))
+	kv("protocol", l.Protocol)
+	kv("http_version", l.HTTPVersion)
+	kv("tls_version", l.TLSVersion)
+	kv("tls_cipher", l.TLSCipher)
+	kv("tls_sni", l.TLSSNI)
+	kv("tls_alpn", l.TLSALPN)
+	kv("tls_client_cert_subject", l.TLSClientCert)
+	kv("user_agent", l.UserAgent)
+	kv("x_forwarded_for", l.XFF)
+	kv("grpc_service", l.GRPCService)
+	kv("grpc_method", l.GRPCMethod)
+	if l.GRPCStatus != nil {
+		b = append(b, "grpc_status="+strconv.Itoa(*l.GRPCStatus)+" "...)
+	}
+	if l.RateLimited {
+		b = append(b, "rate_limited=true "...)
+	}
+	ki("request_bytes", l.RequestBytes)
+	ki("response_bytes", l.ResponseBytes)
+	kv("upstream_addr", l.UpstreamAddr)
+	kv("upstream_protocol", l.UpstreamProto)
+	kb("upstream_tls", l.UpstreamTLS)
+	kb("upstream_reused", l.UpstreamReused)
+	kf("upstream_connect_ms", l.UpstreamConnectMS)
+	kf("upstream_ttfb_ms", l.UpstreamTTFBMS)
+	ki("upstream_status", int64(l.UpstreamStatus))
+	kv("upstream_health", l.UpstreamHealth)
+	ki("retries", int64(l.Retries))
+	if len(l.Attempts) > 0 {
+		var sb []byte
+		for i, a := range l.Attempts {
+			if i > 0 {
+				sb = append(sb, ',')
+			}
+			sb = append(sb, a.Addr...)
+			sb = append(sb, ':')
+			sb = strconv.AppendInt(sb, int64(a.Status), 10)
+		}
+		kv("attempts", string(sb))
+	}
 	kv("request_id", l.RequestID)
 	kv("trace_id", l.TraceID)
 	kv("span_id", l.SpanID)
@@ -141,14 +251,15 @@ func (s *Server) FlushAccessLog() {
 	}
 }
 
-// observe records one finished request: access log line and span.
+// observe records one finished request: access log line, history record and span.
 func (s *Server) observe(rec *recorder, r *http.Request, st *reqState, start time.Time, status int) {
 	end := time.Now()
-	if a := s.obs.access; a != nil {
-		a.log(&logLine{Time: start.UTC().Format(time.RFC3339Nano), Listener: st.listener, Host: r.Host, Method: r.Method,
-			Path: r.URL.RequestURI(), Status: status, Bytes: rec.bytes, Millis: float64(end.Sub(start).Microseconds()) / 1000,
-			Route: st.route, Rule: st.rule, Backend: st.backend, Remote: r.RemoteAddr, RequestID: st.reqID,
-			TraceID: st.trace.TraceID, SpanID: st.trace.SpanID, Error: st.errMsg})
+	if s.obs.access != nil || s.conns != nil {
+		l := s.buildLine(rec, r, st, start, end, status)
+		if a := s.obs.access; a != nil {
+			a.log(l) // marshals before returning, so the history can take the record next
+		}
+		s.conns.push(l)
 	}
 	if x := s.obs.otlp; x != nil {
 		name := r.Method

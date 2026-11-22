@@ -177,8 +177,8 @@ rules:
 	}
 	res.Parents = t.attachParents("GRPCRoute", r.NS, r.Parents, r.Hostnames, invalid, func(l *RTListener, hosts []string) {
 		for i := range r.Rules {
-			for _, cm := range cms[i] {
-				l.Entries = append(l.Entries, &Entry{Route: stub, Rule: crs[i], Match: cm, Hosts: hosts, GRPC: true})
+			for j, cm := range cms[i] {
+				l.Entries = append(l.Entries, &Entry{Route: stub, Rule: crs[i], Match: cm, Hosts: hosts, GRPC: true, MatchIdx: j})
 			}
 		}
 	})
@@ -264,7 +264,10 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	start := time.Now()
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}
+	st.countBody(r)
+	st.grpcSvc, st.grpcMethod = splitGRPCPath(r.URL.Path)
 	defer func() { s.logRequest(rec, r, st, start) }()
+	defer s.trackOpen(rec, r, st, "grpc")()
 	fail := func(code int, msg string, stats int) {
 		st.errMsg = msg
 		grpcFail(rec, code, msg, stats)
@@ -294,18 +297,22 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
+	st.match, st.matched = e.MatchIdx, true
+	st.markRoute()
 	ref := s.pickWeighted(rule.Refs, rule.Total)
 	if ref == nil || ref.B == nil {
 		fail(grpcUnavailable, "no valid backend for this route", http.StatusInternalServerError)
 		return
 	}
 	ep := ref.B.pick()
-	st.backend = ref.B.Key
-	tr := s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure)
-	if tr == nil {
+	st.backend, st.weight = ref.B.Key, ref.Weight
+	st.markRoute()
+	base := s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure)
+	if base == nil {
 		fail(grpcUnavailable, "cleartext HTTP/2 backends need Go 1.24 or newer", http.StatusBadGateway)
 		return
 	}
+	var tr http.RoundTripper = &tracedRT{base: base, st: st, ep: ep, b: ref.B, now: s.res.now}
 	if bt := ref.B.Timeout; bt > 0 {
 		ctx, cancel := context.WithTimeout(r.Context(), bt)
 		defer cancel()
@@ -351,4 +358,28 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		},
 	}
 	proxy.ServeHTTP(rec, r)
+}
+
+// splitGRPCPath splits /package.Service/Method.
+func splitGRPCPath(p string) (service, method string) {
+	service, method, _ = strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	return service, method
+}
+
+// tracedRT records upstream timings of a single-attempt transport.
+type tracedRT struct {
+	base http.RoundTripper
+	st   *reqState
+	ep   *Endpoint
+	b    *Backend
+	now  func() time.Time
+}
+
+func (t *tracedRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx, tr := t.st.up.begin(req.Context())
+	health := t.b.state(t.ep, t.now())
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	t.st.up.end(tr, t.ep, health, resp, err)
+	t.st.noteUpstream()
+	return resp, err
 }
