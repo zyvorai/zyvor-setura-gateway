@@ -247,7 +247,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		if _, ok := ours[spec.GatewayClassName]; !ok {
 			continue
 		}
-		gw := &Gateway{NS: g.Metadata.Namespace, Name: g.Metadata.Name, Generation: g.Metadata.Generation, ClassName: spec.GatewayClassName, Listeners: spec.Listeners}
+		gw := &Gateway{NS: g.Metadata.Namespace, Name: g.Metadata.Name, Generation: g.Metadata.Generation, ClassName: spec.GatewayClassName, Listeners: spec.Listeners, TLS: spec.TLS}
 		cfg.Gateways = append(cfg.Gateways, gw)
 		mine[gw.Key()] = true
 		gwRaw[gw.Key()] = gwItems[i]
@@ -277,7 +277,10 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		created, _ := time.Parse(time.RFC3339, r.Metadata.CreationTimestamp)
 		cfg.Routes = append(cfg.Routes, &Route{NS: r.Metadata.Namespace, Name: r.Metadata.Name, Generation: r.Metadata.Generation,
 			Created: created, Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules})
-		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() { annotateHTTP(spec.Rules, r.Metadata.Annotations) })
+		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() {
+			annotateHTTP(spec.Rules, r.Metadata.Annotations)
+			annotateAuth(spec.Rules, r.Metadata.Annotations)
+		})
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}
 
@@ -384,6 +387,8 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			}
 		}
 	}
+
+	k.loadClientCAs(ctx, cfg)
 
 	// ReferenceGrants and namespace labels are optional extras: a 403 or 404
 	// simply means "none".

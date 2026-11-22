@@ -245,6 +245,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	if s.rateLimited(rec, r, st) {
 		return
 	}
+	if s.authDenied(rec, r, st, l, rule.Rule) {
+		return
+	}
 
 	if rule.Redirect != nil {
 		for _, f := range rule.Rule.Filters {

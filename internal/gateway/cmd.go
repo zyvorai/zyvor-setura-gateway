@@ -22,6 +22,7 @@ Usage:
   setura gateway run --config FILE [flags]     serve a snapshot file, reloading it when it changes
   setura gateway run --kubernetes [flags]      run as an in-cluster controller and data plane
   setura gateway up FILE [flags]               local demo: start demo backends and serve FILE
+  setura gateway hash --kind apikey|password   read a secret on stdin, print the hash to store in a config
   setura gateway install [flags]               print Kubernetes YAML for the controller (never applies)
   setura gateway rollout --config LIVE --new CANDIDATE --checks CHECKS   guarded rollout with automatic rollback
   setura gateway history --config LIVE         list config backups
@@ -32,6 +33,9 @@ Flags for run and up:
   --port-map A=B[,..]   serve spec port A on port B (0 = any free port); repeatable
   --port-offset N       add N to spec ports below 1024 (unprivileged remapping)
   --admin ADDR|off      admin endpoint (default 127.0.0.1:19000)
+  --admin-token TOKEN   bearer token for the admin endpoint (or SETURA_ADMIN_TOKEN); required to bind off loopback
+  --admin-open-ready    leave /ready reachable without the token (kubelet probes)
+  --ocsp-staple         fetch and staple OCSP responses for listener certificates (default off)
   --interval DUR        poll interval for config changes (default 1s; with --kubernetes only used by --poll, default 5s)
   --poll                with --kubernetes: poll instead of using watches
   --resync DUR          with --kubernetes: safety relist while watching (default 1m)
@@ -137,6 +141,9 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.opts.ShadowState, "shadow-state", "", "persist shadow results to FILE (atomic snapshots, reloaded at start)")
+	fs.StringVar(&f.opts.AdminToken, "admin-token", os.Getenv("SETURA_ADMIN_TOKEN"), "bearer token for the admin endpoint")
+	fs.BoolVar(&f.opts.AdminOpenReady, "admin-open-ready", false, "leave /ready open without the admin token")
+	fs.BoolVar(&f.opts.OCSPStaple, "ocsp-staple", false, "staple OCSP responses to listener certificates")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -307,6 +314,8 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 			return fail(err)
 		}
 		return 0
+	case "hash":
+		return hashCmd(rest, os.Stdin, stdout, stderr)
 	case "install":
 		var io InstallOptions
 		fs.StringVar(&io.Namespace, "namespace", "setura-system", "namespace for the controller")

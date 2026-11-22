@@ -127,6 +127,7 @@ func fetchConnections(ctx context.Context, c *http.Client, target string) (*conn
 	if err != nil {
 		return nil, err
 	}
+	adminToken(req)
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach the gateway admin endpoint (is `setura gateway run` up, and is --admin right?): %w", err)

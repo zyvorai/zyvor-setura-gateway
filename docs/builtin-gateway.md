@@ -27,6 +27,8 @@ Flags for `run` and `up`: `--bind ADDR` (default `127.0.0.1`), `--port-map A=B[,
 (serve spec port A on port B; 0 means any free port), `--port-offset N` (added to spec
 ports below 1024, so `80` becomes `8080` without root), `--admin ADDR|off` (default
 `127.0.0.1:19000`), `--interval DUR` (poll interval, default 1s, 5s in cluster mode),
+`--admin-token TOKEN` (or `SETURA_ADMIN_TOKEN`; required to bind the admin endpoint off
+loopback) with `--admin-open-ready`, `--ocsp-staple`,
 `--force`, `--access-log FILE|-|off` (with `--access-log-max-size`, `--access-log-keep`,
 `--access-log-gzip`; SIGHUP rotates). Resilience, observability and traffic-protection flags
 are in [resilience](resilience.md) and [observability](observability.md), and `gateway help`
@@ -207,7 +209,9 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   under `conformance/`; see `docs/conformance`). `conformance_test.go` is a self-check
   named after the suite's tests.
 * Clients: HTTP/1.1, HTTP/2 over TLS, h2c (for gRPC), WebSocket and other Upgrade requests, and TLS
-  passthrough by SNI. No HTTP/3, no client-certificate authentication.
+  passthrough by SNI. No HTTP/3. Client certificates are validated on HTTPS listeners
+  (Gateway API frontend TLS validation) but not on `TLS` terminate listeners; see
+  [security](security.md).
   Upstreams are spoken to with HTTP/1.1 (HTTP/2 only for https upstreams).
 * Kubernetes mode: Secrets are not watched (picked up by the `--resync` relist), and a
   leader that loses the API for longer than the renew deadline steps down, so status can
@@ -219,15 +223,20 @@ without touching what the client sees: see [shadow.md](shadow.md), the
 * One status `generation` in file mode is the reload counter (snapshot files have no
   metadata generation).
 * Selector namespaces support `matchLabels` only; `matchExpressions` fail closed.
-* No authentication (of clients or of the admin endpoint). Rate limits are per replica:
+* Traffic security is per HTTPRoute rule and opt-in: JWT, API key, basic auth, client address
+  lists and client certificates (see [security](security.md)). GRPCRoutes get the
+  client-certificate headers but no auth policy; there is no OIDC login flow, no JWT
+  encryption (JWE), no token introspection and no revocation list beyond OCSP stapling.
+  The admin endpoint is unauthenticated on loopback, and needs `--admin-token` to bind
+  anywhere else. Rate limits are per replica:
   `--rate-limit-share N` divides them by the declared replica count as an approximation,
   because exact sharing would need a shared store the gateway does not have (see
   [observability](observability.md)). Circuit breaker, ejection and health state is per
   process (it survives reloads for endpoints that still exist, not restarts). Cross-backend
   retries are opt-in and HTTPRoute only. Prometheus metrics are served on the admin `/metrics`
   endpoint. The admin `/stats` endpoint is simple JSON counters per route and backend, resets
-  on restart, and the admin endpoint is unauthenticated (loopback by default; `/config`
-  never includes secret material).
+  on restart. `/config` never includes secret material (keys, passwords and JWKS URL
+  credentials are redacted).
 * TLS Terminate on `TLS` listeners forwards plain TCP: no re-encryption to the backend and
   no PROXY protocol. gRPC retries and mirroring need a unary call that fits in memory;
   streaming calls pass through untouched.

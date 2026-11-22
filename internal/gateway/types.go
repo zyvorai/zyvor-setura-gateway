@@ -35,6 +35,8 @@ type Gateway struct {
 	Generation int64
 	ClassName  string
 	Listeners  []Listener
+	// TLS is spec.tls (Gateway API 1.5 frontend TLS validation).
+	TLS *GatewayTLS
 }
 
 // Key is namespace/name.
@@ -125,6 +127,8 @@ type Rule struct {
 		Request        string `json:"request,omitempty"`
 		BackendRequest string `json:"backendRequest,omitempty"`
 	} `json:"timeouts,omitempty"`
+	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth).
+	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -373,8 +377,9 @@ type fileConfig struct {
 }
 
 type gatewaySpec struct {
-	GatewayClassName string     `json:"gatewayClassName"`
-	Listeners        []Listener `json:"listeners"`
+	GatewayClassName string      `json:"gatewayClassName"`
+	Listeners        []Listener  `json:"listeners"`
+	TLS              *GatewayTLS `json:"tls,omitempty"`
 }
 
 type routeSpec struct {
@@ -414,7 +419,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
-			cfg.Gateways = append(cfg.Gateways, &Gateway{NS: rns, Name: name, ClassName: spec.GatewayClassName, Listeners: spec.Listeners})
+			cfg.Gateways = append(cfg.Gateways, &Gateway{NS: rns, Name: name, ClassName: spec.GatewayClassName, Listeners: spec.Listeners, TLS: spec.TLS})
 		case routeKey:
 			var spec routeSpec
 			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
@@ -425,6 +430,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
 			annotateHTTP(spec.Rules, spec.Annotations)
+			annotateAuth(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

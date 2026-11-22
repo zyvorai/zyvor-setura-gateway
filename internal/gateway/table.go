@@ -44,7 +44,8 @@ type RTListener struct {
 	Key        string
 	Host       string
 	Certs      []tls.Certificate
-	Terminate  bool // TLS listener that terminates (mode Terminate) instead of passing through
+	Client     *ClientValidation // frontend TLS validation of an HTTPS listener, nil without
+	Terminate  bool              // TLS listener that terminates (mode Terminate) instead of passing through
 	Entries    []*Entry
 	TLSEntries []*TLSEntry // TLSRoute entries (passthrough listeners)
 	Attached   int
@@ -374,6 +375,7 @@ func (c *Config) resolveCerts(l *RTListener) {
 	}
 	if l.Resolved.OK {
 		l.Resolved.Reason = "ResolvedRefs"
+		c.resolveClientCA(l)
 	}
 }
 
@@ -494,6 +496,9 @@ func validFilters(fs []Filter) error {
 func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, []*CMatch, error) {
 	cr := &CRule{RouteKey: r.Key(), Index: idx, Rule: rule}
 	if err := validFilters(rule.Filters); err != nil {
+		return nil, nil, err
+	}
+	if err := compileAuth(rule.Auth); err != nil {
 		return nil, nil, err
 	}
 	if rule.Timeouts != nil {

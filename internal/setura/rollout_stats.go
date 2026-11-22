@@ -46,6 +46,7 @@ func (a *httpAdmin) get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	adminToken(req)
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err

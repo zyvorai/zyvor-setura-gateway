@@ -44,6 +44,15 @@ type Options struct {
 	HistoryInterval time.Duration
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
+	// AdminToken, when set, is required on every admin request (Authorization:
+	// Bearer or the session cookie) and lets Admin bind off loopback.
+	// AdminOpenReady leaves /ready open without it, for kubelet probes.
+	AdminToken     string
+	AdminOpenReady bool
+	// OCSPStaple fetches OCSP responses for listener certificates and staples them.
+	OCSPStaple bool
+	// AuthClock replaces the clock of token validation (tests).
+	AuthClock func() time.Time
 }
 
 // Loaded is one configuration read from a Source.
@@ -100,6 +109,8 @@ type Server struct {
 
 	adminLn  net.Listener
 	adminSrv *http.Server
+	ocsp     atomic.Pointer[ocspManager]
+	authQ    atomic.Pointer[[]string] // query parameters API key policies read, redacted from logs
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -194,8 +205,10 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
 	s.ports[spec] = bp
 	if pg.TLS {
-		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"},
+		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"},
 			GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.certFor(spec, h.ServerName) }}
+		base.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) { return s.clientTLSConfig(base, spec, h) }
+		srv.TLSConfig = base
 		go srv.ServeTLS(ln, "", "")
 	} else {
 		go srv.Serve(ln)
@@ -228,10 +241,10 @@ func (s *Server) certFor(port int, sni string) (*tls.Certificate, error) {
 	}
 	for i := range l.Certs {
 		if sni != "" && l.Certs[i].Leaf != nil && l.Certs[i].Leaf.VerifyHostname(sni) == nil {
-			return &l.Certs[i], nil
+			return s.stapled(&l.Certs[i]), nil
 		}
 	}
-	return &l.Certs[0], nil
+	return s.stapled(&l.Certs[0]), nil
 }
 
 func (s *Server) closePort(bp *boundPort) {
@@ -285,6 +298,7 @@ func (s *Server) Apply(ld *Loaded) error {
 		}
 	}
 	s.table.Store(t)
+	s.postApply(t)
 	for p, bp := range s.ports {
 		if t.Ports[p] == nil {
 			s.closePort(bp)
@@ -428,7 +442,11 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		s.diag("serving %s", l)
 	}
 	if a := s.AdminAddr(); a != "" {
-		s.diag("admin http://%s (/ready /config /stats /status /shadow)", a)
+		note := ""
+		if s.opts.AdminToken != "" {
+			note = ", token required"
+		}
+		s.diag("admin http://%s (/ready /config /stats /status /shadow%s)", a, note)
 	}
 	write := func() {
 		if sw, ok := src.(StatusWriter); ok {
@@ -501,6 +519,7 @@ func (s *Server) Close() {
 	if s.adminSrv != nil {
 		s.adminSrv.Close()
 	}
+	s.ocsp.Load().close()
 	s.mirrorWG.Wait()
 	s.hist.close()
 	s.res.closeTransports()
@@ -518,6 +537,9 @@ func (s *Server) startAdmin() error {
 	}
 	if addr == "" {
 		addr = DefaultAdmin
+	}
+	if err := checkAdminBind(addr, s.opts.AdminToken); err != nil {
+		return err
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -562,7 +584,7 @@ func (s *Server) startAdmin() error {
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
 	s.adminLn = ln
-	s.adminSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)
 	return nil
 }
