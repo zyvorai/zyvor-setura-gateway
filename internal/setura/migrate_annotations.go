@@ -23,6 +23,10 @@ const (
 
 const nginxPrefix = "nginx.ingress.kubernetes.io/"
 
+// kindFilterPrefix marks a "filter" that is really a route kind: the
+// annotation is handled when a matched rule lives in that kind of route.
+const kindFilterPrefix = "kind:"
+
 type annotationRule struct {
 	support string
 	filter  string // HTTPRoute filter type that implements it, when translatable
@@ -67,7 +71,7 @@ var annotationTable = map[string]annotationRule{
 	"auth-tls-secret":         {supportImpl, "", "client certificate verification: Gateway listener tls.frontend validation or a controller policy"},
 	"auth-tls-verify-client":  {supportImpl, "", "client certificate verification: Gateway listener tls.frontend validation or a controller policy"},
 	"backend-protocol":        {supportImpl, "", "set appProtocol on the Service port; HTTPS backends need BackendTLSPolicy, GRPC needs GRPCRoute"},
-	"ssl-passthrough":         {supportImpl, "", "use a TLSRoute on a listener with tls.mode Passthrough"},
+	"ssl-passthrough":         {supportFilter, kindFilterPrefix + kindTLSRoute, "use a TLSRoute on a listener with tls.mode Passthrough"},
 	"proxy-ssl-secret":        {supportImpl, "", "upstream mTLS: BackendTLSPolicy or a controller policy"},
 	"proxy-ssl-verify":        {supportImpl, "", "upstream TLS verification: BackendTLSPolicy"},
 	"affinity":                {supportImpl, "", "sessionPersistence on the HTTPRoute rule (experimental) or a controller policy"},
@@ -123,12 +127,20 @@ func classifyAnnotations(ingress string, annotations map[string]string, filters 
 		default:
 			continue
 		}
-		if (name == "ssl-redirect" || name == "force-ssl-redirect") && strings.EqualFold(val, "false") {
+		if (name == "ssl-redirect" || name == "force-ssl-redirect" || name == "ssl-passthrough") && strings.EqualFold(val, "false") {
 			continue
 		}
 		f := annotationFinding{Ingress: ingress, Annotation: key, Value: truncate(val, 80)}
 		if r, ok := annotationTable[name]; ok {
 			f.Support, f.Filter, f.Hint = r.support, r.filter, r.hint
+			if name == "backend-protocol" {
+				switch strings.ToUpper(val) {
+				case "GRPC":
+					f.Support, f.Filter, f.Hint = supportFilter, kindFilterPrefix+kindGRPCRoute, "GRPCRoute for the rule; set appProtocol kubernetes.io/h2c on the Service port"
+				case "GRPCS":
+					f.Hint = "GRPCRoute for the rule plus BackendTLSPolicy for the TLS to the backend; set appProtocol on the Service port"
+				}
+			}
 		} else {
 			f.Support = supportUnknown
 			f.Hint = "not in the Setura table; check the ingress-nginx docs and the Gateway API implementation guide"

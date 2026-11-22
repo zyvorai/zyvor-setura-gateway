@@ -184,7 +184,7 @@ func TestMigrateFromClusterFake(t *testing.T) {
 	code, out, errs := cli(t, c, "migrate", "check", "-n", "demo", "--format", "json")
 	is(t, code, 1) // TLS host but only an HTTP listener
 	contains(t, out, "no HTTPS listener")
-	if len(*seen) != 3 || !strings.Contains(strings.Join((*seen)[0], " "), "ingresses.networking.k8s.io") {
+	if len(*seen) != 5 || !strings.Contains(strings.Join((*seen)[0], " "), "ingresses.networking.k8s.io") {
 		t.Fatalf("kubectl calls: %v (%s)", *seen, errs)
 	}
 }
@@ -236,9 +236,9 @@ func TestMigrateHelp(t *testing.T) {
 }
 
 func TestMigrateExamplesDiffer(t *testing.T) {
-	code, out, errs := cli(t, nil, "migrate", "check", "--ingress", "../../examples/migrate/ingress.yaml", "--routes", "../../examples/migrate/routes.yaml", "--format", "json")
+	code, out, errs := cli(t, nil, "migrate", "check", "--ingress", "../../examples/migrate/ingress.yaml", "--routes", "../../examples/migrate/routes.yaml", "--services", "../../examples/migrate/services.yaml", "--format", "json")
 	is(t, code, 1)
-	for _, want := range []string{statusMissing, statusExtra, "backend port differs", "configuration-snippet"} {
+	for _, want := range []string{statusMissing, statusExtra, "backend port differs", "configuration-snippet", "web:http(8080)", "GRPCRoute", `"ingress_class": "internal"`} {
 		contains(t, out, want)
 	}
 	_ = errs

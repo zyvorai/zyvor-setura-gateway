@@ -20,6 +20,16 @@ const (
 	statusDifferent  = "different"
 	statusMissing    = "missing-in-gateway"
 	statusExtra      = "extra-in-gateway"
+	// statusUnresolved: everything that could be compared agrees, but a named
+	// Ingress backend port could not be resolved against a Service.
+	statusUnresolved = "unresolved"
+)
+
+// Route kinds an Ingress rule can convert to.
+const (
+	kindHTTPRoute = "HTTPRoute"
+	kindGRPCRoute = "GRPCRoute"
+	kindTLSRoute  = "TLSRoute"
 )
 
 // ingressRule is one (host, path, backend) triple of an Ingress.
@@ -31,12 +41,27 @@ type ingressRule struct {
 	PortIsName    bool
 	TLS           bool
 	TLSSecret     string
-	Default       bool // spec.defaultBackend
-	Resource      bool // backend.resource instead of a Service
-	Regex         bool // nginx use-regex
+	Default       bool   // spec.defaultBackend
+	Resource      bool   // backend.resource instead of a Service
+	Regex         bool   // nginx use-regex
+	Class         string // ingress class (spec.ingressClassName or the legacy annotation)
+	Kind          string // route kind this rule converts to
+	Passthrough   bool   // nginx ssl-passthrough
 	Annotations   map[string]string
 	expectedRoute string
+	// Named port resolution against the Service.
+	resolvedPort string // port number a named port maps to
+	unresolved   string // why a named port could not be resolved
+	badPort      string // the Service has no port with that name
 }
+
+// svcPort is one port of a Service.
+type svcPort struct {
+	Name string
+	Port int
+}
+
+type migParent struct{ NS, Name, Section string }
 
 type routeBackend struct {
 	Name, NS string
@@ -53,12 +78,15 @@ type routeRule struct {
 	Backends  []routeBackend
 	Filters   map[string]bool
 	Redirect  string // description of a RequestRedirect filter
-	Parents   []string
+	Parents   []migParent
+	Kind      string // HTTPRoute, GRPCRoute or TLSRoute
 	matched   bool
 }
 
 type migListener struct {
 	Gateway, NS, Name, Protocol, Hostname string
+	TLSMode                               string
+	CertRefs                              []migCert
 }
 
 // ruleResult is one reported line.
@@ -71,10 +99,14 @@ type ruleResult struct {
 	Path          string     `json:"path"`
 	PathType      string     `json:"path_type"`
 	Backend       string     `json:"backend,omitempty"`
+	IngressClass  string     `json:"ingress_class,omitempty"`
+	Kind          string     `json:"kind,omitempty"`
+	RouteKind     string     `json:"route_kind,omitempty"`
 	TLS           bool       `json:"tls,omitempty"`
 	Details       []string   `json:"details,omitempty"`
 	Probe         *probeDiff `json:"probe,omitempty"`
 	ingress       *ingressRule
+	extra         *routeRule // set for extra-in-gateway results
 }
 
 // probeObs is what one live probe saw.
@@ -209,10 +241,35 @@ func portString(p obj) (string, bool) {
 	return asStr(p["name"]), true
 }
 
+// ingressClassOf returns the class an Ingress selects: spec.ingressClassName,
+// or the legacy kubernetes.io/ingress.class annotation.
+func ingressClassOf(ing obj) string {
+	if c := asStr(dig(ing, "spec", "ingressClassName")); c != "" {
+		return c
+	}
+	return annotationsOf(ing)["kubernetes.io/ingress.class"]
+}
+
+// routeKindFor picks the route kind an Ingress converts to: TLS passthrough
+// becomes a TLSRoute (nginx ignores the backend protocol then), a GRPC or
+// GRPCS backend protocol a GRPCRoute, everything else an HTTPRoute.
+func routeKindFor(ann map[string]string) (kind string, passthrough bool) {
+	if strings.EqualFold(ann[nginxPrefix+"ssl-passthrough"], "true") {
+		return kindTLSRoute, true
+	}
+	switch strings.ToUpper(ann[nginxPrefix+"backend-protocol"]) {
+	case "GRPC", "GRPCS":
+		return kindGRPCRoute, false
+	}
+	return kindHTTPRoute, false
+}
+
 func extractIngressRules(ing obj, notes *[]string) []*ingressRule {
 	name, ns := metaOf(ing)
 	ann := annotationsOf(ing)
 	regex := strings.EqualFold(ann[nginxPrefix+"use-regex"], "true")
+	class := ingressClassOf(ing)
+	kind, passthrough := routeKindFor(ann)
 	tlsHosts := map[string]string{}
 	for _, t := range asList(dig(ing, "spec", "tls")) {
 		tm := asMap(t)
@@ -225,7 +282,8 @@ func extractIngressRules(ing obj, notes *[]string) []*ingressRule {
 		}
 	}
 	newRule := func(host, path, pt string, backend obj) *ingressRule {
-		r := &ingressRule{Ingress: name, NS: ns, Host: strings.ToLower(host), Path: path, PathType: pt, Regex: regex, Annotations: ann}
+		r := &ingressRule{Ingress: name, NS: ns, Host: strings.ToLower(host), Path: path, PathType: pt, Regex: regex,
+			Annotations: ann, Class: class, Kind: kind, Passthrough: passthrough}
 		if secret, ok := tlsHosts[r.Host]; ok {
 			r.TLS, r.TLSSecret = true, secret
 		}
@@ -256,13 +314,77 @@ func extractIngressRules(ing obj, notes *[]string) []*ingressRule {
 	return out
 }
 
-func extractRouteRules(rt obj) []*routeRule {
-	name, ns := metaOf(rt)
-	var parents []string
+// extractServices reads the ports of Service objects.
+func extractServices(objs []obj) []migService {
+	var out []migService
+	for _, o := range objs {
+		if !kindOf(o, "Service") {
+			continue
+		}
+		name, ns := metaOf(o)
+		s := migService{NS: ns, Name: name}
+		for _, p := range asList(dig(o, "spec", "ports")) {
+			pm := asMap(p)
+			n, _ := num(pm["port"])
+			s.Ports = append(s.Ports, svcPort{Name: asStr(pm["name"]), Port: int(n)})
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+type migService struct {
+	NS, Name string
+	Ports    []svcPort
+}
+
+func findService(svcs []migService, ns, name string) *migService {
+	for i := range svcs {
+		if svcs[i].Name == name && sameNS(svcs[i].NS, ns) {
+			return &svcs[i]
+		}
+	}
+	return nil
+}
+
+// resolvePort maps a named Ingress backend port to the Service port number.
+// svcs == nil means no Service source was available at all.
+func (r *ingressRule) resolvePort(svcs []migService, available bool) {
+	if !r.PortIsName || r.Resource {
+		return
+	}
+	svc := findService(svcs, r.NS, r.Svc)
+	switch {
+	case svc == nil && available:
+		r.unresolved = fmt.Sprintf("named port %q unresolved: Service %s/%s was not found in the loaded Services", r.Port, r.NS, r.Svc)
+	case svc == nil:
+		r.unresolved = fmt.Sprintf("named port %q unresolved: no Service objects available (pass --services FILE or read from the cluster)", r.Port)
+	default:
+		var have []string
+		for _, p := range svc.Ports {
+			if p.Name == r.Port {
+				r.resolvedPort = strconv.Itoa(p.Port)
+				return
+			}
+			have = append(have, fmt.Sprintf("%s=%d", p.Name, p.Port))
+		}
+		r.badPort = fmt.Sprintf("Service %s has no port named %q (ports: %s)", r.Svc, r.Port, strings.Join(have, ", "))
+	}
+}
+
+func parentsOf(rt obj, ns string) []migParent {
+	var out []migParent
 	for _, p := range asList(dig(rt, "spec", "parentRefs")) {
 		pm := asMap(p)
-		parents = append(parents, str(pm, "namespace", ns)+"/"+asStr(pm["name"]))
+		out = append(out, migParent{NS: str(pm, "namespace", ns), Name: asStr(pm["name"]), Section: asStr(pm["sectionName"])})
 	}
+	return out
+}
+
+func extractRouteRules(rt obj) []*routeRule {
+	name, ns := metaOf(rt)
+	kind := asStr(rt["kind"])
+	parents := parentsOf(rt, ns)
 	hosts := []string{""}
 	if hs := asList(dig(rt, "spec", "hostnames")); len(hs) > 0 {
 		hosts = nil
@@ -304,16 +426,44 @@ func extractRouteRules(rt obj) []*routeRule {
 			backends = append(backends, routeBackend{Name: asStr(bm["name"]), NS: str(bm, "namespace", ns), Port: int(port), Weight: int(w)})
 			addFilters(asList(bm["filters"]))
 		}
-		matches := asList(rm["matches"])
-		if len(matches) == 0 {
-			matches = []any{obj{}}
-		}
-		for _, m := range matches {
-			path := asMap(dig(m, "path"))
-			typ, val := str(path, "type", "PathPrefix"), str(path, "value", "/")
+		add := func(path, typ string) {
 			for _, h := range hosts {
-				out = append(out, &routeRule{Route: name, NS: ns, Host: h, Path: val, Type: typ,
-					Backends: backends, Filters: filters, Redirect: redirect, Parents: parents})
+				out = append(out, &routeRule{Route: name, NS: ns, Host: h, Path: path, Type: typ,
+					Backends: backends, Filters: filters, Redirect: redirect, Parents: parents, Kind: kind})
+			}
+		}
+		switch kind {
+		case kindTLSRoute:
+			add("", "TLS")
+		case kindGRPCRoute:
+			matches := asList(rm["matches"])
+			if len(matches) == 0 {
+				add("/", "GRPCMethod")
+			}
+			for _, m := range matches {
+				method := asMap(dig(m, "method"))
+				path, typ := "/", "GRPCMethod"
+				if svc := asStr(method["service"]); svc != "" {
+					path = "/" + svc
+					if mt := asStr(method["method"]); mt != "" {
+						path += "/" + mt
+					}
+				} else if mt := asStr(method["method"]); mt != "" {
+					path = "/*/" + mt
+				}
+				if asStr(method["type"]) == "RegularExpression" {
+					typ = "RegularExpression"
+				}
+				add(path, typ)
+			}
+		default:
+			matches := asList(rm["matches"])
+			if len(matches) == 0 {
+				matches = []any{obj{}}
+			}
+			for _, m := range matches {
+				path := asMap(dig(m, "path"))
+				add(str(path, "value", "/"), str(path, "type", "PathPrefix"))
 			}
 		}
 	}
@@ -325,10 +475,18 @@ func extractListeners(gw obj) []migListener {
 	var out []migListener
 	for _, l := range asList(dig(gw, "spec", "listeners")) {
 		lm := asMap(l)
-		out = append(out, migListener{Gateway: name, NS: ns, Name: asStr(lm["name"]), Protocol: asStr(lm["protocol"]), Hostname: strings.ToLower(asStr(lm["hostname"]))})
+		ml := migListener{Gateway: name, NS: ns, Name: asStr(lm["name"]), Protocol: asStr(lm["protocol"]), Hostname: strings.ToLower(asStr(lm["hostname"])),
+			TLSMode: str(asMap(lm["tls"]), "mode", "Terminate")}
+		for _, c := range asList(dig(lm, "tls", "certificateRefs")) {
+			cm := asMap(c)
+			ml.CertRefs = append(ml.CertRefs, migCert{NS: asStr(cm["namespace"]), Name: asStr(cm["name"])})
+		}
+		out = append(out, ml)
 	}
 	return out
 }
+
+type migCert struct{ NS, Name string }
 
 // ---- comparing -----------------------------------------------------------
 
@@ -357,9 +515,21 @@ func hostCovers(listener, host string) bool {
 	return false
 }
 
+// effectivePort is the port number an Ingress backend means, or "" when a
+// named port could not be resolved.
+func (r *ingressRule) effectivePort() string {
+	if r.PortIsName {
+		return r.resolvedPort
+	}
+	return r.Port
+}
+
 func (r *ingressRule) backendString() string {
-	if r.Resource {
+	switch {
+	case r.Resource:
 		return "resource"
+	case r.PortIsName && r.resolvedPort != "":
+		return r.Svc + ":" + r.Port + "(" + r.resolvedPort + ")"
 	}
 	return r.Svc + ":" + r.Port
 }
@@ -374,28 +544,93 @@ func wantedType(r *ingressRule) string {
 	return "PathPrefix"
 }
 
-// diffRule lists how a route rule differs from an Ingress rule.
-func diffRule(ir *ingressRule, rr *routeRule, gws []migListener, haveGW bool) (diffs, notes []string) {
-	if want := wantedType(ir); rr.Type != want {
-		diffs = append(diffs, fmt.Sprintf("path type %s in Ingress, %s in HTTPRoute", ir.PathType, rr.Type))
+func (r *ingressRule) kindReason() string {
+	switch r.Kind {
+	case kindTLSRoute:
+		return "ssl-passthrough"
+	case kindGRPCRoute:
+		return "backend-protocol " + strings.ToUpper(r.Annotations[nginxPrefix+"backend-protocol"])
+	}
+	return "default"
+}
+
+// migCtx is what rule comparison needs besides the two rules.
+type migCtx struct {
+	listeners []migListener
+	haveGW    bool
+}
+
+// listenersFor returns the listeners of the parent Gateways of a route rule
+// (narrowed by sectionName) and whether any parent Gateway was loaded.
+func (c *migCtx) listenersFor(rr *routeRule) (sel []migListener, found bool) {
+	for _, p := range rr.Parents {
+		for _, l := range c.listeners {
+			if l.Gateway != p.Name || !sameNS(l.NS, p.NS) {
+				continue
+			}
+			found = true
+			if p.Section == "" || p.Section == l.Name {
+				sel = append(sel, l)
+			}
+		}
+	}
+	return sel, found
+}
+
+func certNames(l migListener) string {
+	var n []string
+	for _, c := range l.CertRefs {
+		n = append(n, c.Name)
+	}
+	if len(n) == 0 {
+		return "none"
+	}
+	return strings.Join(n, ", ")
+}
+
+// diffRule lists how a route rule differs from an Ingress rule. unres lists
+// parts that could not be verified.
+func diffRule(ir *ingressRule, rr *routeRule, ctx *migCtx) (diffs, notes, unres []string) {
+	if rr.Kind != ir.Kind {
+		diffs = append(diffs, fmt.Sprintf("Ingress rule converts to a %s (%s) but the matching rule is in a %s", ir.Kind, ir.kindReason(), rr.Kind))
+	} else {
+		switch ir.Kind {
+		case kindHTTPRoute:
+			if want := wantedType(ir); rr.Type != want {
+				diffs = append(diffs, fmt.Sprintf("path type %s in Ingress, %s in HTTPRoute", ir.PathType, rr.Type))
+			}
+		case kindGRPCRoute:
+			if ir.Regex && rr.Type != "RegularExpression" {
+				diffs = append(diffs, "Ingress uses regular expressions but the GRPCRoute method match is not RegularExpression")
+			}
+		}
 	}
 	switch {
 	case ir.Resource:
-		diffs = append(diffs, "Ingress backend is a resource reference, which has no direct HTTPRoute equivalent")
+		diffs = append(diffs, "Ingress backend is a resource reference, which has no direct "+ir.Kind+" equivalent")
 	default:
 		found, nameOnly := false, false
 		for _, b := range rr.Backends {
 			if b.Name != ir.Svc || !sameNS(b.NS, ir.NS) {
 				continue
 			}
-			if ir.PortIsName || strconv.Itoa(b.Port) == ir.Port {
+			switch {
+			case ir.PortIsName && ir.resolvedPort == "":
+				found = true // port unknown or invalid; reported below
+			case strconv.Itoa(b.Port) == ir.effectivePort():
 				found = true
-				if ir.PortIsName {
-					notes = append(notes, fmt.Sprintf("backend port name %q was not resolved against the Service", ir.Port))
-				}
+			default:
+				nameOnly = true
+			}
+			if found {
 				break
 			}
-			nameOnly = true
+		}
+		if ir.PortIsName && ir.unresolved != "" {
+			unres = append(unres, ir.unresolved)
+		}
+		if ir.badPort != "" {
+			diffs = append(diffs, ir.badPort)
 		}
 		if !found {
 			var have []string
@@ -404,47 +639,86 @@ func diffRule(ir *ingressRule, rr *routeRule, gws []migListener, haveGW bool) (d
 			}
 			switch {
 			case nameOnly:
-				diffs = append(diffs, fmt.Sprintf("backend port differs: Ingress %s, HTTPRoute %s", ir.backendString(), strings.Join(have, ", ")))
+				diffs = append(diffs, fmt.Sprintf("backend port differs: Ingress %s, %s %s", ir.backendString(), rr.Kind, strings.Join(have, ", ")))
 			case rr.Redirect != "" && len(have) == 0:
-				diffs = append(diffs, "HTTPRoute rule does "+rr.Redirect+" instead of forwarding to "+ir.backendString())
+				diffs = append(diffs, rr.Kind+" rule does "+rr.Redirect+" instead of forwarding to "+ir.backendString())
 			default:
-				diffs = append(diffs, fmt.Sprintf("backend differs: Ingress %s, HTTPRoute %s", ir.backendString(), strings.Join(have, ", ")))
+				diffs = append(diffs, fmt.Sprintf("backend differs: Ingress %s, %s %s", ir.backendString(), rr.Kind, strings.Join(have, ", ")))
 			}
 		}
 	}
-	if ir.TLS && haveGW {
-		var found, covered bool
-		for _, p := range rr.Parents {
-			for _, l := range gws {
-				if l.NS+"/"+l.Gateway != p && l.Gateway != strings.TrimPrefix(p, rr.NS+"/") {
-					continue
-				}
-				found = true
-				if (l.Protocol == "HTTPS" || l.Protocol == "TLS") && hostCovers(l.Hostname, ir.Host) {
-					covered = true
+	if !ctx.haveGW || (!ir.TLS && !ir.Passthrough) {
+		return diffs, notes, unres
+	}
+	sel, found := ctx.listenersFor(rr)
+	if !found {
+		return diffs, append(notes, "parent Gateway not found in the loaded objects; TLS not verified"), unres
+	}
+	if ir.Passthrough {
+		covered := false
+		for _, l := range sel {
+			if l.Protocol == "TLS" && l.TLSMode == "Passthrough" && hostCovers(l.Hostname, ir.Host) {
+				covered = true
+			}
+		}
+		if !covered {
+			diffs = append(diffs, "Ingress passes TLS through for this host but no TLS listener with tls.mode Passthrough of the parent Gateway covers it")
+		}
+		return diffs, notes, unres
+	}
+	var covering []migListener
+	for _, l := range sel {
+		if (l.Protocol == "HTTPS" || l.Protocol == "TLS") && l.TLSMode != "Passthrough" && hostCovers(l.Hostname, ir.Host) {
+			covering = append(covering, l)
+		}
+	}
+	switch {
+	case len(covering) == 0:
+		diffs = append(diffs, "Ingress terminates TLS for this host but no HTTPS listener of the parent Gateway covers it")
+	case ir.TLSSecret == "":
+		notes = append(notes, "Ingress tls has no secretName (controller default certificate); listener certificate not compared")
+	default:
+		match := false
+		var have []string
+		for _, l := range covering {
+			have = append(have, l.Name+": "+certNames(l))
+			for _, c := range l.CertRefs {
+				if c.Name == ir.TLSSecret && sameNS(c.NS, ir.NS) {
+					match = true
 				}
 			}
 		}
-		switch {
-		case !found:
-			notes = append(notes, "parent Gateway not found in the loaded objects; TLS not verified")
-		case !covered:
-			diffs = append(diffs, "Ingress terminates TLS for this host but no HTTPS listener of the parent Gateway covers it")
+		if !match {
+			diffs = append(diffs, fmt.Sprintf("TLS secret %q in Ingress is not in the certificateRefs of the covering listener (%s)", ir.TLSSecret, strings.Join(have, "; ")))
 		}
 	}
-	return diffs, notes
+	return diffs, notes, unres
 }
 
-func compareMigration(ingresses, routes, gateways []obj, haveGW bool) *migrateReport {
+// migrateInput is everything compareMigration reads.
+type migrateInput struct {
+	Ingresses, Routes, Gateways []obj
+	HaveGW                      bool
+	Services                    []migService
+	HaveServices                bool  // a Service source was available (even if it held no match)
+	OtherIngresses              []obj // Ingresses of other classes: their routes are not reported as extra
+}
+
+func compareMigration(in migrateInput) *migrateReport {
 	rep := &migrateReport{Summary: map[string]int{}, Rules: []*ruleResult{}, Annotations: []annotationFinding{}}
 	var iRules []*ingressRule
-	byIngress := map[string][]*ingressRule{}
 	var ingNames []string
 	annotationsByIng := map[string]map[string]string{}
-	for _, ing := range ingresses {
+	apiOK := func(ing obj) bool {
 		if v := asStr(ing["apiVersion"]); v != "" && v != "networking.k8s.io/v1" {
 			n, _ := metaOf(ing)
 			rep.Notes = append(rep.Notes, fmt.Sprintf("skipped Ingress %s: apiVersion %s is not networking.k8s.io/v1", n, v))
+			return false
+		}
+		return true
+	}
+	for _, ing := range in.Ingresses {
+		if !apiOK(ing) {
 			continue
 		}
 		rs := extractIngressRules(ing, &rep.Notes)
@@ -452,76 +726,114 @@ func compareMigration(ingresses, routes, gateways []obj, haveGW bool) *migrateRe
 		key := ns + "/" + name
 		ingNames = append(ingNames, key)
 		annotationsByIng[key] = annotationsOf(ing)
-		byIngress[key] = rs
 		iRules = append(iRules, rs...)
 	}
+	for _, ir := range iRules {
+		ir.resolvePort(in.Services, in.HaveServices)
+	}
 	var rRules []*routeRule
-	for _, rt := range routes {
+	for _, rt := range in.Routes {
 		rRules = append(rRules, extractRouteRules(rt)...)
 	}
 	var listeners []migListener
-	for _, gw := range gateways {
+	for _, gw := range in.Gateways {
 		listeners = append(listeners, extractListeners(gw)...)
 	}
-	if !haveGW && func() bool {
-		for _, r := range iRules {
-			if r.TLS {
-				return true
-			}
-		}
-		return false
-	}() {
+	ctx := &migCtx{listeners: listeners, haveGW: in.HaveGW}
+	needTLS := false
+	for _, r := range iRules {
+		needTLS = needTLS || r.TLS || r.Passthrough
+	}
+	if !in.HaveGW && needTLS {
 		rep.Notes = append(rep.Notes, "TLS was not verified: no Gateway objects were loaded")
+	}
+
+	candidate := func(ir *ingressRule, rr *routeRule) bool {
+		if !sameNS(rr.NS, ir.NS) || rr.Host != ir.Host {
+			return false
+		}
+		if rr.Kind == kindTLSRoute || ir.Kind == kindTLSRoute {
+			return rr.Kind == ir.Kind // SNI routing has no path
+		}
+		return normPath(rr.Path, ir.Regex) == normPath(ir.Path, ir.Regex)
 	}
 
 	matchedBy := map[string][]*routeRule{} // ingress key -> matched route rules
 	for _, ir := range iRules {
 		res := &ruleResult{Ingress: ir.Ingress, ExpectedRoute: ir.expectedRoute, Host: ir.Host, Path: ir.Path, PathType: ir.PathType,
-			Backend: ir.backendString(), TLS: ir.TLS, ingress: ir}
+			Backend: ir.backendString(), IngressClass: ir.Class, Kind: ir.Kind, TLS: ir.TLS || ir.Passthrough, ingress: ir}
 		if ir.Default {
 			res.Details = append(res.Details, "default backend")
 		}
-		if ir.PathType == "ImplementationSpecific" {
+		if ir.Kind == kindHTTPRoute && ir.PathType == "ImplementationSpecific" {
 			res.Details = append(res.Details, "pathType ImplementationSpecific is compared as a prefix match")
 		}
+		if ir.Kind == kindTLSRoute {
+			res.Details = append(res.Details, "TLS passthrough routes on SNI only; the Ingress path is not compared")
+		}
 		var best *routeRule
-		var bestDiffs, bestNotes []string
+		var bestDiffs, bestNotes, bestUnres []string
 		for _, rr := range rRules {
-			if !sameNS(rr.NS, ir.NS) || rr.Host != ir.Host || normPath(rr.Path, ir.Regex) != normPath(ir.Path, ir.Regex) {
+			if !candidate(ir, rr) {
 				continue
 			}
-			d, n := diffRule(ir, rr, listeners, haveGW)
+			d, n, u := diffRule(ir, rr, ctx)
 			better := best == nil || len(d) < len(bestDiffs) ||
 				len(d) == len(bestDiffs) && rr.Route == ir.expectedRoute && best.Route != ir.expectedRoute
 			if better {
-				best, bestDiffs, bestNotes = rr, d, n
+				best, bestDiffs, bestNotes, bestUnres = rr, d, n, u
 			}
 		}
 		if best == nil {
 			res.Status = statusMissing
-			res.Details = append(res.Details, "no HTTPRoute rule matches this host and path")
+			res.Details = append(res.Details, "no "+ir.Kind+" rule matches this host"+map[bool]string{true: "", false: " and path"}[ir.Kind == kindTLSRoute])
 		} else {
 			best.matched = true
 			matchedBy[ir.NS+"/"+ir.Ingress] = append(matchedBy[ir.NS+"/"+ir.Ingress], best)
-			res.Route = best.Route
+			res.Route, res.RouteKind = best.Route, best.Kind
 			res.Details = append(res.Details, bestNotes...)
-			if len(bestDiffs) == 0 {
-				res.Status = statusEquivalent
-			} else {
+			switch {
+			case len(bestDiffs) > 0:
 				res.Status = statusDifferent
 				res.Details = append(res.Details, bestDiffs...)
+				res.Details = append(res.Details, bestUnres...)
+			case len(bestUnres) > 0:
+				res.Status = statusUnresolved
+				res.Details = append(res.Details, bestUnres...)
+			default:
+				res.Status = statusEquivalent
 			}
-			if best.Route != ir.expectedRoute {
+			if best.Kind == kindHTTPRoute && ir.Kind == kindHTTPRoute && best.Route != ir.expectedRoute {
 				res.Details = append(res.Details, fmt.Sprintf("route name %q differs from the ingress2gateway convention %q", best.Route, ir.expectedRoute))
 			}
 		}
 		rep.Rules = append(rep.Rules, res)
 	}
+
+	// Routes that belong to Ingresses of other classes are neither matched
+	// nor extra.
+	otherRoutes := 0
+	for _, ing := range in.OtherIngresses {
+		if !apiOK(ing) {
+			continue
+		}
+		for _, ir := range extractIngressRules(ing, &rep.Notes) {
+			for _, rr := range rRules {
+				if !rr.matched && candidate(ir, rr) {
+					rr.matched = true
+					otherRoutes++
+				}
+			}
+		}
+	}
+	if otherRoutes > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("%d route rules belong to Ingresses of other classes and are not reported", otherRoutes))
+	}
 	for _, rr := range rRules {
 		if rr.matched {
 			continue
 		}
-		res := &ruleResult{Status: statusExtra, Route: rr.Route, Host: rr.Host, Path: rr.Path, PathType: rr.Type}
+		res := &ruleResult{Status: statusExtra, Route: rr.Route, RouteKind: rr.Kind, Host: rr.Host, Path: rr.Path, PathType: rr.Type}
 		var bs []string
 		for _, b := range rr.Backends {
 			bs = append(bs, b.Name+":"+strconv.Itoa(b.Port))
@@ -530,8 +842,9 @@ func compareMigration(ingresses, routes, gateways []obj, haveGW bool) *migrateRe
 		if rr.Redirect != "" {
 			res.Details = append(res.Details, rr.Redirect)
 		}
-		res.Details = append(res.Details, "no Ingress rule maps to this HTTPRoute rule")
+		res.Details = append(res.Details, "no Ingress rule maps to this "+rr.Kind+" rule")
 		rep.Rules = append(rep.Rules, res)
+		res.extra = rr
 	}
 
 	sort.Strings(ingNames)
@@ -541,6 +854,7 @@ func compareMigration(ingresses, routes, gateways []obj, haveGW bool) *migrateRe
 			for f := range rr.Filters {
 				filters[f] = true
 			}
+			filters["kind:"+rr.Kind] = true
 		}
 		_, name, _ := strings.Cut(key, "/")
 		rep.Annotations = append(rep.Annotations, classifyAnnotations(name, annotationsByIng[key], filters)...)
@@ -550,7 +864,7 @@ func compareMigration(ingresses, routes, gateways []obj, haveGW bool) *migrateRe
 }
 
 func (r *migrateReport) finish() {
-	r.Summary = map[string]int{statusEquivalent: 0, statusDifferent: 0, statusMissing: 0, statusExtra: 0, "annotations_flagged": 0}
+	r.Summary = map[string]int{statusEquivalent: 0, statusDifferent: 0, statusMissing: 0, statusExtra: 0, statusUnresolved: 0, "annotations_flagged": 0}
 	for _, x := range r.Rules {
 		r.Summary[x.Status]++
 	}
@@ -559,7 +873,7 @@ func (r *migrateReport) finish() {
 			r.Summary["annotations_flagged"]++
 		}
 	}
-	r.OK = r.Summary[statusDifferent]+r.Summary[statusMissing]+r.Summary[statusExtra]+r.Summary["annotations_flagged"] == 0
+	r.OK = r.Summary[statusDifferent]+r.Summary[statusMissing]+r.Summary[statusExtra]+r.Summary[statusUnresolved]+r.Summary["annotations_flagged"] == 0
 }
 
 // ---- live probing --------------------------------------------------------
@@ -681,18 +995,38 @@ func mergeKeys(a, b map[string]string) map[string]bool {
 
 var regexMeta = strings.ContainsAny
 
-func (lo *liveOptions) apply(rep *migrateReport) {
+// apply probes every Ingress rule and, with probeExtra, the rules that exist
+// only in the Gateway as well.
+func (lo *liveOptions) apply(rep *migrateReport, probeExtra bool) {
 	for _, r := range rep.Rules {
-		if r.ingress == nil {
+		var regex bool
+		switch {
+		case r.ingress != nil:
+			regex = r.ingress.Regex
+			if r.ingress.Kind == kindGRPCRoute {
+				r.Details = append(r.Details, "live probe skipped: a plain HTTP GET does not exercise a gRPC route")
+				continue
+			}
+		case r.extra != nil && probeExtra:
+			regex = r.extra.Type == "RegularExpression"
+			if r.extra.Kind == kindGRPCRoute {
+				r.Details = append(r.Details, "live probe skipped: a plain HTTP GET does not exercise a gRPC route")
+				continue
+			}
+		default:
 			continue
 		}
-		if r.ingress.Regex || regexMeta(r.Path, `()*+?[]{}\^$|`) {
+		path := r.Path
+		if path == "" {
+			path = "/"
+		}
+		if regex || regexMeta(path, `()*+?[]{}\^$|`) {
 			r.Details = append(r.Details, "live probe skipped: path looks like a regular expression")
 			continue
 		}
-		r.Probe = lo.diff(r.Host, r.Path)
+		r.Probe = lo.diff(r.Host, path)
 		if len(r.Probe.Diffs) > 0 {
-			if r.Status == statusEquivalent {
+			if r.Status == statusEquivalent || r.Status == statusUnresolved {
 				r.Status = statusDifferent
 			}
 			for _, d := range r.Probe.Diffs {
@@ -712,24 +1046,32 @@ func (u *ui) MigratePretty(rep *migrateReport) string {
 		switch s {
 		case statusEquivalent:
 			return u.okSym()
-		case statusExtra:
+		case statusExtra, statusUnresolved:
 			return u.warnSym()
 		}
 		return u.failSym()
 	}
-	hostW, pathW, beW := 4, 4, 7
+	hostW, pathW, beW, clsW := 4, 4, 7, 5
 	for _, r := range rep.Rules {
 		hostW = max(hostW, len([]rune(hostLabel(r.Host))))
 		pathW = max(pathW, len([]rune(r.Path)))
 		beW = max(beW, len([]rune(r.Backend)))
+		clsW = max(clsW, len([]rune(r.IngressClass)))
 	}
-	fmt.Fprintf(&b, "    %s  %s  %s  %s  %s\n", pad("", 1), u.gray(pad("HOST", hostW)), u.gray(pad("PATH", pathW)), u.gray(pad("BACKEND", beW)), u.gray("STATUS / ROUTE"))
+	fmt.Fprintf(&b, "    %s  %s  %s  %s  %s  %s\n", pad("", 1), u.gray(pad("HOST", hostW)), u.gray(pad("PATH", pathW)), u.gray(pad("BACKEND", beW)), u.gray(pad("CLASS", clsW)), u.gray("STATUS / ROUTE"))
 	for _, r := range rep.Rules {
 		tail := r.Status
 		if r.Route != "" {
 			tail += " " + u.arrow() + " " + r.Route
+			if r.RouteKind != "" && r.RouteKind != kindHTTPRoute {
+				tail += " (" + r.RouteKind + ")"
+			}
 		}
-		fmt.Fprintf(&b, "    %s  %s  %s  %s  %s\n", sym(r.Status), pad(hostLabel(r.Host), hostW), pad(r.Path, pathW), pad(r.Backend, beW), tail)
+		class := r.IngressClass
+		if class == "" {
+			class = "-"
+		}
+		fmt.Fprintf(&b, "    %s  %s  %s  %s  %s  %s\n", sym(r.Status), pad(hostLabel(r.Host), hostW), pad(r.Path, pathW), pad(r.Backend, beW), pad(class, clsW), tail)
 		for _, d := range r.Details {
 			fmt.Fprintf(&b, "         %s\n", u.gray(d))
 		}
@@ -762,8 +1104,8 @@ func (u *ui) MigratePretty(rep *migrateReport) string {
 	if !rep.OK {
 		verdict = u.red("differences found")
 	}
-	fmt.Fprintf(&b, "\n\n  %s: %d equivalent, %d different, %d missing in Gateway, %d extra in Gateway, %d annotations need attention\n\n",
-		verdict, s[statusEquivalent], s[statusDifferent], s[statusMissing], s[statusExtra], s["annotations_flagged"])
+	fmt.Fprintf(&b, "\n\n  %s: %d equivalent, %d different, %d missing in Gateway, %d extra in Gateway, %d unresolved, %d annotations need attention\n\n",
+		verdict, s[statusEquivalent], s[statusDifferent], s[statusMissing], s[statusExtra], s[statusUnresolved], s["annotations_flagged"])
 	return b.String()
 }
 
@@ -782,7 +1124,7 @@ func MigrateAnnotations(rep *migrateReport, file string) string {
 			continue
 		}
 		level := "error"
-		if r.Status == statusExtra {
+		if r.Status == statusExtra || r.Status == statusUnresolved {
 			level = "warning"
 		}
 		msg := fmt.Sprintf("%s%s: %s", hostLabel(r.Host), r.Path, r.Status)
@@ -808,7 +1150,10 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 	fs.StringVar(&ns, "namespace", "default", "namespace to read from the cluster")
 	all := fs.Bool("A", false, "read all namespaces from the cluster")
 	ingressPath := fs.String("ingress", "", "read Ingress objects from this YAML/JSON file or directory instead of the cluster")
-	routesPath := fs.String("routes", "", "read HTTPRoutes (and Gateways) from this YAML/JSON file or directory instead of the cluster")
+	routesPath := fs.String("routes", "", "read HTTPRoutes, GRPCRoutes, TLSRoutes (and Gateways) from this YAML/JSON file or directory instead of the cluster")
+	servicesPath := fs.String("services", "", "read Services (to resolve named backend ports) from this YAML/JSON file or directory; Service objects in --ingress/--routes inputs are used too")
+	ingressClass := fs.String("ingress-class", "", "only analyse Ingresses of this class (spec.ingressClassName or kubernetes.io/ingress.class); default: all")
+	probeExtra := fs.Bool("probe-extra", false, "also probe routes that exist only in the Gateway (needs --ingress-url and --gateway-url)")
 	ingressURL := fs.String("ingress-url", "", "base URL of the Ingress controller for live comparison (needs --gateway-url)")
 	gatewayURL := fs.String("gateway-url", "", "base URL of the Gateway data plane for live comparison (needs --ingress-url)")
 	address := fs.String("address", "", "connect both live targets to this numeric IP, preserving Host and TLS identity")
@@ -851,12 +1196,15 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 		return fail("--ingress-url and --gateway-url must be given together")
 	}
 	live := *ingressURL != ""
+	if !live && *probeExtra {
+		return fail("--probe-extra needs --ingress-url and --gateway-url")
+	}
 	if !live && (*address != "" || *ingressAddr != "" || *gatewayAddr != "" || *ca != "" || len(headers) > 0) {
 		return fail("--address, --ingress-address, --gateway-address, --ca and --header need --ingress-url and --gateway-url")
 	}
 
 	// Load objects.
-	var ingresses, routes, gateways []obj
+	var ingresses, routes, gateways, services, classes []obj
 	haveGW := false
 	scope := []string{}
 	if *all {
@@ -869,8 +1217,18 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 		}
 		return itemsOf(v), nil
 	}
+	listKind := func(resource, kind string) ([]obj, error) {
+		items, err := list(resource)
+		var out []obj
+		for _, o := range items {
+			if kindOf(o, kind) {
+				out = append(out, o)
+			}
+		}
+		return out, err
+	}
 	var fileObjs []obj
-	for _, p := range []string{*ingressPath, *routesPath} {
+	for _, p := range []string{*ingressPath, *routesPath, *servicesPath} {
 		if p == "" {
 			continue
 		}
@@ -884,11 +1242,15 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 		switch {
 		case kindOf(o, "Ingress"):
 			ingresses = append(ingresses, o)
-		case kindOf(o, "HTTPRoute"):
+		case kindOf(o, "HTTPRoute"), kindOf(o, "GRPCRoute"), kindOf(o, "TLSRoute"):
 			routes = append(routes, o)
 		case kindOf(o, "Gateway"):
 			gateways = append(gateways, o)
 			haveGW = true
+		case kindOf(o, "Service"):
+			services = append(services, o)
+		case kindOf(o, "IngressClass"):
+			classes = append(classes, o)
 		}
 	}
 	var notes []string
@@ -896,25 +1258,75 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 		if ingresses, err = list("ingresses.networking.k8s.io"); err != nil {
 			return 0, err
 		}
+		if *ingressClass != "" {
+			if cs, cerr := listKind("ingressclasses.networking.k8s.io", "IngressClass"); cerr == nil {
+				classes = append(classes, cs...)
+			}
+		}
+	}
+	needKind := map[string]bool{}
+	needNamedPort := false
+	for _, ing := range ingresses {
+		if ingressClassWanted(ing, classes, *ingressClass) {
+			k, _ := routeKindFor(annotationsOf(ing))
+			needKind[k] = true
+			for _, ir := range extractIngressRules(ing, nil) {
+				needNamedPort = needNamedPort || ir.PortIsName
+			}
+		}
 	}
 	if *routesPath == "" {
-		if routes, err = list("httproutes.gateway.networking.k8s.io"); err != nil {
+		if routes, err = listKind("httproutes.gateway.networking.k8s.io", kindHTTPRoute); err != nil {
 			return 0, err
 		}
-		if gws, gerr := list("gateways.gateway.networking.k8s.io"); gerr == nil {
+		if gws, gerr := listKind("gateways.gateway.networking.k8s.io", "Gateway"); gerr == nil {
 			gateways, haveGW = gws, true
 		} else {
 			notes = append(notes, "could not read Gateways: "+gerr.Error())
+		}
+		for _, kr := range [][2]string{{"grpcroutes.gateway.networking.k8s.io", kindGRPCRoute}, {"tlsroutes.gateway.networking.k8s.io", kindTLSRoute}} {
+			rs, rerr := listKind(kr[0], kr[1])
+			routes = append(routes, rs...)
+			if rerr != nil && needKind[kr[1]] {
+				notes = append(notes, "could not read "+kr[1]+"s: "+rerr.Error())
+			}
+		}
+	}
+	haveSvc := len(services) > 0 || *servicesPath != ""
+	if !haveSvc && needNamedPort && (*ingressPath == "" || *routesPath == "") {
+		if svcs, serr := listKind("services", "Service"); serr == nil {
+			services, haveSvc = svcs, true
+		} else {
+			notes = append(notes, "could not read Services: "+serr.Error())
 		}
 	}
 	if len(ingresses) == 0 {
 		return 0, userError("no Ingress objects found; nothing to migrate")
 	}
+	var others []obj
+	if *ingressClass != "" {
+		var kept []obj
+		for _, ing := range ingresses {
+			if ingressClassWanted(ing, classes, *ingressClass) {
+				kept = append(kept, ing)
+			} else {
+				others = append(others, ing)
+			}
+		}
+		if len(kept) == 0 {
+			return 0, userErrorf("no Ingress objects of class %q found (%d of other classes skipped)", *ingressClass, len(others))
+		}
+		if len(others) > 0 {
+			notes = append(notes, fmt.Sprintf("skipped %d Ingress objects not of class %q", len(others), *ingressClass))
+		}
+		ingresses = kept
+	}
 	if *routesPath != "" && len(routes) == 0 {
-		return 0, userErrorf("no HTTPRoute objects found in %s", *routesPath)
+		return 0, userErrorf("no HTTPRoute, GRPCRoute or TLSRoute objects found in %s", *routesPath)
 	}
 
-	rep := compareMigration(ingresses, routes, gateways, haveGW)
+	rep := compareMigration(migrateInput{Ingresses: ingresses, Routes: routes, Gateways: gateways, HaveGW: haveGW,
+		Services: extractServices(services), HaveServices: haveSvc, OtherIngresses: others})
 	rep.Notes = append(rep.Notes, notes...)
 	if live {
 		lo := &liveOptions{ca: *ca, timeout: *timeout, headers: append(append([]string{}, defaultCompareHeaders...), headers...)}
@@ -930,7 +1342,7 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 		if lo.gateway, err = newLiveTarget(*gatewayURL, pick(*gatewayAddr)); err != nil {
 			return 0, err
 		}
-		lo.apply(rep)
+		lo.apply(rep, *probeExtra)
 	}
 
 	switch {
@@ -953,4 +1365,22 @@ func firstNonEmpty(s ...string) string {
 		}
 	}
 	return ""
+}
+
+// ingressClassWanted reports whether an Ingress belongs to the selected class.
+// An empty selection keeps everything. An Ingress without a class belongs to
+// the selected class when a loaded IngressClass of that name is the default.
+func ingressClassWanted(ing obj, classes []obj, want string) bool {
+	if want == "" {
+		return true
+	}
+	if c := ingressClassOf(ing); c != "" {
+		return c == want
+	}
+	for _, c := range classes {
+		if n, _ := metaOf(c); n == want && annotationsOf(c)["ingressclass.kubernetes.io/is-default-class"] == "true" {
+			return true
+		}
+	}
+	return false
 }

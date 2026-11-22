@@ -6,24 +6,32 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // A deliberately small YAML reader for Kubernetes manifests (the module has no
 // third-party dependencies). It supports block mappings and sequences, plain
-// and quoted scalars, single-line flow collections, literal and folded block
-// scalars, comments and multi-document streams. It does not support anchors,
-// tags, multi-line flow collections or multi-line plain scalars. Numbers
-// decode to float64 and null to nil, like encoding/json.
+// scalars (including ones folded across lines), single and double quoted
+// scalars (including multi-line ones with escapes), flow collections that span
+// lines, literal and folded block scalars with chomping and indentation
+// indicators, anchors, aliases and merge keys (<<), tags, comments, directives
+// and multi-document streams. Tags are honoured for !!str, !!int, !!float,
+// !!bool and !!null and ignored otherwise. Numbers decode to float64 and null
+// to nil, like encoding/json. Not supported: complex keys ("? ") and keys that
+// span lines.
 
 type yline struct {
-	indent int
-	text   string // content after the indent, comments not yet stripped
-	raw    string
+	indent    int
+	text      string // content after the indent, comments not yet stripped
+	raw       string
+	parent    int // indent of the owning "-" when the line was re-read from a sequence item
+	hasParent bool
 }
 
 type yparser struct {
-	lines []yline
-	pos   int
+	lines   []yline
+	pos     int
+	anchors map[string]any
 }
 
 // decodeManifests decodes a YAML or JSON stream into its non-empty documents.
@@ -31,10 +39,12 @@ func decodeManifests(data []byte) ([]any, error) {
 	text := strings.TrimPrefix(string(data), "\ufeff")
 	if t := strings.TrimSpace(text); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
 		var v any
-		if err := json.Unmarshal([]byte(t), &v); err != nil {
+		if err := json.Unmarshal([]byte(t), &v); err == nil {
+			return []any{v}, nil
+		} else if !strings.Contains(t, "\n") {
 			return nil, err
 		}
-		return []any{v}, nil
+		// Multi-line and not JSON: it may be flow-style YAML; fall through.
 	}
 	var docs []any
 	var cur []string
@@ -49,16 +59,29 @@ func decodeManifests(data []byte) ([]any, error) {
 		}
 		return nil
 	}
+	hasContent := func() bool {
+		for _, l := range cur {
+			if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
+				return true
+			}
+		}
+		return false
+	}
 	for _, l := range strings.Split(text, "\n") {
 		l = strings.TrimRight(l, "\r")
-		if l == "---" || strings.HasPrefix(l, "--- ") {
+		switch {
+		case l == "---" || strings.HasPrefix(l, "--- ") || strings.HasPrefix(l, "---\t"):
 			if err := flush(); err != nil {
 				return nil, err
 			}
+			if rest := strings.TrimSpace(l[3:]); rest != "" && !strings.HasPrefix(rest, "#") {
+				cur = append(cur, rest)
+			}
 			continue
-		}
-		if l == "..." {
+		case l == "..." || strings.HasPrefix(l, "... "):
 			continue
+		case strings.HasPrefix(l, "%") && !hasContent():
+			continue // %YAML / %TAG directive
 		}
 		cur = append(cur, l)
 	}
@@ -69,7 +92,7 @@ func decodeManifests(data []byte) ([]any, error) {
 }
 
 func parseYAMLDoc(lines []string) (v any, err error) {
-	p := &yparser{}
+	p := &yparser{anchors: map[string]any{}}
 	for _, l := range lines {
 		if strings.Contains(l[:len(l)-len(strings.TrimLeft(l, " \t"))], "\t") {
 			if strings.TrimSpace(l) != "" {
@@ -102,6 +125,8 @@ type yamlErr string
 
 func (e yamlErr) Error() string { return string(e) }
 
+func yfail(format string, a ...any) { panic(yamlErr(fmt.Sprintf(format, a...))) }
+
 // skip advances to the next content line and reports whether one exists.
 func (p *yparser) skip() bool {
 	for p.pos < len(p.lines) {
@@ -116,16 +141,45 @@ func (p *yparser) skip() bool {
 
 func isSeqItem(t string) bool { return t == "-" || strings.HasPrefix(t, "- ") }
 
+// parentOf is the indent that continuation lines of a scalar on l must exceed.
+func parentOf(l yline) int {
+	if l.hasParent {
+		return l.parent
+	}
+	return l.indent - 1
+}
+
+// splitProps removes leading anchor (&a) and tag (!t) properties from a value.
+func splitProps(t string) (anchor, tag, rest string) {
+	rest = strings.TrimSpace(t)
+	for rest != "" && (rest[0] == '&' || rest[0] == '!') {
+		end := strings.IndexAny(rest, " \t")
+		tok := rest
+		if end >= 0 {
+			tok, rest = rest[:end], strings.TrimSpace(rest[end:])
+		} else {
+			rest = ""
+		}
+		if tok[0] == '&' {
+			anchor = tok[1:]
+		} else {
+			tag = tok
+		}
+	}
+	return anchor, tag, rest
+}
+
 func (p *yparser) block(indent int) any {
 	l := p.lines[p.pos]
+	_, _, rest := splitProps(stripComment(l.text))
 	switch {
 	case isSeqItem(l.text):
 		return p.seq(indent)
-	case keyColon(stripComment(l.text)) >= 0:
+	case keyColon(rest) >= 0:
 		return p.mapping(indent)
 	}
 	p.pos++
-	return parseInline(stripComment(l.text))
+	return p.value(parentOf(l), l.text, false)
 }
 
 func (p *yparser) seq(indent int) any {
@@ -136,98 +190,328 @@ func (p *yparser) seq(indent int) any {
 			break
 		}
 		rest := strings.TrimLeft(l.text[1:], " ")
-		if strings.TrimSpace(stripComment(rest)) == "" {
-			p.pos++
-			if p.skip() && p.lines[p.pos].indent > indent {
-				out = append(out, p.block(p.lines[p.pos].indent))
-			} else {
-				out = append(out, nil)
+		_, _, bare := splitProps(stripComment(rest))
+		if isSeqItem(bare) || keyColon(bare) >= 0 {
+			// Re-read the item as a line indented to where its content starts.
+			// Properties in front of a key belong to the key, so drop them.
+			if bare != strings.TrimSpace(stripComment(rest)) {
+				rest = bare
 			}
+			off := len(l.text) - len(rest)
+			p.lines[p.pos] = yline{indent: indent + off, text: rest, raw: l.raw, parent: indent, hasParent: true}
+			out = append(out, p.block(indent+off))
 			continue
 		}
-		// Re-read the item as a line indented to where its content starts.
-		off := len(l.text) - len(rest)
-		p.lines[p.pos] = yline{indent: indent + off, text: rest, raw: l.raw}
-		out = append(out, p.block(indent+off))
+		p.pos++
+		out = append(out, p.value(indent, rest, false))
 	}
 	return out
 }
 
 func (p *yparser) mapping(indent int) any {
 	out := obj{}
+	var merges []any
 	for p.skip() {
 		l := p.lines[p.pos]
 		if l.indent != indent || isSeqItem(l.text) {
 			break
 		}
 		text := stripComment(l.text)
-		i := keyColon(text)
+		_, _, ktext := splitProps(text)
+		i := keyColon(ktext)
 		if i < 0 {
-			panic(yamlErr(fmt.Sprintf("yaml: expected key: value, got %q", l.text)))
+			yfail("yaml: expected key: value, got %q", l.text)
 		}
-		key := scalarString(strings.TrimSpace(text[:i]))
-		val := strings.TrimSpace(text[i+1:])
+		rawKey := strings.TrimSpace(ktext[:i])
+		val := strings.TrimSpace(ktext[i+1:])
 		p.pos++
-		switch {
-		case val == "":
-			if p.skip() {
-				n := p.lines[p.pos]
-				if n.indent > indent {
-					out[key] = p.block(n.indent)
-					continue
-				}
-				if n.indent == indent && isSeqItem(n.text) {
-					out[key] = p.seq(indent)
-					continue
-				}
-			}
-			out[key] = nil
-		case val[0] == '|' || val[0] == '>':
-			out[key] = p.blockScalar(indent, val)
-		default:
-			out[key] = parseInline(val)
+		v := p.value(indent, val, true)
+		if rawKey == "<<" {
+			merges = append(merges, v)
+			continue
 		}
+		out[scalarString(rawKey)] = v
 	}
+	mergeInto(out, merges)
 	return out
 }
 
-// blockScalar reads a literal (|) or folded (>) scalar whose lines are
-// indented deeper than the owning key.
-func (p *yparser) blockScalar(parent int, header string) string {
-	var body []string
-	min := -1
+// mergeInto applies YAML merge keys: explicit keys win, then earlier merges.
+func mergeInto(out obj, merges []any) {
+	for _, m := range merges {
+		srcs, ok := m.([]any)
+		if !ok {
+			srcs = []any{m}
+		}
+		for _, s := range srcs {
+			sm, ok := s.(obj)
+			if !ok {
+				yfail("yaml: merge key (<<) needs a mapping or a list of mappings")
+			}
+			for k, v := range sm {
+				if _, set := out[k]; !set {
+					out[k] = v
+				}
+			}
+		}
+	}
+}
+
+// value reads the value that starts with text on the line just consumed.
+// parent is the indent that lines belonging to the value must exceed;
+// allowSeq lets a sequence sit at the parent's own indent (mapping values).
+func (p *yparser) value(parent int, text string, allowSeq bool) any {
+	anchor, tag, rest := splitProps(stripComment(text))
+	var v any
+	raw, hasRaw := "", false
+	switch {
+	case rest == "":
+		hasRaw = true
+		if p.skip() {
+			n := p.lines[p.pos]
+			if n.indent > parent {
+				v, hasRaw = p.block(n.indent), false
+			} else if allowSeq && n.indent == parent && isSeqItem(n.text) {
+				v, hasRaw = p.seq(parent), false
+			}
+		}
+	case rest[0] == '|' || rest[0] == '>':
+		v = p.blockScalar(parent, rest)
+	case rest[0] == '"' || rest[0] == '\'':
+		v = p.quoted(rest)
+	case rest[0] == '[' || rest[0] == '{':
+		v = p.flow(rest)
+	case rest[0] == '*' && p.isAlias(rest):
+		v = p.alias(rest)
+	default:
+		raw, hasRaw = p.plain(parent, rest), true
+		v = plainScalar(raw)
+	}
+	v = applyTag(tag, v, raw, hasRaw)
+	if anchor != "" {
+		p.anchors[anchor] = v
+	}
+	return v
+}
+
+// isAlias reports whether text is an alias reference. "*.example.com" is not
+// an anchor in practice but an unquoted wildcard host, so it stays a scalar.
+func (p *yparser) isAlias(text string) bool {
+	if len(text) < 2 || strings.ContainsAny(text, " \t") {
+		return false
+	}
+	if _, ok := p.anchors[text[1:]]; ok {
+		return true
+	}
+	return !strings.HasPrefix(text, "*.")
+}
+
+func (p *yparser) alias(text string) any {
+	v, ok := p.anchors[text[1:]]
+	if !ok {
+		yfail("yaml: unknown anchor %q", text[1:])
+	}
+	return v
+}
+
+// plain reads a plain scalar that may continue on deeper-indented lines.
+func (p *yparser) plain(parent int, first string) string {
+	s := first
+	blank := 0
 	for p.pos < len(p.lines) {
 		l := p.lines[p.pos]
-		if strings.TrimSpace(l.raw) != "" {
-			if l.indent <= parent {
-				break
-			}
-			if min < 0 || l.indent < min {
-				min = l.indent
-			}
+		t := strings.TrimSpace(l.raw)
+		if t == "" {
+			blank++
+			p.pos++
+			continue
 		}
-		body = append(body, l.raw)
+		if strings.HasPrefix(t, "#") || l.indent <= parent {
+			break
+		}
+		piece := stripComment(t)
+		if blank > 0 {
+			s += strings.Repeat("\n", blank)
+		} else {
+			s += " "
+		}
+		s += piece
+		blank = 0
+		p.pos++
+		if piece != t {
+			break // a trailing comment ends the scalar
+		}
+	}
+	return s
+}
+
+// quoted reads a quoted scalar that may continue over several lines.
+func (p *yparser) quoted(first string) string {
+	acc := first
+	for {
+		if e := quoteEnd(acc); e >= 0 {
+			return unquote(acc[1:e], acc[0] == '"')
+		}
+		if p.pos >= len(p.lines) {
+			yfail("yaml: unterminated quoted string")
+		}
+		acc += "\n" + p.lines[p.pos].raw
 		p.pos++
 	}
-	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
-		body = body[:len(body)-1]
+}
+
+// flow reads a flow collection that may continue over several lines.
+func (p *yparser) flow(first string) any {
+	acc := first
+	for {
+		if clean, end := scanFlow(acc); end >= 0 {
+			f := &flowReader{s: clean[:end+1], anchors: p.anchors}
+			return f.value()
+		}
+		if p.pos >= len(p.lines) {
+			yfail("yaml: unterminated flow collection")
+		}
+		acc += "\n" + p.lines[p.pos].raw
+		p.pos++
 	}
-	for i, b := range body {
-		if len(b) >= min && min > 0 {
-			body[i] = b[min:]
-		} else {
-			body[i] = strings.TrimSpace(b)
+}
+
+// scanFlow removes comments from s and returns the index of the bracket that
+// closes the collection opened at s[0], or -1 when it is not closed yet.
+func scanFlow(s string) (string, int) {
+	var b strings.Builder
+	depth := 0
+	var q byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if q != 0 {
+			b.WriteByte(c)
+			if c == '\\' && q == '"' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			} else if c == q {
+				if q == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+					i++
+					b.WriteByte('\'')
+				} else {
+					q = 0
+				}
+			}
+			continue
+		}
+		switch {
+		case c == '"' || c == '\'':
+			q = c
+		case c == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t' || s[i-1] == '\n'):
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			if i < len(s) {
+				b.WriteByte('\n')
+			}
+			continue
+		case c == '[' || c == '{':
+			depth++
+		case c == ']' || c == '}':
+			depth--
+			if depth == 0 {
+				b.WriteByte(c)
+				return b.String(), b.Len() - 1
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), -1
+}
+
+// blockScalar reads a literal (|) or folded (>) scalar whose lines are
+// indented deeper than the owner.
+func (p *yparser) blockScalar(parent int, header string) string {
+	head := strings.Fields(header)[0]
+	chomp, explicit := byte(0), 0
+	for _, c := range head[1:] {
+		switch {
+		case c == '-' || c == '+':
+			chomp = byte(c)
+		case c >= '1' && c <= '9':
+			explicit = int(c - '0')
 		}
 	}
-	sep := "\n"
-	if header[0] == '>' {
-		sep = " "
+	content := -1
+	if explicit > 0 {
+		content = max(parent, 0) + explicit
 	}
-	s := strings.Join(body, sep)
-	if !strings.Contains(header, "-") && s != "" {
+	var body []string
+	for p.pos < len(p.lines) {
+		l := p.lines[p.pos]
+		if strings.TrimSpace(l.raw) == "" {
+			body = append(body, "")
+			p.pos++
+			continue
+		}
+		if l.indent <= parent {
+			break
+		}
+		if content < 0 {
+			content = l.indent
+		}
+		if l.indent < content {
+			break
+		}
+		body = append(body, l.raw[content:])
+		p.pos++
+	}
+	trailing := 0
+	for len(body) > 0 && body[len(body)-1] == "" {
+		body = body[:len(body)-1]
+		trailing++
+	}
+	var s string
+	if head[0] == '|' {
+		s = strings.Join(body, "\n")
+	} else {
+		s = foldLines(body)
+	}
+	switch {
+	case chomp == '-':
+	case s == "":
+		if chomp == '+' {
+			s = strings.Repeat("\n", trailing)
+		}
+	case chomp == '+':
+		s += "\n" + strings.Repeat("\n", trailing)
+	default:
 		s += "\n"
 	}
 	return s
+}
+
+// foldLines implements the line folding of a ">" scalar.
+func foldLines(body []string) string {
+	var out strings.Builder
+	blanks, started, lastMore := 0, false, false
+	for _, ln := range body {
+		if ln == "" {
+			blanks++
+			continue
+		}
+		more := ln[0] == ' ' || ln[0] == '\t'
+		switch {
+		case !started:
+			out.WriteString(strings.Repeat("\n", blanks))
+		case blanks == 0 && !more && !lastMore:
+			out.WriteByte(' ')
+		case blanks == 0:
+			out.WriteByte('\n')
+		case !more && !lastMore:
+			out.WriteString(strings.Repeat("\n", blanks))
+		default:
+			out.WriteString(strings.Repeat("\n", blanks+1))
+		}
+		out.WriteString(ln)
+		started, lastMore, blanks = true, more, 0
+	}
+	return out.String()
 }
 
 // stripComment removes a trailing " # comment" that is outside quotes.
@@ -278,24 +562,21 @@ func keyColon(s string) int {
 	return -1
 }
 
-func scalarString(s string) string {
-	if v, ok := parseInline(s).(string); ok {
-		return v
-	}
-	return s
-}
-
-// parseInline decodes a one-line scalar or flow collection.
-func parseInline(s string) any {
-	s = strings.TrimSpace(s)
+// scalarString decodes a mapping key.
+func scalarString(s string) (out string) {
+	out = s
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(yamlErr); !ok {
+				panic(r)
+			}
+		}
+	}()
 	f := &flowReader{s: s}
-	v := f.value()
-	f.ws()
-	if f.i != len(f.s) {
-		// Not valid flow syntax: treat the whole text as a plain scalar.
-		return plainScalar(s)
+	if v, ok := f.value().(string); ok && f.i == len(f.s) {
+		out = v
 	}
-	return v
+	return out
 }
 
 var yamlNumber = regexp.MustCompile(`^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$`)
@@ -317,21 +598,178 @@ func plainScalar(s string) any {
 	return s
 }
 
+// applyTag honours the core YAML tags that change a scalar's type. raw is the
+// source text of a scalar when hasRaw is set.
+func applyTag(tag string, v any, raw string, hasRaw bool) any {
+	text := func() string {
+		if hasRaw {
+			return strings.TrimSpace(raw)
+		}
+		s, _ := v.(string)
+		return strings.TrimSpace(s)
+	}
+	switch tag {
+	case "!!str", "!":
+		switch x := v.(type) {
+		case string:
+			return x
+		case nil:
+			return ""
+		case float64, bool:
+			if hasRaw {
+				return raw
+			}
+			return fmt.Sprint(x)
+		}
+	case "!!int", "!!float":
+		if n, err := strconv.ParseInt(text(), 0, 64); err == nil {
+			return float64(n)
+		}
+		if n, err := strconv.ParseFloat(text(), 64); err == nil {
+			return n
+		}
+	case "!!bool":
+		switch strings.ToLower(text()) {
+		case "true":
+			return true
+		case "false":
+			return false
+		}
+	case "!!null":
+		return nil
+	}
+	return v
+}
+
+// quoteEnd returns the index of the quote that closes the quoted scalar
+// starting at s[0], or -1.
+func quoteEnd(s string) int {
+	q := s[0]
+	for i := 1; i < len(s); i++ {
+		switch {
+		case q == '"' && s[i] == '\\':
+			i++
+		case s[i] == q:
+			if q == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+				i++
+				continue
+			}
+			return i
+		}
+	}
+	return -1
+}
+
+var yamlEscapes = map[byte]string{
+	'0': "\x00", 'a': "\a", 'b': "\b", 't': "\t", '\t': "\t", 'n': "\n", 'v': "\v", 'f': "\f", 'r': "\r",
+	'e': "\x1b", ' ': " ", '"': "\"", '/': "/", '\\': "\\", 'N': "\u0085", '_': " ", 'L': " ", 'P': " ",
+}
+
+// unquote decodes the text between the quotes of a quoted scalar, resolving
+// escapes and folding line breaks as YAML does.
+func unquote(body string, double bool) string {
+	var b []byte
+	keep := 0 // bytes of b that must not be trimmed (escaped content)
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		switch {
+		case double && c == '\\' && i+1 < len(body):
+			i++
+			e := body[i]
+			switch {
+			case e == '\n':
+				for i+1 < len(body) && (body[i+1] == ' ' || body[i+1] == '\t') {
+					i++
+				}
+				continue
+			case e == 'x' || e == 'u' || e == 'U':
+				n := map[byte]int{'x': 2, 'u': 4, 'U': 8}[e]
+				if i+n < len(body) {
+					if r, err := strconv.ParseUint(body[i+1:i+1+n], 16, 32); err == nil {
+						b = utf8.AppendRune(b, rune(r))
+						i += n
+						keep = len(b)
+						continue
+					}
+				}
+				b = append(b, '\\', e)
+			default:
+				if r, ok := yamlEscapes[e]; ok {
+					b = append(b, r...)
+				} else {
+					b = append(b, '\\', e)
+				}
+			}
+			keep = len(b)
+		case !double && c == '\'' && i+1 < len(body) && body[i+1] == '\'':
+			b = append(b, '\'')
+			i++
+			keep = len(b)
+		case c == '\n':
+			for len(b) > keep && (b[len(b)-1] == ' ' || b[len(b)-1] == '\t') {
+				b = b[:len(b)-1]
+			}
+			n, j := 0, i
+			for j < len(body) && body[j] == '\n' {
+				n++
+				j++
+				for j < len(body) && (body[j] == ' ' || body[j] == '\t') {
+					j++
+				}
+			}
+			i = j - 1
+			if n == 1 {
+				b = append(b, ' ')
+			} else {
+				b = append(b, strings.Repeat("\n", n-1)...)
+			}
+			keep = len(b)
+		default:
+			b = append(b, c)
+		}
+	}
+	return string(b)
+}
+
 type flowReader struct {
-	s string
-	i int
+	s       string
+	i       int
+	anchors map[string]any
 }
 
 func (f *flowReader) ws() {
-	for f.i < len(f.s) && (f.s[f.i] == ' ' || f.s[f.i] == '\t') {
+	for f.i < len(f.s) && strings.IndexByte(" \t\r\n", f.s[f.i]) >= 0 {
 		f.i++
 	}
 }
 
+// value reads one flow node, with its anchor and tag properties.
 func (f *flowReader) value() any {
 	f.ws()
+	var anchor, tag string
+	for f.i < len(f.s) && (f.s[f.i] == '&' || f.s[f.i] == '!') {
+		start := f.i
+		for f.i < len(f.s) && strings.IndexByte(" \t\r\n,]}", f.s[f.i]) < 0 {
+			f.i++
+		}
+		if tok := f.s[start:f.i]; tok[0] == '&' {
+			anchor = tok[1:]
+		} else {
+			tag = tok
+		}
+		f.ws()
+	}
+	v, raw, hasRaw := f.node()
+	v = applyTag(tag, v, raw, hasRaw)
+	if anchor != "" && f.anchors != nil {
+		f.anchors[anchor] = v
+	}
+	return v
+}
+
+func (f *flowReader) node() (v any, raw string, hasRaw bool) {
 	if f.i >= len(f.s) {
-		return nil
+		return nil, "", true
 	}
 	switch c := f.s[f.i]; c {
 	case '[':
@@ -340,30 +778,36 @@ func (f *flowReader) value() any {
 		for {
 			f.ws()
 			if f.i >= len(f.s) {
-				panic(yamlErr("yaml: unterminated flow sequence"))
+				yfail("yaml: unterminated flow sequence")
 			}
 			if f.s[f.i] == ']' {
 				f.i++
-				return out
+				return out, "", false
 			}
+			before := f.i
 			out = append(out, f.value())
 			f.ws()
 			if f.i < len(f.s) && f.s[f.i] == ',' {
 				f.i++
+			} else if f.i == before {
+				yfail("yaml: unexpected %q in flow sequence", string(f.s[f.i]))
 			}
 		}
 	case '{':
 		f.i++
 		out := obj{}
+		var merges []any
 		for {
 			f.ws()
 			if f.i >= len(f.s) {
-				panic(yamlErr("yaml: unterminated flow mapping"))
+				yfail("yaml: unterminated flow mapping")
 			}
 			if f.s[f.i] == '}' {
 				f.i++
-				return out
+				mergeInto(out, merges)
+				return out, "", false
 			}
+			before := f.i
 			k := f.value()
 			f.ws()
 			var v any
@@ -371,55 +815,50 @@ func (f *flowReader) value() any {
 				f.i++
 				v = f.value()
 			}
-			out[fmt.Sprint(k)] = v
+			if k == "<<" {
+				merges = append(merges, v)
+			} else {
+				out[fmt.Sprint(k)] = v
+			}
 			f.ws()
 			if f.i < len(f.s) && f.s[f.i] == ',' {
 				f.i++
+			} else if f.i == before {
+				yfail("yaml: unexpected %q in flow mapping", string(f.s[f.i]))
 			}
 		}
-	case '"':
+	case '"', '\'':
+		e := quoteEnd(f.s[f.i:])
+		if e < 0 {
+			yfail("yaml: unterminated quoted string")
+		}
+		out := unquote(f.s[f.i+1:f.i+e], c == '"')
+		f.i += e + 1
+		return out, out, true
+	case '*':
 		start := f.i
 		f.i++
-		for f.i < len(f.s) && f.s[f.i] != '"' {
-			if f.s[f.i] == '\\' {
-				f.i++
-			}
+		for f.i < len(f.s) && strings.IndexByte(" \t\r\n,]}", f.s[f.i]) < 0 {
 			f.i++
 		}
-		if f.i >= len(f.s) {
-			panic(yamlErr("yaml: unterminated double-quoted string"))
+		name := f.s[start+1 : f.i]
+		if v, ok := f.anchors[name]; ok {
+			return v, "", false
 		}
-		f.i++
-		var out string
-		if err := json.Unmarshal([]byte(f.s[start:f.i]), &out); err != nil {
-			out = f.s[start+1 : f.i-1]
+		if strings.HasPrefix(f.s[start:], "*.") {
+			s := f.s[start:f.i]
+			return s, s, true
 		}
-		return out
-	case '\'':
-		f.i++
-		var b strings.Builder
-		for f.i < len(f.s) {
-			if f.s[f.i] == '\'' {
-				if f.i+1 < len(f.s) && f.s[f.i+1] == '\'' {
-					b.WriteByte('\'')
-					f.i += 2
-					continue
-				}
-				f.i++
-				return b.String()
-			}
-			b.WriteByte(f.s[f.i])
-			f.i++
-		}
-		panic(yamlErr("yaml: unterminated single-quoted string"))
+		yfail("yaml: unknown anchor %q", name)
 	}
 	// plain scalar up to a flow delimiter
 	start := f.i
 	for f.i < len(f.s) && !strings.ContainsRune(",]}", rune(f.s[f.i])) {
-		if f.s[f.i] == ':' && (f.i+1 == len(f.s) || f.s[f.i+1] == ' ') {
+		if f.s[f.i] == ':' && (f.i+1 == len(f.s) || strings.IndexByte(" \t\r\n", f.s[f.i+1]) >= 0) {
 			break
 		}
 		f.i++
 	}
-	return plainScalar(strings.TrimSpace(f.s[start:f.i]))
+	s := strings.Join(strings.Fields(f.s[start:f.i]), " ")
+	return plainScalar(s), s, true
 }
