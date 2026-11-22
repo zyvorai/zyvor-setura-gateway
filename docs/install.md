@@ -1,8 +1,36 @@
 # Installing Zyvor Setura
 
+Setura is source-available: a paid Order under the
+[Zyvor Production Licence v2.0](../LICENSE) is required for use (a 30-day trial
+is available on request); see [licensing.md](licensing.md).
+
 Release archives are named `setura_VERSION_OS_ARCH.tar.gz` (darwin and linux,
 amd64 and arm64) and contain `setura`, `man/setura.1`, `LICENSE`, `NOTICE` and
-`README.md`. Each release also publishes `checksums.txt`.
+`README.md`. Each release also publishes `checksums.txt` (covering every
+asset), `.deb` and `.rpm` packages for linux, a Helm chart, one SBOM per
+archive, and a cosign bundle (`FILE.sigstore.json`) next to every file. The
+release process is described in [release-process.md](release-process.md).
+
+## install.sh
+
+    sh install.sh                      # latest release into ~/.local/bin
+    sh install.sh --version 0.6.0      # a specific release
+    sh install.sh --prefix /usr/local  # system-wide (needs write access)
+    sh install.sh --dry-run            # print the plan, change nothing
+    sh install.sh --uninstall          # remove the binary and man page again
+    sh install.sh --require-signature  # fail unless cosign verifies the release
+
+The script prints what it will do, downloads the archive and `checksums.txt`,
+verifies the sha256 and aborts on a mismatch before anything is installed.
+When `cosign` is installed it also verifies the keyless signature on
+`checksums.txt` (made by this repository's release workflow) and aborts if it
+is missing or wrong; `--no-signature-check` skips that, `--require-signature`
+makes cosign mandatory. Without cosign only the checksum is verified, which
+catches corruption but not a compromised download host. It never uses sudo.
+`SETURA_BASE_URL` overrides the download base for mirrors and tests
+(`--version` is then required); `SETURA_COSIGN` names the cosign executable;
+`sh scripts/test-install.sh` exercises it against a local fake release with a
+fake cosign.
 
 ## Homebrew
 
@@ -15,25 +43,42 @@ which writes `packaging/homebrew/Formula/setura.rb` with the sha256 values
 from `dist/checksums.txt`. Publishing that file to a tap is a manual step.
 The formula installs the man page and bash, zsh and fish completions.
 
-## install.sh
+## Linux packages (.deb, .rpm)
 
-    sh install.sh                      # latest release into ~/.local/bin
-    sh install.sh --version 0.4.0      # a specific release
-    sh install.sh --prefix /usr/local  # system-wide (needs write access)
-    sh install.sh --dry-run            # print the plan, change nothing
+Attached to each release as `setura_X.Y.Z_amd64.deb`, `setura_X.Y.Z_arm64.deb`,
+`setura-X.Y.Z-1.x86_64.rpm` and `setura-X.Y.Z-1.aarch64.rpm`.
 
-The script prints what it will do, downloads the archive and
-`checksums.txt`, verifies the sha256 and aborts on a mismatch before
-anything is installed. It never uses sudo. `SETURA_BASE_URL` overrides the
-download base for mirrors and tests (`--version` is then required);
-`sh scripts/test-install.sh` exercises it against a local fake release.
+    sudo dpkg -i setura_X.Y.Z_amd64.deb
+    sudo rpm -i setura-X.Y.Z-1.x86_64.rpm
+
+They install `/usr/bin/setura`, the man page, shell completions, and under
+`/usr/share/doc/setura` the licence files and example systemd units
+(`examples/systemd`, also in `packaging/systemd/`). Nothing is enabled or
+started. The packages are built without dpkg or rpm by `tools/mkpkg`
+(`make dist package`); the `.deb` is checked structurally in tests, the `.rpm`
+has been checked structurally and with libarchive but not installed with
+`rpm` itself.
+
+## Kubernetes: Helm chart
+
+    helm install setura oci://ghcr.io/zyvorai/charts/setura --version X.Y.Z
+    helm install setura packaging/helm/setura          # from a checkout
+
+With default values it creates the same objects as `setura gateway install`
+(Namespace `setura-system`, ServiceAccount, ClusterRole, Role, bindings,
+GatewayClass `setura`, Deployment, Service). `values.yaml` has an entry for
+every `gateway install` option (`namespace`, `image`, `className`, `replicas`,
+`exposeGatewayPorts`) plus optional `serviceMonitor` and `prometheusRule`
+(Prometheus Operator CRDs; off by default). Printing the plain manifests
+instead is still `setura gateway install`.
 
 ## Docker
 
     docker run --rm ghcr.io/zyvorai/zyvor-setura-gateway:latest version
 
 Multi-arch images (linux/amd64, linux/arm64) are built by
-`.github/workflows/image.yml` on version tags. Build locally with
+`.github/workflows/image.yml` on version tags, signed with cosign and carry
+provenance and SBOM attestations. Build locally with
 `docker build --build-arg VERSION=dev -t setura:local .`.
 
 ## go install
@@ -47,6 +92,17 @@ This build reports the source default version, not the release tag.
     sha256sum -c --ignore-missing checksums.txt        # Linux
     shasum -a 256 -c --ignore-missing checksums.txt    # macOS
 
+    cosign verify-blob --bundle checksums.txt.sigstore.json \
+      --certificate-identity-regexp '^https://github\.com/zyvorai/zyvor-setura-gateway/\.github/workflows/release\.yml@refs/tags/v' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+    gh attestation verify setura_X.Y.Z_linux_amd64.tar.gz --repo zyvorai/zyvor-setura-gateway
+    cosign verify ghcr.io/zyvorai/zyvor-setura-gateway:X.Y.Z \
+      --certificate-identity-regexp '^https://github\.com/zyvorai/zyvor-setura-gateway/\.github/workflows/image\.yml@refs/tags/v' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+macOS `.pkg` installers signed and notarized on the Mac mini are attached to
+releases by hand; see [release-process.md](release-process.md).
+
 ## Manual page
 
 `setura man` prints the roff page; `make man` regenerates `man/setura.1`.
@@ -55,12 +111,9 @@ This build reports the source default version, not the release tag.
 
 `make sbom` writes `bin/sbom.json`, a simple JSON inventory built from
 `go version -m bin/setura` (main module, dependencies, GOOS/GOARCH, revision).
+Releases attach one such file per archive (`setura_X.Y.Z_OS_ARCH.sbom.json`),
+and the image carries a BuildKit SBOM attestation.
 
-Signing and attestation are not wired into the workflows. Options, for
-documentation only: sign release assets or the image with
-`cosign sign-blob` / `cosign sign` (keyless via GitHub OIDC), and publish
-build provenance with `actions/attest-build-provenance`, verifiable using
-`gh attestation verify FILE --repo zyvorai/zyvor-setura-gateway`.
 
 ## Deploy the demo stack to a lab host
 

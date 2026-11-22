@@ -37,6 +37,7 @@ var commandNames = []string{
 	"watch",
 	"history",
 	"echo",
+	"licence",
 	"man",
 	"version",
 }
@@ -56,6 +57,9 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
 
+// licenceFlags are offered after "setura licence".
+var licenceFlags = []string{"verify", "show", "--file", "--format"}
+
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
@@ -73,6 +77,7 @@ var flagSets = []struct {
 	{"shadow", shadowFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
+	{"licence", licenceFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

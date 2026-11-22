@@ -1,0 +1,13 @@
+[Unit]
+Description=Setura demo backend orders-v1
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/zyvor-setura-gateway
+ExecStart=%h/zyvor-setura-gateway/bin/setura echo --name orders-v1 --listen 127.0.0.1:19101
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

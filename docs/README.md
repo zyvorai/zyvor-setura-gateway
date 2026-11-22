@@ -2,7 +2,9 @@
 
 ## Start here
 
-- [Install](install.md): release binary, `install.sh`, Homebrew, container image.
+- [Install](install.md): release binary, `install.sh`, Homebrew, `.deb`/`.rpm`, Helm chart, container image.
+- [Licensing](licensing.md): plans, `setura licence verify`, the `ZYV1.` key format.
+- [Release process](release-process.md): signed releases, provenance, macOS signing on the Mac mini.
 - [Verification](verification.md): what has been proven, and how, for each release.
 - [Operators guide](operators.md): publish a listener and verify it from the client.
 - [Terminal](terminal.md): colour, ASCII mode and output formats.
