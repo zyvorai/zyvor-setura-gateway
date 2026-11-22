@@ -183,7 +183,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 	}
 	s.stats.record(st.route, st.backend, status)
 	s.hist.observe(st.route, status, time.Since(start))
-	s.latency.observe(st.route, st.backend, time.Since(start))
+	s.latency.observeTrace(st.route, st.backend, time.Since(start), st.trace.TraceID)
 	s.observe(rec, r, st, start, status)
 }
 
@@ -236,6 +236,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		idx := pe.Rule.Index
 		st.rule = &idx
 		st.markRoute()
+		s.ext.bump(&s.ext.cors, st.route)
 		for k, v := range c.preflightHeaders(r) {
 			rec.Header()[k] = v
 		}
@@ -275,6 +276,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	var ep *Endpoint
 	if len(rule.sessionPolicies()) > 0 {
 		if pr, pe := s.sessionPin(rule, r, s.res.now()); pr != nil {
+			s.ext.bump(&s.ext.sess, st.route)
 			ref, ep = pr, pe
 		}
 	}
@@ -291,6 +293,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	if hasExternalAuth(requestFilters(rule, ref)) {
 		ar, v := s.runAuthFilters(r, rule, requestFilters(rule, ref), pg.TLS)
 		if v != nil {
+			s.ext.authOutcome(st.route, "denied", "external")
 			st.errMsg = v.why
 			shapeResponse(rec.Header(), r, requestFilters(rule, ref))
 			writeAuthDenied(rec, v)

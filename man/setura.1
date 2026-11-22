@@ -25,8 +25,11 @@ probe the same URL via DNS and/or IPs
 .B watch URL... [\-\-file FILE]
 re\-probe on an interval; metrics, \-\-history, \-\-alert\-webhook/\-\-alert\-slack
 .TP
-.B history FILE [\-\-since 24h]
-summarize watch history: uptime, p50/p95, last failure, regressions
+.B history FILE [\-\-since 24h] [\-\-slo]
+summarize watch history: uptime, p50/p95, last failure, regressions; \-\-slo for burn rates
+.TP
+.B slo [\-\-history FILE|\-\-admin ADDR] [\-\-config F]
+availability and latency SLO burn rates (multi\-window) from probes or the gateway's metrics
 .TP
 .B why METHOD URL [\-\-config F|\-\-admin ADDR]
 explain why the built\-in gateway routes a request the way it does

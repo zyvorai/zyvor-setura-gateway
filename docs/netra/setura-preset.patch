@@ -1,0 +1,122 @@
+diff -u a/internal/collectors/apps.go b/internal/collectors/apps.go
+--- a/internal/collectors/apps.go	2026-11-22 21:33:20
++++ b/internal/collectors/apps.go	2026-11-22 21:33:20
+@@ -25,7 +25,7 @@
+ // variables the operator populates (for example from a Secret mounted as
+ // env). Netra never reads Kubernetes Secrets through the API for this.
+ type AppConfig struct {
+-	Kind        string            `yaml:"kind" json:"kind"` // nginx, apache, haproxy, redis, memcached, envoy, coredns, etcd, prometheus
++	Kind        string            `yaml:"kind" json:"kind"` // nginx, apache, haproxy, redis, memcached, envoy, coredns, etcd, setura, prometheus
+ 	Name        string            `yaml:"name" json:"name"`
+ 	URL         string            `yaml:"url,omitempty" json:"url,omitempty"`
+ 	Address     string            `yaml:"address,omitempty" json:"address,omitempty"` // host:port for redis/memcached
+@@ -135,6 +135,7 @@
+ 	"envoy":      func(c AppConfig) appCollector { return newPromApp(withDefaults(c, envoyInclude)) },
+ 	"coredns":    func(c AppConfig) appCollector { return newPromApp(withDefaults(c, corednsInclude)) },
+ 	"etcd":       func(c AppConfig) appCollector { return newPromApp(withDefaults(c, etcdInclude)) },
++	"setura":     func(c AppConfig) appCollector { return newPromApp(withDefaults(c, seturaInclude)) },
+ 	"prometheus": func(c AppConfig) appCollector { return newPromApp(c) },
+ }
+ 
+diff -u a/internal/collectors/apps_discovery.go b/internal/collectors/apps_discovery.go
+--- a/internal/collectors/apps_discovery.go	2026-11-22 21:33:20
++++ b/internal/collectors/apps_discovery.go	2026-11-22 21:33:20
+@@ -44,6 +44,7 @@
+ 	"envoy":        {kind: "envoy", paths: []string{"/stats/prometheus"}, ports: []int{9901, 15000, 19000}},
+ 	"coredns":      {kind: "coredns", paths: []string{"/metrics"}, ports: []int{9153}},
+ 	"etcd":         {kind: "etcd", paths: []string{"/metrics"}, ports: []int{2381, 2379}},
++	"setura":       {kind: "setura", paths: []string{"/metrics"}, ports: []int{19000}},
+ }
+ 
+ func (d *appDiscovery) netns(pid string) string {
+diff -u a/internal/collectors/apps_prom.go b/internal/collectors/apps_prom.go
+--- a/internal/collectors/apps_prom.go	2026-11-22 21:33:20
++++ b/internal/collectors/apps_prom.go	2026-11-22 21:33:20
+@@ -41,6 +41,11 @@
+ 		"etcd_network_peer_round_trip_time_seconds", "etcd_network_client_grpc_*_bytes_total",
+ 		"grpc_server_handled_total",
+ 	}
++	// seturaInclude selects the Setura gateway's own series. Its admin /metrics
++	// also carries nothing else, so the glob is the whole family; operators
++	// narrow it with include/exclude. Per-route and per-backend labels make one
++	// dimension each, so raise max_series for gateways with many routes.
++	seturaInclude = []string{"setura_gateway_*"}
+ )
+ 
+ // promApp scrapes a Prometheus text endpoint. Counters become per-second
+diff -u a/internal/collectors/apps_test.go b/internal/collectors/apps_test.go
+--- a/internal/collectors/apps_test.go	2026-11-22 21:33:20
++++ b/internal/collectors/apps_test.go	2026-11-22 21:33:20
+@@ -127,6 +127,52 @@
+ 	}
+ }
+ 
++func TestSeturaPreset(t *testing.T) {
++	var hits atomic.Int64
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		n := hits.Add(1)
++		fmt.Fprintf(w, `# HELP setura_gateway_route_requests_total Requests per route and status class.
++# TYPE setura_gateway_route_requests_total counter
++setura_gateway_route_requests_total{route="shop/web",code="2xx"} %d
++setura_gateway_route_requests_total{route="shop/web",code="5xx"} %d
++# TYPE setura_gateway_circuit_state gauge
++setura_gateway_circuit_state{backend="shop/web:80"} 1
++# TYPE setura_gateway_cert_expiry_seconds gauge
++setura_gateway_cert_expiry_seconds{listener="shop/gw/https"} 864000
++# TYPE setura_gateway_request_duration_seconds histogram
++setura_gateway_request_duration_seconds_bucket{route="shop/web",le="0.1"} 9
++setura_gateway_request_duration_seconds_bucket{route="shop/web",le="+Inf"} 10
++setura_gateway_request_duration_seconds_sum{route="shop/web"} %d
++setura_gateway_request_duration_seconds_count{route="shop/web"} %d
++# TYPE go_goroutines gauge
++go_goroutines 30
++`, 100*n, n, n, 10*n)
++	}))
++	defer srv.Close()
++	c := AppConfig{Kind: "setura", Name: "edge", URL: srv.URL}
++	if err := c.normalize(); err != nil {
++		t.Fatal(err)
++	}
++	got := runApps(t, NewApps(Config{}, []AppConfig{c}, false, time.Second, nil))
++	for k, v := range map[string]float64{
++		"setura.setura_gateway_circuit_state/backend=shop/web:80":          1,
++		"setura.setura_gateway_cert_expiry_seconds/listener=shop/gw/https": 864000,
++		"apps.up/setura/edge": 1,
++	} {
++		if got[k] != v {
++			t.Errorf("%s = %v, want %v", k, got[k], v)
++		}
++	}
++	if got["setura.setura_gateway_route_requests_total/code=5xx,route=shop/web"] <= 0 {
++		t.Errorf("counter rate missing: %v", got)
++	}
++	for k := range got {
++		if strings.Contains(k, "_bucket") || strings.Contains(k, "go_goroutines") {
++			t.Errorf("unexpected series %s", k)
++		}
++	}
++}
++
+ func TestAppSeriesCarryNameAndOperatorLabels(t *testing.T) {
+ 	c := AppConfig{Kind: "nginx", Name: "edge proxy", Labels: map[string]string{"team": "net"}}
+ 	ch := c.chart("requests", "requests", "requests/s", "t", "line")
+diff -u a/website/docs/operate/app-collectors.md b/website/docs/operate/app-collectors.md
+--- a/website/docs/operate/app-collectors.md	2026-11-22 21:33:20
++++ b/website/docs/operate/app-collectors.md	2026-11-22 21:33:20
+@@ -27,6 +27,7 @@
+ | `envoy` | `url` of `/stats/prometheus` | server liveness and memory, upstream cluster connections, requests, timeouts, retries, response classes, membership, downstream HTTP |
+ | `coredns` | `url` of `/metrics` | requests, responses by rcode, request duration (mean), cache entries/hits/misses, forwards, panics |
+ | `etcd` | `url` of `/metrics` | leader, leader changes, proposals, DB size, keys, WAL fsync and backend commit duration (mean), peer RTT, gRPC traffic |
++| `setura` | `url` of the Setura gateway admin `/metrics` (default port 19000) | requests and errors per route and backend, request duration (mean), retries, ejections, circuit state, rate limiting, auth outcomes, shadow mismatches, certificate expiry seconds, telemetry drops |
+ | `prometheus` | any Prometheus text endpoint | whatever `include`/`exclude` select |
+ 
+ Each instance produces contexts named `<kind>.<metric>` (for example
+@@ -35,7 +36,7 @@
+ `apps.up` has one dimension per application (`kind/name`): 1 when the last
+ scrape succeeded and 0 when it failed.
+ 
+-For `envoy`, `coredns` and `etcd`, a fixed set of useful metrics is collected
++For `envoy`, `coredns`, `etcd` and `setura`, a fixed set of useful metrics is collected
+ unless `include` overrides it.
+ 
+ ### Prometheus endpoints

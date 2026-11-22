@@ -1,0 +1,13 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: setura-gateway-dashboard
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: setura-gateway
+    {{ .Values.grafanaDashboard.label }}: "1"
+data:
+  setura-gateway.json: |
+{{ .Files.Get "dashboards/setura-gateway.json" | indent 4 }}
+{{- end }}

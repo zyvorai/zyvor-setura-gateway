@@ -199,6 +199,65 @@ setura_gateway_accesslog_rotation_errors_total
 Rate-limit, access-log, OTLP and rotation series appear only when the feature is enabled.
 Resilience series (retries, ejection, circuit breaking) are in [resilience.md](resilience.md).
 
+## OTLP over gRPC
+
+`--otlp-protocol grpc` sends spans (and, with `--otlp-logs-endpoint`, access log records) as
+protobuf over gRPC instead of JSON over HTTP. The encoding and the gRPC framing are written by
+hand on the standard library's HTTP/2 transport, with no generated code: a bare `host:port` or
+`http://` endpoint uses plaintext HTTP/2 (h2c), `https://` uses TLS with ALPN `h2`. The calls
+are `opentelemetry.proto.collector.trace.v1.TraceService/Export` and
+`...logs.v1.LogsService/Export`. Queue, batching and retry behaviour are the same as for
+OTLP/HTTP; gRPC statuses `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `DEADLINE_EXCEEDED` and `ABORTED`
+are retried, others drop the batch.
+
+## Log sinks
+
+The access log can also be shipped to a log backend. Each sink has its own bounded queue and
+goroutine: a request only copies its log line into the queue, so a slow or dead backend never
+delays a request. A full queue drops the line and counts it; a failed batch is retried with
+exponential backoff and jitter (honouring `Retry-After`) and dropped when the retries run out.
+
+| Flag | Meaning |
+|------|---------|
+| `--syslog udp://H:P\|tcp://H:P\|unix:///path\|unixgram:///path` | RFC 5424 messages (facility `local0`, severity from the status, MSGID `ACCESS`, MSG in logfmt). TCP and unix stream use octet-counting framing (RFC 6587); a lost connection is redialled. A bare `host:port` means UDP. |
+| `--loki-url URL` | Loki push API: `POST /loki/api/v1/push` with JSON streams; the stream labels are `--loki-labels k=v,k=v` (default `job=setura-gateway`) plus `level`; the line is the JSON access log record. `--loki-tenant` sets `X-Scope-OrgID`. |
+| `--otlp-logs-endpoint H:P\|URL` | OTLP logs (`/v1/logs` JSON over HTTP, or gRPC with `--otlp-protocol grpc`) with severity, trace and span ids and the request attributes. |
+| `--logsink-queue N` `--logsink-batch N` `--logsink-interval DUR` `--logsink-retries N` `--logsink-backoff DUR` | Queue per sink (8192), lines per delivery (256), longest wait for a partial batch (1s), retries (4, `-1` none) and first backoff (250ms, doubling to 10s). |
+
+Metrics per sink (`sink` is `syslog`, `loki` or `otlp_logs`):
+`setura_gateway_logsink_sent_total`, `_dropped_total`, `_failures_total`, `_retries_total` and the
+gauge `setura_gateway_logsink_queue_length`. Lines still queued when the process is killed rather
+than stopped are lost; shutdown makes one final attempt to deliver them.
+
+## Prometheus, Grafana and Alertmanager
+
+Every metric family, its type and its labels are listed in [netra.md](netra.md#the-metric-contract)
+and pinned by a golden test, so dashboards and alerts do not break on a rename. Beyond the list
+above the gateway exposes per-backend request counters, auth outcomes
+(`setura_gateway_auth_requests_total{route,decision,reason}`), CORS preflights, backend TLS
+handshake failures, session persistence hits, connection counts and the certificate expiry gauge
+`setura_gateway_cert_expiry_seconds{listener}`.
+
+* **Exemplars.** A scraper that sends `Accept: application/openmetrics-text` gets the OpenMetrics
+  format (counter families without `_total`, a trailing `# EOF`) and `trace_id` exemplars on the
+  bucket lines of `setura_gateway_request_duration_seconds` and the backend histogram, so Grafana
+  can jump from a slow bucket to the trace. Other scrapers get the classic text format unchanged.
+* **Dashboard.** [grafana/setura-gateway.json](../grafana/setura-gateway.json) has eleven panels:
+  four headline numbers (requests, server errors, p95, certificate expiry), traffic, latency,
+  backend errors, circuit state, resilience, protection and telemetry drops. It uses a
+  `${datasource}` variable and a `$route` filter, theme colours only (light and dark), and
+  thresholds that match the alerts. Import it in Grafana, or enable the ConfigMap for the Grafana
+  sidecar (below).
+* **Alerts.** `SeturaGateway5xxRatio`, `SeturaGatewayLatencyP95`, `SeturaGatewayAllBackendsEjected`,
+  `SeturaGatewayCertExpiring`, `SeturaGatewayCircuitOpen`, `SeturaGatewayShadowMismatchRate` and a few
+  housekeeping alerts, each with `summary`, `description` and a `runbook_url` into
+  [runbooks.md](runbooks.md). They validate with `promtool check rules`.
+* **Install.** Helm: `--set serviceMonitor.enabled=true,prometheusRule.enabled=true,grafanaDashboard.enabled=true`
+  (thresholds under `prometheusRule`). Without Helm: `setura gateway install --with-monitoring`
+  also prints the admin Service port, the ServiceMonitor, the PrometheusRule and the dashboard as a
+  ConfigMap labelled `grafana_dashboard: "1"`. A test keeps both outputs identical.
+* **SLOs.** `setura slo` computes burn rates from probes or from these metrics: see [slo.md](slo.md).
+
 ## Limits
 
 * Rate limits are per replica; `--rate-limit-share` approximates a shared limit by division
@@ -206,7 +265,7 @@ Resilience series (retries, ejection, circuit breaking) are in [resilience.md](r
   limits concurrency per backend, see [resilience.md](resilience.md)).
 * Rotation is for file logs only. `copytruncate`-style rotation by an external tool is not
   supported (the file is opened append-only; use `create`-style rotation plus SIGHUP).
-* OTLP is HTTP with JSON only: no gRPC, no protobuf, no gzip of payloads. Spans still queued
+* OTLP has no gzip of payloads (JSON over HTTP, or protobuf over gRPC). Spans still queued
   when the process is killed (rather than stopped) are lost, and a collector that is down for
   longer than the retries last loses the spans of that time.
 * `X-Forwarded-For` trust is by peer address only; there is no PROXY protocol and no

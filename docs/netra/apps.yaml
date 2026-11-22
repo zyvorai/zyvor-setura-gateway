@@ -1,0 +1,21 @@
+# Netra app collector for the Setura gateway.
+# Drop this into /etc/netra/apps.yaml (NETRA_APPS_CONFIG) or the Helm value
+# metricsPlatform.apps.config. See docs/netra.md.
+apps:
+  - kind: prometheus
+    name: setura
+    # The gateway admin endpoint. Off loopback it needs the admin token:
+    # export SETURA_ADMIN_TOKEN to the agent (for example from a Secret with
+    # metricsPlatform.apps.existingSecret).
+    url: http://127.0.0.1:19000/metrics
+    bearer_env: SETURA_ADMIN_TOKEN
+    include: ["setura_gateway_*"]
+    exclude:
+      - "setura_gateway_accesslog_rotation*"
+      - "setura_gateway_ratelimit_buckets"
+      - "setura_gateway_circuit_active_requests"
+      - "setura_gateway_circuit_pending_requests"
+    # One series per route, backend and status class: raise this for large route tables.
+    max_series: 4000
+    timeout: 3s
+    labels: {service: setura-gateway}

@@ -51,3 +51,17 @@ prometheusRule:
   errorRatio: 0.05
   # Unmatched requests per second over 5m that fires SeturaGatewayUnmatchedRoutes.
   unmatchedRate: 1
+  # p95 request duration in seconds that fires SeturaGatewayLatencyP95.
+  p95Seconds: 0.5
+  # Seconds before a listener certificate expires that fire SeturaGatewayCertExpiring (14 days).
+  certExpirySeconds: 1209600
+  # Fraction of shadow comparisons that differ (0.05 = 5%) that fires SeturaGatewayShadowMismatchRate.
+  shadowMismatchRatio: 0.05
+  # Every alert carries runbook_url: this document plus #alertname in lower case.
+  runbookBaseUrl: https://github.com/zyvorai/zyvor-setura-gateway/blob/main/docs/runbooks.md
+
+# The Grafana dashboard (dashboards/setura-gateway.json, also in grafana/) as a
+# ConfigMap that Grafana's dashboard sidecar picks up through its label.
+grafanaDashboard:
+  enabled: false
+  label: grafana_dashboard

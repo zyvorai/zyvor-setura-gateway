@@ -104,6 +104,7 @@ type Server struct {
 	trusted  trustedNets
 	shadowP  *shadowPersist
 	latency  latencyStats
+	ext      extStats // auth, CORS, session, backend TLS counters (metrics_ext.go)
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -589,7 +590,7 @@ func (s *Server) startAdmin() error {
 			enc.Encode(v)
 		}
 	}
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.metrics(w, r); s.WriteMetrics(w) })
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.serveMetrics(w, r) })
 	mux.HandleFunc("/connections", s.connectionsHandler)
 	mux.HandleFunc("/shadow", jsonOut(func() any { return s.shadow.Summary() }))
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))

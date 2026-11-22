@@ -1,4 +1,7 @@
 {{- if .Values.prometheusRule.enabled }}
+# Keep these expressions identical to AlertRules in internal/gateway/monitoring.go
+# (a test compares them), which also prints them with `setura gateway install --with-monitoring`.
+# Runbook: docs/runbooks.md.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -16,31 +19,91 @@ spec:
         - alert: SeturaGatewayDown
           expr: sum(up{job="setura-gateway", namespace="{{ .Values.namespace }}"}) == 0 or absent(up{job="setura-gateway", namespace="{{ .Values.namespace }}"})
           for: 5m
-          labels: {severity: critical}
+          labels:
+            severity: critical
           annotations:
             summary: No Setura gateway replica is being scraped
+            description: Prometheus cannot reach any gateway admin endpoint, so every other alert is blind.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewaydown
         - alert: SeturaGateway5xxRatio
           expr: sum(rate(setura_gateway_route_requests_total{code="5xx"}[5m])) / sum(rate(setura_gateway_route_requests_total[5m])) > {{ .Values.prometheusRule.errorRatio }}
           for: 10m
-          labels: {severity: warning}
+          labels:
+            severity: warning
           annotations:
             summary: More than {{ mulf .Values.prometheusRule.errorRatio 100 }}% of gateway responses are 5xx
+            description: The share of 5xx responses over 5 minutes has been above the threshold for 10 minutes.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagateway5xxratio
+        - alert: SeturaGatewayLatencyP95
+          expr: histogram_quantile(0.95, sum by (le, route) (rate(setura_gateway_request_duration_seconds_bucket[5m]))) > {{ .Values.prometheusRule.p95Seconds }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: p95 request duration of route {{`{{ $labels.route }}`}} is above {{ mulf .Values.prometheusRule.p95Seconds 1000 }} ms
+            description: The 95th percentile of request duration of the route has exceeded the threshold for 10 minutes.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewaylatencyp95
+        - alert: SeturaGatewayAllBackendsEjected
+          expr: sum by (backend) (setura_gateway_endpoint_ejected) == count by (backend) (setura_gateway_endpoint_ejected)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Every endpoint of backend {{`{{ $labels.backend }}`}} is ejected
+            description: Outlier detection has ejected all endpoints of the backend, so requests to it fail or are served from ejected endpoints.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewayallbackendsejected
+        - alert: SeturaGatewayCertExpiring
+          expr: setura_gateway_cert_expiry_seconds < {{ .Values.prometheusRule.certExpirySeconds | int64 }}
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: The certificate of listener {{`{{ $labels.listener }}`}} expires in less than {{ div (int64 .Values.prometheusRule.certExpirySeconds) 86400 }} days
+            description: A serving certificate is close to its NotAfter date. Renew the Secret the listener references.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewaycertexpiring
+        - alert: SeturaGatewayCircuitOpen
+          expr: max by (backend) (setura_gateway_circuit_state) == 1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: The circuit breaker of backend {{`{{ $labels.backend }}`}} is open
+            description: The backend has been shedding load with 503 for two minutes.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewaycircuitopen
+        - alert: SeturaGatewayShadowMismatchRate
+          expr: sum by (route) (rate(setura_gateway_shadow_total{result="mismatched"}[10m])) / sum by (route) (rate(setura_gateway_shadow_total{result=~"matched|mismatched"}[10m])) > {{ .Values.prometheusRule.shadowMismatchRatio }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: More than {{ mulf .Values.prometheusRule.shadowMismatchRatio 100 }}% of shadow comparisons of route {{`{{ $labels.route }}`}} differ
+            description: The mirrored backend answers differently from the primary for a meaningful share of requests.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewayshadowmismatchrate
         - alert: SeturaGatewayUnmatchedRoutes
           expr: sum(rate(setura_gateway_unmatched_requests_total[5m])) > {{ .Values.prometheusRule.unmatchedRate }}
           for: 10m
-          labels: {severity: warning}
+          labels:
+            severity: warning
           annotations:
             summary: Requests are arriving that match no route
+            description: Clients are hitting hosts or paths that no HTTPRoute serves.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewayunmatchedroutes
         - alert: SeturaGatewayEndpointEjected
           expr: max(setura_gateway_endpoint_ejected) == 1
           for: 5m
-          labels: {severity: warning}
+          labels:
+            severity: warning
           annotations:
             summary: A backend endpoint has been ejected by outlier detection for 5 minutes
+            description: At least one endpoint is out of rotation because it kept failing.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewayendpointejected
         - alert: SeturaGatewayAccessLogDropping
           expr: increase(setura_gateway_accesslog_dropped_total[10m]) > 0
           for: 10m
-          labels: {severity: info}
+          labels:
+            severity: info
           annotations:
             summary: Access log lines are being dropped
+            description: The access log writer cannot keep up, so lines are dropped instead of slowing requests.
+            runbook_url: {{ .Values.prometheusRule.runbookBaseUrl }}#seturagatewayaccesslogdropping
 {{- end }}

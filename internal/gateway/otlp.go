@@ -27,6 +27,8 @@ type OTLPOptions struct {
 	Queue   int           // spans buffered before new ones are dropped (default 2048)
 	Retries int           // retries of a failed batch (default 4; negative disables retrying)
 	Backoff time.Duration // first retry wait, doubling up to 10s with jitter (default 250ms)
+	// Protocol is "http" (OTLP/HTTP JSON, default) or "grpc" (OTLP/gRPC, protobuf).
+	Protocol string
 }
 
 type span struct {
@@ -56,6 +58,16 @@ type otlpExporter struct {
 	failures atomic.Int64
 	retries  atomic.Int64
 	opts     OTLPOptions
+	grpc     bool
+}
+
+// otlpGRPCURL is the Export URL of an OTLP/gRPC endpoint: a bare host:port
+// means plaintext HTTP/2 (h2c), https:// means TLS.
+func otlpGRPCURL(endpoint, path string) string {
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "http://" + endpoint
+	}
+	return strings.TrimRight(endpoint, "/") + path
 }
 
 func otlpURL(endpoint string) string {
@@ -87,6 +99,10 @@ func newOTLPOpts(endpoint string, interval time.Duration, o OTLPOptions) *otlpEx
 	}
 	x := &otlpExporter{url: otlpURL(endpoint), client: &http.Client{Timeout: 5 * time.Second}, interval: interval, opts: o,
 		ch: make(chan span, o.Queue), done: make(chan struct{}), stopped: make(chan struct{})}
+	if o.Protocol == "grpc" {
+		x.grpc, x.url = true, otlpGRPCURL(endpoint, otlpTracePath)
+		x.client = grpcClient(x.url, 5*time.Second)
+	}
 	go x.run()
 	return x
 }
@@ -146,6 +162,9 @@ func (x *otlpExporter) run() {
 // (and counted) when it is full. Shutdown stops retrying.
 func (x *otlpExporter) send(batch []span) {
 	payload := encodeOTLP(batch)
+	if x.grpc {
+		payload = encodeOTLPProto(batch)
+	}
 	wait := x.opts.Backoff
 	for attempt := 0; ; attempt++ {
 		retryAfter, retryable := x.try(payload)
@@ -194,6 +213,9 @@ func (x *otlpExporter) closing() bool {
 // otherwise retryAfter is the collector's Retry-After (0 if none) and
 // retryable says whether another attempt may help.
 func (x *otlpExporter) try(payload []byte) (retryAfter time.Duration, retryable bool) {
+	if x.grpc {
+		return x.tryGRPC(payload)
+	}
 	req, err := http.NewRequest(http.MethodPost, x.url, bytes.NewReader(payload))
 	if err != nil {
 		return 0, false

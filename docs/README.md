@@ -15,7 +15,8 @@
 - [GRPCRoute and TLSRoute](grpc-tls-routes.md): gRPC over h2c and h2, TLS passthrough by SNI.
 - [Resilience](resilience.md): retries, outlier ejection, health checks.
 - [Traffic security](security.md): JWT, API keys, basic auth, address lists, client certificates, OCSP stapling, admin token.
-- [Observability](observability.md): access logs, rotation, tracing, OTLP, rate limiting, `/metrics`.
+- [Observability](observability.md): access logs, rotation, tracing, OTLP (HTTP and gRPC), log sinks, rate limiting, `/metrics`, Grafana and alerts.
+- [Netra](netra.md): scrape the gateway from Netra, the metric contract. [SLOs](slo.md): burn rates. [Runbooks](runbooks.md): one section per alert.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
 - [Conformance](conformance/): the upstream Gateway API conformance harness.
