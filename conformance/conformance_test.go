@@ -54,11 +54,11 @@ var supported = []features.FeatureName{
 // implement, so a run reports them as skipped instead of failing. Extend with
 // SETURA_CONFORMANCE_SKIP (comma separated).
 var skipTests = []string{
-	"HTTPRouteTimeoutBackendRequest",        // timeouts.backendRequest not implemented
-	"HTTPRouteCORSAllowCredentialsBehavior", // CORS filter not implemented
-	"HTTPRouteBackendProtocolH2C",           // no h2c upstreams
-	"HTTPRouteBackendProtocolWebSocket",     // Service appProtocol selection not implemented
-	"BackendTLSPolicy",                      // BackendTLSPolicy not implemented
+	"HTTPRouteTimeoutBackendRequest",    // timeouts.backendRequest not implemented
+	"HTTPRouteCORS",                     // CORS filter not implemented
+	"HTTPRouteBackendProtocolH2C",       // no h2c upstreams
+	"HTTPRouteBackendProtocolWebSocket", // Service appProtocol selection not implemented
+	"BackendTLSPolicy",                  // BackendTLSPolicy not implemented
 	"BackendTLSPolicyConflictResolution",
 	"BackendTLSPolicyInvalidCACertificateRef",
 	"BackendTLSPolicyInvalidKind",
@@ -66,7 +66,7 @@ var skipTests = []string{
 	"BackendTLSPolicySANValidation",
 	"GatewayStaticAddresses", // Gateway spec.addresses not implemented
 	"GatewayOptionalAddressValue",
-	"GatewayInfrastructure",
+	"GatewayInfrastructureMetadata",
 	"GatewayHTTPListenerIsolation",
 }
 

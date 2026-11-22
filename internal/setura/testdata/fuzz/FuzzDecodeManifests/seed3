@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("s: |\n  line1\n  line2\nf: >-\n  folded\n  text\n")

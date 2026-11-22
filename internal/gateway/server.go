@@ -27,6 +27,7 @@ type Options struct {
 	PortMap     map[int]int // spec port -> bound port (0 asks the OS for a free port)
 	PortOffset  int         // added to spec ports below 1024 that PortMap does not name
 	Admin       string      // admin address; "off" disables, empty means DefaultAdmin
+	Pprof       string      // loopback address for net/http/pprof and /debug/runtime, empty disables
 	Force       bool        // apply configs that have lint errors
 	AccessLog   io.Writer   // JSON-lines access log, nil to disable
 	Diag        io.Writer   // human diagnostics, nil to discard
@@ -100,6 +101,9 @@ type Server struct {
 
 	adminLn  net.Listener
 	adminSrv *http.Server
+
+	pprofLn  net.Listener
+	pprofSrv *http.Server
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -421,6 +425,9 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 	if err := s.startAdmin(); err != nil {
 		return err
 	}
+	if err := s.startPprof(); err != nil {
+		return err
+	}
 	if err := s.Apply(ld); err != nil {
 		return err
 	}
@@ -500,6 +507,9 @@ func (s *Server) Close() {
 	s.mu.Unlock()
 	if s.adminSrv != nil {
 		s.adminSrv.Close()
+	}
+	if s.pprofSrv != nil {
+		s.pprofSrv.Close()
 	}
 	s.mirrorWG.Wait()
 	s.hist.close()

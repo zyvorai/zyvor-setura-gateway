@@ -27,6 +27,7 @@ var helpGroups = []helpGroup{
 		{"history", "FILE [--since 24h]", "summarize watch history: uptime, p50/p95, last failure, regressions"},
 		{"why", "METHOD URL [--config F|--admin ADDR]", "explain why the built-in gateway routes a request the way it does"},
 		{"bench", "URL", "repeat probes and report latency percentiles and budgets"},
+		{"load", "URL", "keep-alive load generator: requests/s, p50/p90/p99/p99.9, errors, gateway goroutines and memory"},
 		{"grpc-health", "HOST:PORT", "call grpc.health.v1.Health/Check over TLS (HTTP/2)"},
 	}},
 	{"Inspect", []helpEntry{

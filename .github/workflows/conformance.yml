@@ -42,3 +42,36 @@ jobs:
           name: conformance-report
           path: docs/conformance/
           if-no-files-found: warn
+  # A short end-to-end smoke on a disposable K3s cluster: Envoy Gateway plus the Setura image
+  # and scripts/cluster-smoke.sh (publish, check, inspect, doctor, lint, gate). It does not run the
+  # conformance suite and has no thresholds; a red run here is information.
+  cluster-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: make build
+      - name: Start a disposable K3s cluster
+        run: |
+          docker run --privileged --name setura-k3s-smoke -d -p 127.0.0.1:6443:6443 rancher/k3s:v1.35.6-k3s1 server --disable=traefik
+          mkdir -p ~/.kube
+          for _ in {1..90}; do
+            if docker cp setura-k3s-smoke:/etc/rancher/k3s/k3s.yaml ~/.kube/config 2>/dev/null && [ -n "$(kubectl get nodes -o name 2>/dev/null)" ]; then break; fi
+            sleep 2
+          done
+          kubectl wait --for=condition=Ready node --all --timeout=180s
+      - name: Install Envoy Gateway
+        run: helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.8.6 -n envoy-gateway-system --create-namespace --wait --timeout 5m
+      - name: Build the Setura image and load it into K3s
+        run: |
+          docker build -t ghcr.io/zyvorai/zyvor-setura-gateway:latest .
+          docker save ghcr.io/zyvorai/zyvor-setura-gateway:latest | docker exec -i setura-k3s-smoke ctr -n k8s.io images import -
+      - run: scripts/cluster-smoke.sh bin/setura
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl get gateways,httproutes,pods -A || true
+          kubectl -n setura-demo get events --sort-by=.lastTimestamp | tail -30 || true

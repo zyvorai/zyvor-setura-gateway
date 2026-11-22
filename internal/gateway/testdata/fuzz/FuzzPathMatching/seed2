@@ -1,0 +1,6 @@
+go test fuzz v1
+string("Exact")
+string("/a")
+string("/a/")
+string("post")
+string("k=v")
