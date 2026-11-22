@@ -192,23 +192,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 
-	var ref *CRef
-	if rule.Total > 0 {
-		n := s.intn(rule.Total)
-		for _, c := range rule.Refs {
-			if n < c.Weight {
-				ref = c
-				break
-			}
-			n -= c.Weight
-		}
-	}
+	ref := s.pickRef(rule)
 	if ref == nil || ref.B == nil {
 		st.errMsg = "no valid backend"
 		plain(rec, http.StatusInternalServerError, "no valid backend for this route")
 		return
 	}
-	ep := ref.B.pick()
+	ep := ref.B.choose(s.res.now(), nil)
 	st.backend = ref.B.Key
 
 	timeout := rule.Timeout
@@ -220,6 +210,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		defer cancel()
 		r = r.WithContext(ctx)
 	}
+
+	var replay []byte
+	canReplay := false
+	if rule.Retry != nil {
+		replay, canReplay = bufferBody(r, s.res.o.RetryBodyLimit)
+	}
+	rt := s.newTransport(ref.B, ep, rule.Retry, replay, canReplay)
 
 	var body []byte
 	mirrors := rule.Mirrors
@@ -239,7 +236,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Transport:     s.transport(ref.B.Insecure),
+		Transport:     rt,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -272,6 +269,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
 			resp.Header.Set(RequestIDHeader, st.reqID)
+			rt.annotate(resp.Header)
 			filters := append(append([]Filter(nil), rule.Rule.Filters...), ref.Filters...)
 			for _, f := range filters {
 				if f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil {
@@ -287,6 +285,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 				code = http.StatusGatewayTimeout
 			}
 			w.Header().Set(BackendHeader, ref.Name)
+			rt.annotate(w.Header())
 			plain(w, code, "upstream error")
 		},
 	}

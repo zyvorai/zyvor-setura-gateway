@@ -31,7 +31,8 @@ type Options struct {
 	AccessLog  io.Writer   // JSON-lines access log, nil to disable
 	Diag       io.Writer   // human diagnostics, nil to discard
 	Rand       func(n int) int
-	Obs        ObsOptions // access log format, tracing export, rate limiting
+	Obs        ObsOptions        // access log format, tracing export, rate limiting
+	Resilience ResilienceOptions // retries, outlier ejection, default health checks
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -75,6 +76,7 @@ type Server struct {
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
 
+	res            *resilience
 	tr, trInsecure *http.Transport
 	ready          atomic.Bool
 
@@ -92,7 +94,7 @@ func New(opts Options) *Server {
 			MaxIdleConns: 256, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}}
 	}
-	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -259,9 +261,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	hctx, cancel := context.WithCancel(context.Background())
 	s.health = cancel
 	for _, b := range t.Backends {
-		if b.Health != nil {
-			s.startHealth(hctx, b)
-		}
+		s.startHealth(hctx, b) // no-op without a healthCheck or default path
 	}
 	now := time.Now()
 	doc := BuildStatus(t, bindErr, now, s.status.Load())
@@ -321,52 +321,6 @@ func (s *Server) Listening() []string {
 		out = append(out, fmt.Sprintf("%s %s://%s (listening on %s)", l.Key, scheme, host, s.Addr(l.L.Port)))
 	}
 	return out
-}
-
-func (s *Server) startHealth(ctx context.Context, b *Backend) {
-	interval, _ := parseDur(b.Health.Interval)
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
-	timeout, _ := parseDur(b.Health.Timeout)
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	path := b.Health.Path
-	if path == "" {
-		path = "/"
-	}
-	client := &http.Client{Transport: s.transport(b.Insecure), Timeout: timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, ep := range b.Eps {
-		go func(ep *Endpoint) {
-			check := func() {
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL.String()+path, nil)
-				ok := false
-				if err == nil {
-					if resp, err := client.Do(req); err == nil {
-						io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-						resp.Body.Close()
-						ok = resp.StatusCode < 400
-					}
-				}
-				if ctx.Err() == nil {
-					ep.healthy.Store(ok)
-				}
-			}
-			check()
-			tk := time.NewTicker(interval)
-			defer tk.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-tk.C:
-					check()
-				}
-			}
-		}(ep)
-	}
 }
 
 func (s *Server) lintGate(ld *Loaded) error {
@@ -520,7 +474,7 @@ func (s *Server) startAdmin() error {
 			enc.Encode(v)
 		}
 	}
-	mux.HandleFunc("/metrics", s.metrics)
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.metrics(w, r); s.WriteMetrics(w) })
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {
 		if d := s.Status(); d != nil {
