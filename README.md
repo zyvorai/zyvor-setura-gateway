@@ -199,6 +199,7 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET012` | warning | ReferenceGrant with an empty `from` or `to` list |
 | `SET013` | error | listener `allowedRoutes` does not admit the attaching route |
 | `SET014` | error | negative or overflowing weights, or mixed Service and non-Service backends in one rule |
+| `SET015` | error | shadow-diff block or `setura.zyvor.dev/shadow-diff` annotation is invalid, or names a rule that has no RequestMirror filter |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
 
