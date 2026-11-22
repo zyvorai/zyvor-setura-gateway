@@ -246,7 +246,7 @@ func req(t *testing.T, c *http.Client, scheme, method, host, target, body string
 
 // pki makes a CA and issues leaf certificates, written under dir.
 type pki struct {
-	t    *testing.T
+	t    testing.TB
 	ca   *x509.Certificate
 	key  *ecdsa.PrivateKey
 	pool *x509.CertPool
@@ -254,7 +254,7 @@ type pki struct {
 	n    int64
 }
 
-func newPKI(t *testing.T) *pki {
+func newPKI(t testing.TB) *pki {
 	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test ca"}, NotBefore: time.Now().Add(-time.Hour),

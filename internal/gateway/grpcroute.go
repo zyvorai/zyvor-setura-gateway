@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"regexp"
@@ -383,7 +381,8 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
 		FlushInterval: -1,
-		ErrorLog:      log.New(io.Discard, "", 0),
+		BufferPool:    proxyBufPool,
+		ErrorLog:      discardLog,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
 			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true)

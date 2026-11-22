@@ -305,6 +305,13 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		var out *http.Request
 		if switched {
 			out = t.rebuild(rctx, t.ref)
+		} else if t.retry == nil {
+			// Sent exactly once and the proxy does not read it afterwards: share the
+			// header map and body instead of deep-copying them; only the URL is
+			// rewritten below, so that alone is copied.
+			out = req.WithContext(rctx)
+			u := *req.URL
+			out.URL = &u
 		} else {
 			out = req.Clone(rctx)
 		}

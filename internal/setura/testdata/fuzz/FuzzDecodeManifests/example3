@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("# Services for resolving named Ingress backend ports.\napiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: demo\nspec:\n  ports:\n    - name: http\n      port: 8080\n      targetPort: 80\n")

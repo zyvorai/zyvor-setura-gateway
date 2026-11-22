@@ -1,0 +1,4 @@
+go test fuzz v1
+string("*.example.com")
+string("a.example.com")
+string("A.Example.COM:8080")

@@ -19,6 +19,7 @@
 - [Netra](netra.md): scrape the gateway from Netra, the metric contract. [SLOs](slo.md): burn rates. [Runbooks](runbooks.md): one section per alert.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
+- [Performance](performance.md): measured throughput, latency and soak numbers, the load and fuzz tools, and how to compare with Envoy.
 - [Conformance](conformance/): the upstream Gateway API conformance harness.
 
 ## Verify and lint
