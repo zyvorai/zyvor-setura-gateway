@@ -72,7 +72,7 @@ var skipTests = []string{
 	"HTTPRouteBackendProtocolH2C",       // no h2c upstreams
 	"HTTPRouteBackendProtocolWebSocket", // Service appProtocol selection not implemented
 	"GatewayOptionalAddressValue",       // needs GatewayAddressEmpty: the gateway cannot assign an address
-	"GatewayInfrastructure",
+	"GatewayInfrastructureMetadata",
 	"GatewayHTTPListenerIsolation",
 }
 

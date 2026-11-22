@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("{\"path\":\"/x\",\"status\":9999999999999999999999999999999999999999}")
+string("default.test")

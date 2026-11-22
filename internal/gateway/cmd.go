@@ -33,6 +33,7 @@ Flags for run and up:
   --port-map A=B[,..]   serve spec port A on port B (0 = any free port); repeatable
   --port-offset N       add N to spec ports below 1024 (unprivileged remapping)
   --admin ADDR|off      admin endpoint (default 127.0.0.1:19000)
+  --pprof ADDR          serve net/http/pprof and /debug/runtime on a loopback ADDR such as 127.0.0.1:6060 (default off)
   --admin-token TOKEN   bearer token for the admin endpoint (or SETURA_ADMIN_TOKEN); required to bind off loopback
   --admin-open-ready    leave /ready reachable without the token (kubelet probes)
   --ocsp-staple         fetch and staple OCSP responses for listener certificates (default off)
@@ -113,6 +114,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.Var(&f.portMap, "port-map", "serve spec port A on port B, as A=B")
 	fs.IntVar(&f.opts.PortOffset, "port-offset", 0, "add N to spec ports below 1024")
 	fs.StringVar(&f.opts.Admin, "admin", DefaultAdmin, "admin address or off")
+	fs.StringVar(&f.opts.Pprof, "pprof", "", "serve net/http/pprof and /debug/runtime on this loopback ADDR (default off)")
 	fs.DurationVar(&f.interval, "interval", 0, "config poll interval")
 	fs.BoolVar(&f.opts.Force, "force", false, "apply configurations that have lint errors")
 	fs.StringVar(&f.accessLog, "access-log", "-", "access log file, - for stdout, off to disable")
