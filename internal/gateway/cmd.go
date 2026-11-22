@@ -32,6 +32,13 @@ Flags for run and up:
   --interval DUR        poll interval for config changes (default 1s; 5s with --kubernetes)
   --force               apply configurations that have lint errors
   --access-log FILE|-|off   JSON access log (default "-", stdout)
+  --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)
+  --retry-header        add X-Setura-Retries to responses (default off)
+  --outlier-failures N  consecutive 5xx/connect failures that eject an endpoint (default 5, 0 = off)
+  --outlier-base-ejection DUR  first ejection time, doubling each time (default 30s)
+  --outlier-max-ejection DUR   ejection time cap (default 5m)
+  --health-path PATH    active-check every backend without its own healthCheck (default off)
+  --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
 `
 
 type stringList []string
@@ -45,6 +52,7 @@ type runFlags struct {
 	accessLog  string
 	interval   time.Duration
 	bindFlagFS *flag.FlagSet
+	outlier    int
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -55,6 +63,15 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&f.interval, "interval", 0, "config poll interval")
 	fs.BoolVar(&f.opts.Force, "force", false, "apply configurations that have lint errors")
 	fs.StringVar(&f.accessLog, "access-log", "-", "access log file, - for stdout, off to disable")
+	r := &f.opts.Resilience
+	fs.IntVar(&r.RetryBudgetPercent, "retry-budget", 20, "retries as a percentage of recent requests")
+	fs.BoolVar(&r.RetryHeader, "retry-header", false, "add X-Setura-Retries to responses")
+	fs.IntVar(&f.outlier, "outlier-failures", 5, "consecutive failures that eject an endpoint, 0 disables")
+	fs.DurationVar(&r.OutlierBaseEject, "outlier-base-ejection", 30*time.Second, "first ejection duration")
+	fs.DurationVar(&r.OutlierMaxEject, "outlier-max-ejection", 5*time.Minute, "maximum ejection duration")
+	fs.StringVar(&r.HealthPath, "health-path", "", "default active health check path")
+	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
+	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
 }
 
 func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, string)) (func(), error) {
@@ -69,6 +86,13 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 			}
 			f.opts.PortMap[from] = to
 		}
+	}
+	f.opts.Resilience.OutlierFailures = f.outlier
+	if f.outlier == 0 {
+		f.opts.Resilience.OutlierFailures = -1
+	}
+	if f.opts.Resilience.RetryBudgetPercent < 1 || f.opts.Resilience.RetryBudgetPercent > 100 {
+		return nil, fmt.Errorf("--retry-budget %d: want 1-100", f.opts.Resilience.RetryBudgetPercent)
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint

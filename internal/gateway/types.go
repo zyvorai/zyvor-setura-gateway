@@ -110,6 +110,7 @@ type Rule struct {
 	Matches     []Match      `json:"matches,omitempty"`
 	Filters     []Filter     `json:"filters,omitempty"`
 	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
+	Retry       *RetryRule   `json:"retry,omitempty"`
 	Timeouts    *struct {
 		Request        string `json:"request,omitempty"`
 		BackendRequest string `json:"backendRequest,omitempty"`
@@ -212,6 +213,10 @@ type HealthCheck struct {
 	Path     string `json:"path"`
 	Interval string `json:"interval,omitempty"`
 	Timeout  string `json:"timeout,omitempty"`
+	// UnhealthyThreshold consecutive failed probes mark an endpoint down and
+	// HealthyThreshold consecutive passes bring it back (both default 1).
+	UnhealthyThreshold int `json:"unhealthyThreshold,omitempty"`
+	HealthyThreshold   int `json:"healthyThreshold,omitempty"`
 }
 
 // UnmarshalJSON accepts "host:port", ["host:port", ...] or an object.

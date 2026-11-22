@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -68,6 +69,7 @@ type CRule struct {
 	Timeout  time.Duration
 	Redirect *Redirect
 	Mirrors  []*CMirror
+	Retry    *CRetry
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -114,6 +116,7 @@ type routeResult struct {
 type Endpoint struct {
 	URL     *url.URL
 	healthy atomic.Bool
+	st      epState // guarded by Backend.hmu
 }
 
 // Backend is a Service port's upstream pool.
@@ -124,6 +127,7 @@ type Backend struct {
 	Health    *HealthCheck
 	Insecure  bool
 	rr        atomic.Uint64
+	hmu       sync.Mutex // guards Endpoint.st and ejection decisions
 }
 
 // pick returns the next healthy endpoint, or any endpoint when none is.
@@ -495,6 +499,12 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		var err error
 		if cr.Timeout, err = parseDur(rule.Timeouts.Request); err != nil {
 			return nil, nil, fmt.Errorf("timeouts.request: %w", err)
+		}
+	}
+	if rule.Retry != nil {
+		var err error
+		if cr.Retry, err = compileRetry(rule.Retry); err != nil {
+			return nil, nil, err
 		}
 	}
 	note := func(f fact) {
