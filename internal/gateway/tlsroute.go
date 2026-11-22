@@ -74,14 +74,28 @@ func (t *Table) attachTLS(r *TLSRoute) {
 }
 
 // selectTLS finds the entry with the most specific hostname for an SNI name.
-func (l *RTListener) selectTLS(host string) *TLSEntry {
+func (l *RTListener) selectTLS(host string) *TLSEntry { return l.selectTLST(host, nil) }
+
+// selectTLST is selectTLS recording every entry considered on tr (nil on the
+// data path).
+func (l *RTListener) selectTLST(host string, tr *Trace) *TLSEntry {
 	var best *TLSEntry
 	bestRank := -1
 	for _, e := range l.TLSEntries {
+		matched, rank := false, -1
 		for _, h := range e.Hosts {
+			if hostMatches(h, host) {
+				matched = true
+				if hostRank(h) > rank {
+					rank = hostRank(h)
+				}
+			}
 			if hostMatches(h, host) && hostRank(h) > bestRank {
 				best, bestRank = e, hostRank(h)
 			}
+		}
+		if tr != nil {
+			tr.noteTLS(e, matched, rank)
 		}
 	}
 	return best

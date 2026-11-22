@@ -495,6 +495,7 @@ func (s *Server) startAdmin() error {
 		}
 		return nil
 	}))
+	mux.HandleFunc("/why", s.handleWhy)
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)

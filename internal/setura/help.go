@@ -25,6 +25,7 @@ var helpGroups = []helpGroup{
 		{"compare", "URL --target dns|IP", "probe the same URL via DNS and/or IPs"},
 		{"watch", "URL... [--file FILE]", "re-probe on an interval; metrics, --history, --alert-webhook/--alert-slack"},
 		{"history", "FILE [--since 24h]", "summarize watch history: uptime, p50/p95, last failure, regressions"},
+		{"why", "METHOD URL [--config F|--admin ADDR]", "explain why the built-in gateway routes a request the way it does"},
 		{"bench", "URL", "repeat probes and report latency percentiles and budgets"},
 		{"grpc-health", "HOST:PORT", "call grpc.health.v1.Health/Check over TLS (HTTP/2)"},
 	}},
@@ -60,8 +61,12 @@ var helpGroups = []helpGroup{
 
 // cmdExamples are shown in per-command help and after usage errors.
 var cmdExamples = map[string][]string{
-	"publish":   {"setura publish dev --listener http --port 8080"},
-	"explain":   {"setura explain https://orders.example.test/checkout --address 127.0.0.1 --backend orders-v1"},
+	"publish": {"setura publish dev --listener http --port 8080"},
+	"explain": {"setura explain https://orders.example.test/checkout --address 127.0.0.1 --backend orders-v1"},
+	"why": {"setura why GET https://orders.example.test/api/v1 -H 'x-canary: 1' --config gateway.json",
+		"setura why POST http://x.test:8080/ --admin 127.0.0.1:19000 --format json",
+		"setura why GET http://x.test:8080 --grpc helloworld.Greeter/SayHello --config gateway.json",
+		"setura why GET tls://db.secure.test:8443 --sni db.secure.test --config gateway.json"},
 	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},

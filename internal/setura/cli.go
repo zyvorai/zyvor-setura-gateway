@@ -636,6 +636,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "grpc-health":
 		return runGRPCHealth(fs, rest, stdout, stderr)
 
+	case "why":
+		return runWhy(fs, rest, stdout, stderr, u)
+
 	case "bench":
 		return runBench(fs, rest, stdout, stderr)
 

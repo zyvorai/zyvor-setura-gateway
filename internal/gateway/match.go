@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -48,8 +49,19 @@ func prefixMatches(prefix, path string) bool {
 }
 
 // matches evaluates the match against a request and returns its score parts.
-func (m *CMatch) matches(r *http.Request) (score, bool) {
+func (m *CMatch) matches(r *http.Request) (score, bool) { return m.matchesWhy(r, nil) }
+
+// matchesWhy is matches with an optional explanation: when why is not nil and
+// the match fails it receives the plain-language reason. The data path passes
+// nil and pays nothing for it.
+func (m *CMatch) matchesWhy(r *http.Request, why *string) (score, bool) {
 	var s score
+	no := func(format string, a ...any) (score, bool) {
+		if why != nil {
+			*why = fmt.Sprintf(format, a...)
+		}
+		return s, false
+	}
 	path := r.URL.Path
 	if path == "" {
 		path = "/"
@@ -57,30 +69,33 @@ func (m *CMatch) matches(r *http.Request) (score, bool) {
 	switch m.PathType {
 	case "Exact":
 		if path != m.PathValue {
-			return s, false
+			return no("path %q is not exactly %q", path, m.PathValue)
 		}
 		s.pathKind, s.pathLen = kindExact, len(m.PathValue)
 	case "PathPrefix":
 		if !prefixMatches(m.PathValue, path) {
-			return s, false
+			return no("path %q is not under the prefix %q (prefixes match whole path elements)", path, m.PathValue)
 		}
 		s.pathKind, s.pathLen = kindPrefix, len(m.PathValue)
 	case "RegularExpression":
 		if !m.PathRe.MatchString(path) {
-			return s, false
+			return no("path %q does not match the regular expression %q", path, m.PathValue)
 		}
 		s.pathKind = kindRegex
 	}
 	if m.Method != "" {
 		if r.Method != m.Method {
-			return s, false
+			return no("method is %s, the match needs %s", r.Method, m.Method)
 		}
 		s.method = 1
 	}
 	for _, h := range m.Headers {
 		v := r.Header.Get(h.Name)
-		if r.Header.Values(h.Name) == nil || !valueOK(h, v) {
-			return s, false
+		if r.Header.Values(h.Name) == nil {
+			return no("header %s is missing (the match needs %s)", h.Name, h.describe())
+		}
+		if !valueOK(h, v) {
+			return no("header %s is %q, the match needs %s", h.Name, v, h.describe())
 		}
 	}
 	s.headers = len(m.Headers)
@@ -88,13 +103,24 @@ func (m *CMatch) matches(r *http.Request) (score, bool) {
 		q := r.URL.Query()
 		for _, h := range m.Query {
 			vals, ok := q[h.Name]
-			if !ok || !valueOK(h, vals[0]) {
-				return s, false
+			if !ok {
+				return no("query parameter %s is missing (the match needs %s)", h.Name, h.describe())
+			}
+			if !valueOK(h, vals[0]) {
+				return no("query parameter %s is %q, the match needs %s", h.Name, vals[0], h.describe())
 			}
 		}
 	}
 	s.query = len(m.Query)
 	return s, true
+}
+
+// describe renders a header or query value matcher.
+func (m cvm) describe() string {
+	if m.Re != nil {
+		return "a value matching regular expression " + fmt.Sprintf("%q", strings.TrimSuffix(strings.TrimPrefix(m.Re.String(), "^(?:"), ")$"))
+	}
+	return fmt.Sprintf("the value %q", m.Value)
 }
 
 func valueOK(m cvm, v string) bool {
@@ -119,23 +145,44 @@ func hostOnly(h string) string {
 }
 
 // pickListener returns the most specific listener whose hostname matches.
-func (pg *PortGroup) pickListener(host string) *RTListener {
+func (pg *PortGroup) pickListener(host string) *RTListener { return pg.pickListenerT(host, nil) }
+
+// pickListenerT is pickListener recording every listener it considers on tr
+// (nil on the data path).
+func (pg *PortGroup) pickListenerT(host string, tr *Trace) *RTListener {
 	var best *RTListener
 	bestRank := -1
 	for _, l := range pg.Listeners {
-		if hostMatches(l.Host, host) && hostRank(l.Host) > bestRank {
+		ok := hostMatches(l.Host, host)
+		if tr != nil {
+			tr.noteListener(l, ok)
+		}
+		if ok && hostRank(l.Host) > bestRank {
 			best, bestRank = l, hostRank(l.Host)
 		}
+	}
+	if tr != nil {
+		tr.chooseListener(best)
 	}
 	return best
 }
 
 // selectEntry finds the winning entry for a request on this listener.
 func (l *RTListener) selectEntry(r *http.Request, host string) *Entry {
+	return l.selectEntryT(r, host, nil)
+}
+
+// selectEntryT is selectEntry recording every entry it considers on tr (nil on
+// the data path, where it allocates nothing extra).
+func (l *RTListener) selectEntryT(r *http.Request, host string, tr *Trace) *Entry {
 	var best *Entry
 	var bestScore score
+	grpc := isGRPC(r)
 	for _, e := range l.Entries {
-		if e.GRPC != isGRPC(r) {
+		if e.GRPC != grpc {
+			if tr != nil {
+				tr.noteEntry(e, score{}, false, kindMismatchReason(e.GRPC))
+			}
 			continue
 		}
 		rank, ok := -1, false
@@ -145,13 +192,27 @@ func (l *RTListener) selectEntry(r *http.Request, host string) *Entry {
 			}
 		}
 		if !ok {
+			if tr != nil {
+				tr.noteEntry(e, score{}, false, fmt.Sprintf("host mismatch: request host %q does not match route hostnames %s", host, hostList(e.Hosts)))
+			}
 			continue
 		}
-		s, ok := e.Match.matches(r)
+		var why string
+		var wp *string
+		if tr != nil {
+			wp = &why
+		}
+		s, ok := e.Match.matchesWhy(r, wp)
 		if !ok {
+			if tr != nil {
+				tr.noteEntry(e, s, false, why)
+			}
 			continue
 		}
 		s.host = rank
+		if tr != nil {
+			tr.noteEntry(e, s, true, "")
+		}
 		if best == nil || s.better(bestScore) {
 			best, bestScore = e, s
 		}
