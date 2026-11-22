@@ -28,14 +28,26 @@ class Setura < Formula
   end
 
   def install
+    # The archive unpacks to setura_VERSION_OS_ARCH/; Homebrew enters that directory.
     bin.install "setura"
     man1.install "man/setura.1"
-    (bash_completion/"setura").write Utils.safe_popen_read(bin/"setura", "completion", "bash")
-    (zsh_completion/"_setura").write Utils.safe_popen_read(bin/"setura", "completion", "zsh")
-    (fish_completion/"setura.fish").write Utils.safe_popen_read(bin/"setura", "completion", "fish")
+    generate_completions_from_executable(bin/"setura", "completion", shells: [:bash, :zsh, :fish], shell_parameter_format: :arg)
+    doc.install "README.md", "NOTICE"
+    prefix.install "LICENSE"
+  end
+
+  def caveats
+    <<~EOS
+      Zyvor Setura is source-available under the Zyvor Production Licence v2.0.
+      A paid Order is required for use; a 30-day trial is available from
+      sales@zyvor.dev. Setura works without a key. To check a licence key:
+        setura licence verify KEY
+    EOS
   end
 
   test do
-    assert_match "setura", shell_output("#{bin}/setura version")
+    assert_match version.to_s, shell_output("#{bin}/setura version")
+    assert_match "unlicensed", shell_output("#{bin}/setura version --verbose")
+    assert_match "setura", shell_output("#{bin}/setura completion bash")
   end
 end

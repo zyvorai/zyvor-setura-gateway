@@ -142,6 +142,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		if *verbose {
 			versionVerbose(stdout, u)
+			fmt.Fprintf(stdout, "  %s %s\n", u.gray(pad("licence", 12)), licenceLine(os.Getenv, time.Now()))
 			return 0, nil
 		}
 		fmt.Fprintln(stdout, "setura", Version)
@@ -632,6 +633,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "man":
 		return 0, Man(stdout)
+
+	case "licence", "license":
+		return runLicence(rest, os.Stdin, stdout, stderr, os.Getenv, time.Now()), nil
 
 	case "shadow":
 		return runShadow(fs, rest, stdout, stderr, u)

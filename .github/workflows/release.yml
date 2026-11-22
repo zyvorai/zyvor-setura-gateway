@@ -2,21 +2,102 @@ name: Release
 on:
   push:
     tags: ['v*']
-permissions:
-  contents: write
+
+# Least privilege: jobs ask for what they need.
+permissions: {}
+
+env:
+  # Identity that cosign bundles are verified against (see install.sh, docs/install.md).
+  SIGNER: https://github.com/zyvorai/zyvor-setura-gateway/.github/workflows/release.yml@refs/tags/
+
 jobs:
-  release:
+  build:
+    name: Build and package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version: stable
-      - run: make test
-      - run: make dist VERSION=${GITHUB_REF_NAME#v}
+      - name: Test
+        run: make test
+      - name: Release notes from CHANGELOG.md
+        run: |
+          # Fails the release when CHANGELOG.md has no section for this tag.
+          sh scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > release-notes.md
+          cat >> release-notes.md <<EOF
+
+          ---
+
+          Verify a download: \`cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity ${SIGNER}${GITHUB_REF_NAME} --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt\`, then \`sha256sum -c --ignore-missing checksums.txt\`.
+          Build provenance: \`gh attestation verify FILE --repo ${GITHUB_REPOSITORY}\`.
+          EOF
+      - name: Archives
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+      - name: Packages (deb, rpm)
+        run: sh scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - name: Helm chart
+        run: helm package packaging/helm/setura --version "${GITHUB_REF_NAME#v}" --app-version "${GITHUB_REF_NAME#v}" --destination dist
+      - name: SBOMs
+        run: sh scripts/sbom-dist.sh dist
+      - name: checksums.txt over every asset
+        working-directory: dist
+        run: |
+          rm -f checksums.txt
+          sha256sum -- * > checksums.txt
+          cat checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release
+          path: |
+            dist
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Sign, attest and publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write      # create the release
+      id-token: write      # keyless signing and attestations
+      attestations: write  # store build provenance
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign every asset with cosign (keyless)
+        working-directory: dist
+        run: |
+          for f in *; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+      - name: Verify what was signed
+        working-directory: dist
+        run: |
+          cosign verify-blob --bundle checksums.txt.sigstore.json \
+            --certificate-identity "${SIGNER}${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-checksums: dist/checksums.txt
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt --generate-notes --title "Setura $GITHUB_REF_NAME"
+        run: |
+          pre=
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* $pre \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Setura $GITHUB_REF_NAME" --notes-file release-notes.md

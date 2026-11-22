@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,11 +41,14 @@ type kubeCtl struct {
 	watchTimeout int           // server-side seconds per watch request (default 300)
 	fallbackPoll time.Duration // wake interval while a watch is unavailable (default 5s)
 
-	elect *elector
+	elect atomic.Pointer[elector] // set by Start, read by isLeader from other goroutines
 	wg    sync.WaitGroup
 }
 
-func (k *KubeSource) isLeader() bool { return k.elect == nil || k.elect.isLeader() }
+func (k *KubeSource) isLeader() bool {
+	e := k.elect.Load()
+	return e == nil || e.isLeader()
+}
 
 type controllerFlags struct {
 	poll         bool
@@ -134,9 +138,10 @@ var watchTargets = []struct {
 // unless Poll is set, one watch loop per collection.
 func (k *KubeSource) Start(ctx context.Context, wake func()) time.Duration {
 	if k.Lease != nil {
-		k.elect = newElector(k, *k.Lease, wake)
+		e := newElector(k, *k.Lease, wake)
+		k.elect.Store(e)
 		k.wg.Add(1)
-		go func() { defer k.wg.Done(); k.elect.run(ctx) }()
+		go func() { defer k.wg.Done(); e.run(ctx) }()
 	}
 	if k.Poll {
 		return 0

@@ -1,0 +1,46 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: setura-gateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: setura-gateway
+{{- with .Values.prometheusRule.labels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  groups:
+    - name: setura-gateway
+      rules:
+        - alert: SeturaGatewayDown
+          expr: sum(up{job="setura-gateway", namespace="{{ .Values.namespace }}"}) == 0 or absent(up{job="setura-gateway", namespace="{{ .Values.namespace }}"})
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: No Setura gateway replica is being scraped
+        - alert: SeturaGateway5xxRatio
+          expr: sum(rate(setura_gateway_route_requests_total{code="5xx"}[5m])) / sum(rate(setura_gateway_route_requests_total[5m])) > {{ .Values.prometheusRule.errorRatio }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: More than {{ mulf .Values.prometheusRule.errorRatio 100 }}% of gateway responses are 5xx
+        - alert: SeturaGatewayUnmatchedRoutes
+          expr: sum(rate(setura_gateway_unmatched_requests_total[5m])) > {{ .Values.prometheusRule.unmatchedRate }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Requests are arriving that match no route
+        - alert: SeturaGatewayEndpointEjected
+          expr: max(setura_gateway_endpoint_ejected) == 1
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: A backend endpoint has been ejected by outlier detection for 5 minutes
+        - alert: SeturaGatewayAccessLogDropping
+          expr: increase(setura_gateway_accesslog_dropped_total[10m]) > 0
+          for: 10m
+          labels: {severity: info}
+          annotations:
+            summary: Access log lines are being dropped
+{{- end }}

@@ -1,0 +1,53 @@
+# Defaults render the same objects as `setura gateway install` (Namespace,
+# ServiceAccount, ClusterRole, Role, RoleBinding, ClusterRoleBinding,
+# GatewayClass, Deployment, Service). Every `gateway install` flag has a value
+# here; the monitoring objects are off by default.
+
+# --namespace: the namespace the controller runs in. The chart sets it on every
+# namespaced object explicitly (it does not use the Helm release namespace).
+namespace: setura-system
+# Render the Namespace object (install prints it). Turn off when you install
+# with `helm install --create-namespace` or the namespace already exists.
+createNamespace: true
+
+# --image: repository:tag. An empty tag uses the chart appVersion.
+image:
+  repository: ghcr.io/zyvorai/zyvor-setura-gateway
+  tag: ""
+
+# --class: the GatewayClass name this controller serves.
+className: setura
+
+# --replicas: all replicas serve traffic; --leader-elect picks one status writer.
+replicas: 1
+
+# --expose-gateway-ports: the controller adds Service ports for Gateway
+# listener ports and is granted patch on its own Service only.
+exposeGatewayPorts: false
+
+service:
+  # Change to LoadBalancer to expose the gateway.
+  type: ClusterIP
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ServiceMonitor for the Prometheus Operator. Adds an "admin" port (19000,
+# serves /metrics) to the Service and labels it. The admin endpoint is
+# unauthenticated: restrict it with a NetworkPolicy if the pod network is shared.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}   # for example {release: kube-prometheus-stack}
+
+# PrometheusRule for the Prometheus Operator.
+prometheusRule:
+  enabled: false
+  labels: {}
+  # Fraction of 5xx responses (0.05 = 5%) over 5m that fires SeturaGateway5xxRatio.
+  errorRatio: 0.05
+  # Unmatched requests per second over 5m that fires SeturaGatewayUnmatchedRoutes.
+  unmatchedRate: 1
