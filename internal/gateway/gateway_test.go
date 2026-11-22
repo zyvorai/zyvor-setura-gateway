@@ -404,6 +404,7 @@ func TestStatsAndAccessLog(t *testing.T) {
 	get(t, s, "x.test", "/ok")
 	get(t, s, "x.test", "/ok")
 	get(t, s, "x.test", "/nope")
+	s.FlushAccessLog()
 	st := s.Stats().Snapshot()
 	if st["requests"].(int64) != 3 || st["unmatched"].(int64) != 1 {
 		t.Fatalf("stats %v", st)

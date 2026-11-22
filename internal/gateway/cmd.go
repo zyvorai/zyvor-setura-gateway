@@ -31,7 +31,12 @@ Flags for run and up:
   --admin ADDR|off      admin endpoint (default 127.0.0.1:19000)
   --interval DUR        poll interval for config changes (default 1s; 5s with --kubernetes)
   --force               apply configurations that have lint errors
-  --access-log FILE|-|off   JSON access log (default "-", stdout)
+  --access-log FILE|-|off   access log (default "-", stdout)
+  --access-log-format json|text   access log format (default json)
+  --otlp-endpoint HOST:PORT|URL   export spans via OTLP/HTTP JSON (default off)
+  --rate-limit N/s|N/m|N/h  local token-bucket rate limit (default off)
+  --rate-burst N        bucket size (default: the per-second rate)
+  --rate-key ip|route|header:NAME   what a bucket is keyed on (default ip)
 `
 
 type stringList []string
@@ -45,6 +50,7 @@ type runFlags struct {
 	accessLog  string
 	interval   time.Duration
 	bindFlagFS *flag.FlagSet
+	obs        obsFlags
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -55,6 +61,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&f.interval, "interval", 0, "config poll interval")
 	fs.BoolVar(&f.opts.Force, "force", false, "apply configurations that have lint errors")
 	fs.StringVar(&f.accessLog, "access-log", "-", "access log file, - for stdout, off to disable")
+	addObsFlags(fs, &f.obs)
 }
 
 func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, string)) (func(), error) {
@@ -72,6 +79,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
+	if err := f.obs.apply(&f.opts); err != nil {
+		return nil, err
+	}
 	closeFn := func() {}
 	switch f.accessLog {
 	case "off", "":

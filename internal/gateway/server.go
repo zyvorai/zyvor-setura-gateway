@@ -31,6 +31,7 @@ type Options struct {
 	AccessLog  io.Writer   // JSON-lines access log, nil to disable
 	Diag       io.Writer   // human diagnostics, nil to discard
 	Rand       func(n int) int
+	Obs        ObsOptions // access log format, tracing export, rate limiting
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -63,7 +64,7 @@ type Server struct {
 	opts  Options
 	table atomic.Pointer[Table]
 	stats *Stats
-	logMu sync.Mutex
+	obs   *obs
 
 	mu       sync.Mutex
 	ports    map[int]*boundPort
@@ -91,7 +92,7 @@ func New(opts Options) *Server {
 			MaxIdleConns: 256, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second, ForceAttemptHTTP2: true,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}}
 	}
-	return &Server{opts: opts, stats: newStats(), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	return &Server{opts: opts, stats: newStats(), obs: newObs(&opts), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
 }
 
 func (s *Server) transport(insecure bool) http.RoundTripper {
@@ -483,6 +484,7 @@ func (s *Server) Close() {
 	s.mirrorWG.Wait()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
+	s.obs.close()
 }
 
 func (s *Server) startAdmin() error {
@@ -518,6 +520,7 @@ func (s *Server) startAdmin() error {
 			enc.Encode(v)
 		}
 	}
+	mux.HandleFunc("/metrics", s.metrics)
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {
 		if d := s.Status(); d != nil {
