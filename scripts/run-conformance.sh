@@ -87,7 +87,7 @@ kube context        : ${CONTEXT:-<required>}
 image               : $IMAGE (build: $BUILD)
 namespace / class   : $NAMESPACE / $GATEWAY_CLASS
 profiles run        : $PROFILES
-profiles NOT run    : $UNSUPPORTED_PROFILES (not implemented yet)
+profiles NOT run    : $UNSUPPORTED_PROFILES (GRPC and TLS exist in the gateway but are not wired into this harness yet)
 feature/skip lists  : $ROOT/conformance/conformance_test.go
 extra skips         : ${SETURA_CONFORMANCE_SKIP:-<none>}
 report directory    : $OUT
