@@ -51,6 +51,9 @@ func (s *Server) UIState() any {
 	if err != nil {
 		return nil
 	}
+	if m, ok := st.(map[string]any); ok && (s.opts.ShadowDiff > 0 || s.shadow.active()) {
+		m["shadow"] = s.shadow.Summary()
+	}
 	return st
 }
 

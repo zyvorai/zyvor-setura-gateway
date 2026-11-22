@@ -150,6 +150,12 @@ h2{font-size:24px;letter-spacing:-.02em;margin:44px 0 4px;font-weight:600}
 .row .dot{width:9px;height:9px;box-shadow:none;background:var(--stf)}
 .row .u{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .row .m{margin-left:auto;color:var(--ink-2);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* shadow diff */
+.shadow-sum{padding:18px 22px;font-size:17px;font-weight:500;display:flex;align-items:center;gap:12px}
+.shadow-sum .dot{width:10px;height:10px;border-radius:50%;background:var(--stf);flex:none}
+.shadow-sum .m{margin-left:auto;color:var(--ink-2);font-size:13px;font-weight:400;font-variant-numeric:tabular-nums}
+.shadow-list .row{align-items:flex-start;flex-wrap:wrap}
+.shadow-list .x{flex:1 0 100%;color:var(--ink-3);font-size:12px;overflow-wrap:anywhere;font-family:ui-monospace,Menlo,monospace}
 .feedhead{display:flex;align-items:center;gap:12px;padding:16px 22px 6px}
 .feedhead h3{margin:0;font-size:17px;font-weight:600}
 .feed{max-height:420px;overflow:auto;padding-bottom:8px}
@@ -266,6 +272,12 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
     <div class="card"><ul class="rows" id="health"></ul></div>
   </section>
 
+  <section id="shadowsec" class="hide" aria-labelledby="shadowh">
+    <h2 id="shadowh">Shadow</h2>
+    <p class="sub">Mirrored traffic compared with what clients received. The mirrored response never reaches clients.</p>
+    <div class="card"><div class="shadow-sum" id="shadowsum" data-st="unknown"></div><ul class="rows shadow-list" id="shadowlist"></ul></div>
+  </section>
+
   <section id="mapsec" aria-labelledby="maph">
     <h2 id="maph">Route map</h2>
     <p class="sub" id="mapsub">Entry points on the left, routes in the middle, backends on the right. Select a route for details.</p>
@@ -361,7 +373,7 @@ function render(){
   $('searchbox').classList.toggle('hide',S.mode==='watch');
   var src=$('source');src.hidden=!S.source;src.textContent=(S.mode?cap(S.mode)+' \u00b7 ':'')+(S.source||'');
   document.title=(sm.headline?sm.headline+' \u00b7 ':'')+'Setura';
-  renderError();renderStats(sm);renderAttention();renderHealth();renderMap();renderHistory();renderFoot();
+  renderError();renderStats(sm);renderAttention();renderHealth();renderShadow();renderMap();renderHistory();renderFoot();
   if(sel){var r=find(sel);if(r)renderSheet(r,true);else closeSheet()}
   else if(!deepDone){deepDone=true;var m=/^#route=(.+)$/.exec(location.hash);if(m){try{openRoute(decodeURIComponent(m[1]))}catch(x){}}}
 }
@@ -406,6 +418,26 @@ function renderHealth(){
       h('span',{class:'sr',text:x.ok?'passing':'failing'}),
       h('span',{class:'m',text:x.ok?(Math.round(x.ms)+' ms'+(x.backend?' \u00b7 '+x.backend:'')):('failed at '+(x.stage||'probe')+(x.reason?': '+x.reason:''))}),
       x.since?h('span',{class:'m',text:'since '+ago(x.since)}):null));
+  });
+}
+function renderShadow(){
+  var sh=S.shadow;$('shadowsec').classList.toggle('hide',!sh);
+  if(!sh)return;
+  var n=sh.compared||0,rate=sh.matchRate,sum=clear($('shadowsum'));
+  var st=n===0?'unknown':(sh.mismatched?'attention':'ok');
+  sum.setAttribute('data-st',st);
+  sum.appendChild(h('span',{class:'dot','aria-hidden':'true'}));
+  sum.appendChild(h('span',{text:n===0?'Shadow: waiting for compared requests':'Shadow: '+(rate==null?'n/a':pct(rate/100))+' match over '+num(n)+' '+(n===1?'request':'requests')}));
+  var bits=[];if(sh.dropped)bits.push(num(sh.dropped)+' not compared');if(sh.errors)bits.push(num(sh.errors)+' shadow '+(sh.errors===1?'error':'errors'));
+  if(sh.p95DeltaMs)bits.push('p95 latency delta '+Math.round(sh.p95DeltaMs)+' ms');
+  sum.appendChild(h('span',{class:'m',text:bits.join(' \u00b7 ')}));
+  var ul=clear($('shadowlist')),rec=(sh.recent||[]).slice(0,10);
+  rec.forEach(function(e){
+    var d=e.detail||{};
+    ul.appendChild(h('li',{class:'row','data-st':'attention'},h('span',{class:'dot','aria-hidden':'true'}),
+      h('span',{class:'u',text:e.method+' '+e.path,title:e.route}),
+      h('span',{class:'m',text:e.category+' \u00b7 '+ago(e.time)}),
+      h('span',{class:'x',text:(d.where||'')+(d.primary||d.shadow?': '+(d.primary||'')+' \u2192 '+(d.shadow||''):'')})));
   });
 }
 function renderHistory(){
