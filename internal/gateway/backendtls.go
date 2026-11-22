@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -483,7 +484,9 @@ func (t *Table) policyStatuses(now time.Time, prev map[string]*PolicyStatus) map
 		for _, rr := range t.routes {
 			uses := false
 			for _, b := range rr.Backends {
-				uses = uses || b.TLSPolicy == key
+				for _, tg := range res.P.Targets {
+					uses = uses || strings.HasPrefix(b.Key, res.P.NS+"/"+tg.Name+":")
+				}
 			}
 			if !uses {
 				continue
