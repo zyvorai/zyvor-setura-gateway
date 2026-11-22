@@ -45,7 +45,7 @@ var helpGroups = []helpGroup{
 		{"ai", "REPORT [--model NAME]", "explain saved evidence, optionally with local Ollama"},
 	}},
 	{"Publish", []helpEntry{
-		{"gateway", "run|up|install", "built-in Gateway API data plane, no Envoy needed"},
+		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
 	}},
 	{"Utilities", []helpEntry{
@@ -66,6 +66,7 @@ var cmdExamples = map[string][]string{
 	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},
+	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json --steps 10,50,100", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
 	"gate":      {"setura gate orders http://127.0.0.1:8080/ --gateway dev --backend orders-v2 -n demo"},
 	"compare":   {"setura compare https://orders.example.test/ --target dns --target 10.0.0.5"},
 	"snapshot":  {"setura snapshot -n demo > before.json", "setura --context prod-eu,prod-us snapshot -n demo"},
