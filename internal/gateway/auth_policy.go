@@ -413,6 +413,7 @@ func prepareIdentity(r *http.Request, rule *Rule, cert *ClientCert) {
 func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState, l *RTListener, rule *Rule) bool {
 	cert, deny := s.clientCertFor(l, r)
 	if deny != "" {
+		s.ext.authOutcome(st.route, "denied", "client_cert")
 		st.errMsg = deny
 		plain(w, http.StatusMisdirectedRequest, "client certificate validation is required for this host")
 		return true
@@ -428,9 +429,15 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 	ip, _ := netip.ParseAddr(s.trusted.clientIP(r))
 	res := c.evaluate(authInput{r: r, clientIP: ip, cert: cert, certKnown: true, now: s.authNow()})
 	if res.allowed() {
+		s.ext.authOutcome(st.route, "allowed", "")
 		res.apply(r)
 		return false
 	}
+	reason := "forbidden"
+	if res.Status == http.StatusUnauthorized {
+		reason = "unauthenticated"
+	}
+	s.ext.authOutcome(st.route, "denied", reason)
 	st.errMsg = "auth: " + res.Reason
 	for _, ch := range res.Challenges {
 		w.Header().Add("WWW-Authenticate", ch)

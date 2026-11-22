@@ -18,8 +18,9 @@ type ObsOptions struct {
 	AccessLogBuffer int    // queued lines before dropping (default 4096)
 	OTLPEndpoint    string // OTLP/HTTP collector, "" disables span export
 	OTLPInterval    time.Duration
-	OTLP            OTLPOptions // retry, backoff and queue size of span export
-	LogQuery        bool        // keep the query string in logged paths (default: stripped)
+	OTLP            OTLPOptions    // retry, backoff and queue size of span export
+	Logs            LogSinkOptions // syslog, Loki and OTLP logs sinks for the access log
+	LogQuery        bool           // keep the query string in logged paths (default: stripped)
 	RateLimit       RateLimitConfig
 	// TrustedProxies are the peers whose X-Forwarded-For is believed when
 	// working out the client address (rate-limit key, access log client_ip).
@@ -32,6 +33,7 @@ type obs struct {
 	access  *accessLogger
 	otlp    *otlpExporter
 	limiter *limiter
+	sinks   []*batchSink // access log sinks (syslog, Loki, OTLP logs)
 	once    sync.Once
 }
 
@@ -43,6 +45,7 @@ func newObs(o *Options) *obs {
 	if o.Obs.OTLPEndpoint != "" {
 		x.otlp = newOTLPOpts(o.Obs.OTLPEndpoint, o.Obs.OTLPInterval, o.Obs.OTLP)
 	}
+	x.sinks, _ = newLogSinks(o.Obs.Logs) // addresses were validated by the flags
 	x.limiter = newLimiter(o.Obs.RateLimit, o.Obs.Now)
 	if x.limiter != nil {
 		x.limiter.trusted = trustedNets(o.Obs.TrustedProxies)
@@ -58,6 +61,9 @@ func (x *obs) close() {
 		if x.otlp != nil {
 			x.otlp.close()
 		}
+		for _, k := range x.sinks {
+			k.close()
+		}
 	})
 }
 
@@ -68,6 +74,10 @@ func esc(s string) string {
 // metrics serves the Prometheus text exposition.
 func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s.writeObsMetrics(w)
+}
+
+func (s *Server) writeObsMetrics(w io.Writer) {
 	var b strings.Builder
 	head := func(name, typ, help string) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, typ)
@@ -139,6 +149,12 @@ type obsFlags struct {
 	otlpRetries, otlpQueue  int
 	otlpBackoff             time.Duration
 	logQuery                bool
+	otlpProto               string
+	syslog, loki, lokiLabel string
+	lokiTenant, otlpLogs    string
+	sinkQueue, sinkBatch    int
+	sinkRetries             int
+	sinkBackoff, sinkTick   time.Duration
 }
 
 func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
@@ -152,6 +168,17 @@ func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
 	fs.StringVar(&f.trusted, "trusted-proxies", "", "CIDRs/IPs whose X-Forwarded-For is believed for the client address")
 	fs.IntVar(&f.otlpRetries, "otlp-retries", 0, "retries of a failed OTLP export (default 4, -1 = none)")
 	fs.IntVar(&f.otlpQueue, "otlp-queue", 0, "OTLP spans buffered before dropping (default 2048)")
+	fs.StringVar(&f.otlpProto, "otlp-protocol", "http", "OTLP transport for spans and logs: http (JSON) or grpc (protobuf)")
+	fs.StringVar(&f.otlpLogs, "otlp-logs-endpoint", "", "export the access log to this OTLP logs collector (host:port or URL)")
+	fs.StringVar(&f.syslog, "syslog", "", "send the access log to syslog (RFC 5424): udp://HOST:PORT, tcp://HOST:PORT, unix:///path or unixgram:///path")
+	fs.StringVar(&f.loki, "loki-url", "", "push the access log to Loki (http(s)://HOST:PORT, /loki/api/v1/push is appended)")
+	fs.StringVar(&f.lokiLabel, "loki-labels", "", "Loki stream labels as k=v,k=v (default job=setura-gateway)")
+	fs.StringVar(&f.lokiTenant, "loki-tenant", "", "Loki tenant sent as X-Scope-OrgID")
+	fs.IntVar(&f.sinkQueue, "logsink-queue", 0, "log sink lines buffered per sink before dropping (default 8192)")
+	fs.IntVar(&f.sinkBatch, "logsink-batch", 0, "log sink lines per delivery (default 256)")
+	fs.DurationVar(&f.sinkTick, "logsink-interval", 0, "longest wait before a partial log sink batch is sent (default 1s)")
+	fs.IntVar(&f.sinkRetries, "logsink-retries", 0, "retries of a failed log sink delivery (default 4, -1 = none)")
+	fs.DurationVar(&f.sinkBackoff, "logsink-backoff", 0, "first log sink retry wait, doubling (default 250ms)")
 	fs.DurationVar(&f.otlpBackoff, "otlp-backoff", 0, "first OTLP retry wait, doubling (default 250ms)")
 }
 
@@ -162,7 +189,26 @@ func (f *obsFlags) apply(o *Options) error {
 		return fmt.Errorf("--access-log-format %q: want json or text", f.format)
 	}
 	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint, o.Obs.LogQuery = f.format, f.otlp, f.logQuery
-	o.Obs.OTLP = OTLPOptions{Queue: f.otlpQueue, Retries: f.otlpRetries, Backoff: f.otlpBackoff}
+	o.Obs.OTLP = OTLPOptions{Queue: f.otlpQueue, Retries: f.otlpRetries, Backoff: f.otlpBackoff, Protocol: f.otlpProto}
+	if f.otlpProto != "" && f.otlpProto != "http" && f.otlpProto != "grpc" {
+		return fmt.Errorf("--otlp-protocol %q: want http or grpc", f.otlpProto)
+	}
+	labels, err := ParseLabels(f.lokiLabel)
+	if err != nil {
+		return fmt.Errorf("--loki-labels: %w", err)
+	}
+	o.Obs.Logs = LogSinkOptions{Syslog: f.syslog, LokiURL: f.loki, LokiLabels: labels, LokiTenant: f.lokiTenant, OTLPLogs: f.otlpLogs, OTLPProtocol: f.otlpProto,
+		Sink: SinkOptions{Queue: f.sinkQueue, Batch: f.sinkBatch, Interval: f.sinkTick, Retries: f.sinkRetries, Backoff: f.sinkBackoff}}
+	if f.syslog != "" {
+		if _, _, err := parseSyslogAddr(f.syslog); err != nil {
+			return err
+		}
+	}
+	if f.loki != "" {
+		if _, err := lokiURL(f.loki); err != nil {
+			return err
+		}
+	}
 	tp, err := ParseTrustedProxies(f.trusted)
 	if err != nil {
 		return fmt.Errorf("--trusted-proxies: %w", err)

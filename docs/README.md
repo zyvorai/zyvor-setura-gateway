@@ -17,7 +17,8 @@
 - [Certificates and edge protocols](certificates.md): ACME, certificate reload, PROXY protocol, h2c upstreams, Alt-Svc.
 - [HTTP/3](http3.md): why the gateway does not serve it, and the edge-proxy recommendation.
 - [Traffic security](security.md): JWT, API keys, basic auth, address lists, client certificates, OCSP stapling, admin token.
-- [Observability](observability.md): access logs, rotation, tracing, OTLP, rate limiting, `/metrics`.
+- [Observability](observability.md): access logs, rotation, tracing, OTLP (HTTP and gRPC), log sinks, rate limiting, `/metrics`, Grafana and alerts.
+- [Netra](netra.md): scrape the gateway from Netra, the metric contract. [SLOs](slo.md): burn rates. [Runbooks](runbooks.md): one section per alert.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
 - [Performance](performance.md): measured throughput, latency and soak numbers, the load and fuzz tools, and how to compare with Envoy.

@@ -258,8 +258,11 @@ func (s *Server) FlushAccessLog() {
 
 // observe records one finished request: access log line, history record and span.
 func (s *Server) observe(rec *recorder, r *http.Request, st *reqState, start, end time.Time, status int) {
-	if s.obs.access != nil || s.conns != nil {
+	if s.obs.access != nil || s.conns != nil || len(s.obs.sinks) > 0 {
 		l := s.buildLine(rec, r, st, start, end, status)
+		for _, k := range s.obs.sinks {
+			k.offer(l) // copies the line; the history assigns its ID next
+		}
 		if a := s.obs.access; a != nil {
 			a.log(l) // marshals before returning, so the history can take the record next
 		}

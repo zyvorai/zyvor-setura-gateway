@@ -360,6 +360,9 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 		_, shed := cerr.(*circuitReject)
+		if err != nil && !shed && isTLSHandshakeError(err) {
+			t.s.ext.bump(&t.s.ext.btls, t.b.Key)
+		}
 		cancelled := err != nil && ctx.Err() != nil && !shed
 		bad := !shed && (err != nil || resp.StatusCode >= 500)
 		if !cancelled && !shed {

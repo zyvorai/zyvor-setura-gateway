@@ -209,11 +209,13 @@ func (s *HistorySummary) Table() string {
 var historyNow = time.Now
 
 // runHistory implements "setura history [FILE]".
-func runHistory(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, error) {
+func runHistory(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (int, error) {
 	since := fs.Duration("since", defaultHistoryWindow, "summarize this long back from now, compared with the window before it")
 	route := fs.String("route", "", "only routes whose target equals or contains this text")
 	format := fs.String("format", "table", "table or json")
 	file := fs.String("file", "", "history FILE written by setura watch --history (or give it as an argument)")
+	slo := fs.Bool("slo", false, "report availability and latency SLO burn rates from the history instead of the summary")
+	sloConfig := fs.String("slo-config", "", "with --slo: SLO config file (default: 99.9% availability over 30d)")
 	pos, err := parse(fs, rest)
 	if err != nil {
 		return 2, err
@@ -229,6 +231,13 @@ func runHistory(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int,
 	if *format != "table" && *format != "json" {
 		fmt.Fprintln(stderr, "setura history: --format must be table or json")
 		return 2, usageError{"format"}
+	}
+	if *slo {
+		a := sloArgs{config: *sloConfig, history: pos[0], route: *route, format: *format, failOn: "page", objective: 99.9, latencyObj: 99, window: "30d"}
+		return runSLOWith(a, stdout, stderr, u, func(msg string) (int, error) {
+			fmt.Fprintf(stderr, "setura history: %s\n", msg)
+			return 2, usageError{msg}
+		})
 	}
 	f, err := os.Open(pos[0])
 	if err != nil {

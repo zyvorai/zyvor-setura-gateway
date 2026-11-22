@@ -23,7 +23,8 @@ Usage:
   setura gateway run --kubernetes [flags]      run as an in-cluster controller and data plane
   setura gateway up FILE [flags]               local demo: start demo backends and serve FILE
   setura gateway hash --kind apikey|password   read a secret on stdin, print the hash to store in a config
-  setura gateway install [flags]               print Kubernetes YAML for the controller (never applies)
+  setura gateway install [flags]               print Kubernetes YAML for the controller (never applies); --with-monitoring adds
+                                               an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard
   setura gateway rollout --config LIVE --new CANDIDATE --checks CHECKS   guarded rollout with automatic rollback
   setura gateway history --config LIVE         list config backups
   setura gateway rollback --config LIVE [--to ID]   restore a backup
@@ -64,6 +65,13 @@ Flags for run and up:
   --access-log-gzip             gzip rotated files
                         (a file access log also rotates on SIGHUP; a file moved away by logrotate is reopened)
   --otlp-endpoint HOST:PORT|URL   export spans via OTLP/HTTP JSON (default off)
+  --otlp-protocol http|grpc   OTLP transport for spans and logs: JSON over HTTP (default) or protobuf over gRPC
+  --otlp-logs-endpoint HOST:PORT|URL   also export the access log to an OTLP logs collector
+  --syslog ADDR         send the access log as RFC 5424 syslog: udp://HOST:PORT, tcp://HOST:PORT, unix:///path, unixgram:///path
+  --loki-url URL, --loki-labels k=v,k=v, --loki-tenant ID   push the access log to Loki (/loki/api/v1/push is appended)
+  --logsink-queue N, --logsink-batch N, --logsink-interval DUR, --logsink-retries N, --logsink-backoff DUR
+                        bounded queue (8192), batch size (256), flush interval (1s), retries (4, -1 = none) and first
+                        backoff (250ms, doubling) of the syslog, Loki and OTLP logs sinks; a full queue drops and counts
   --rate-limit N/s|N/m|N/h  local token-bucket rate limit (default off)
   --rate-burst N        bucket size (default: the per-second rate)
   --rate-key ip|route|header:NAME   what a bucket is keyed on (default ip)
@@ -345,6 +353,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		fs.StringVar(&io.ClassName, "class", "setura", "GatewayClass name")
 		fs.IntVar(&io.Replicas, "replicas", 1, "controller replicas")
 		fs.BoolVar(&io.ExposePorts, "expose-gateway-ports", false, "run the controller with --expose-gateway-ports and grant it patch on its own Service")
+		fs.BoolVar(&io.WithMonitoring, "with-monitoring", false, "also print an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard ConfigMap")
 		if _, err := parseInterleaved(fs, rest); err != nil {
 			return fail(err)
 		}

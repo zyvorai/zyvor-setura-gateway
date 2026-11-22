@@ -15,6 +15,7 @@ type InstallOptions struct {
 	Namespace, Image, ClassName string
 	Replicas                    int
 	ExposePorts                 bool // controller adds Service ports for Gateway listener ports
+	WithMonitoring              bool // add an admin Service port, ServiceMonitor, PrometheusRule and the Grafana dashboard
 }
 
 // Install returns Kubernetes YAML for the in-cluster controller. Setura only
@@ -202,5 +203,9 @@ spec:
 	tok := make([]byte, 24)
 	rand.Read(tok)
 	r := strings.NewReplacer("ADMINTOK", hex.EncodeToString(tok), "NS", o.Namespace, "CLASS", o.ClassName, "IMAGE", o.Image, "REPLICAS", fmt.Sprint(o.Replicas))
+	if o.WithMonitoring {
+		y = strings.Replace(y, "    - {name: https, port: 443, targetPort: https}\n", "    - {name: https, port: 443, targetPort: https}\n    - {name: admin, port: 19000, targetPort: admin}\n", 1)
+		return r.Replace(y) + MonitoringYAML(o.Namespace)
+	}
 	return r.Replace(y)
 }

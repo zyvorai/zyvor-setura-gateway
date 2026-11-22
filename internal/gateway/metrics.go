@@ -14,7 +14,9 @@ func promLabel(s string) string {
 
 // WriteMetrics writes resilience counters and endpoint health in the
 // Prometheus text exposition format.
-func (s *Server) WriteMetrics(w io.Writer) {
+func (s *Server) WriteMetrics(w io.Writer) { s.writeMetrics(w, false) }
+
+func (s *Server) writeMetrics(w io.Writer, om bool) {
 	rs := s.res
 	counter := func(name, help string, m map[string]int64) {
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
@@ -65,7 +67,8 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	s.writeL4Metrics(w)
 	s.writeCircuitMetrics(w)
 	s.writeShadowMetrics(w)
-	s.latency.write(w)
+	s.latency.write(w, om)
+	s.writeExtMetrics(w)
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {

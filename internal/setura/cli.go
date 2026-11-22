@@ -645,7 +645,10 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		return watchCommand(rest, stdout, stderr)
 
 	case "history":
-		return runHistory(fs, rest, stdout, stderr)
+		return runHistory(fs, rest, stdout, stderr, u)
+
+	case "slo":
+		return runSLO(fs, rest, stdout, stderr, u)
 
 	case "man":
 		return 0, Man(stdout)
