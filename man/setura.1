@@ -61,6 +61,9 @@ statically analyze specs (offline)
 .B diff BEFORE AFTER
 compare two snapshots
 .TP
+.B replay \-\-log F \-\-before OLD \-\-after NEW
+replay an access log through two gateway configs and report the routing impact
+.TP
 .B migrate check [\-\-ingress F] [\-\-routes F] [\-\-services F] [\-\-ingress\-class C]
 compare Ingress rules with their converted HTTPRoute, GRPCRoute and TLSRoute rules
 .TP
@@ -105,7 +108,7 @@ Run \fBsetura COMMAND \-h\fR for the flags of a command.
 success
 .TP
 .B 1
-the check, gate, lint or migrate check failed or found differences
+the check, gate, lint, replay or migrate check failed or found differences
 .TP
 .B 2
 usage or input error
