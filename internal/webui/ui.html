@@ -721,7 +721,8 @@ function renderMap(){
   }
   var entries=[],bk={},seenL={};
   (S.gateways||[]).forEach(function(g){(g.listeners||[]).forEach(function(l){entries.push({g:g,l:l,key:g.name+'#'+l.name})})});
-  vis.forEach(function(r){(r.rules||[]).forEach(function(u){(u.backends||[]).forEach(function(b){var k=b.namespace+'/'+b.name;(bk[k]=bk[k]||{name:b.name,ns:b.namespace,reqs:0,has:false,ports:{}});if(b.requests!=null){bk[k].reqs+=b.requests;bk[k].has=true}bk[k].ports[b.port]=1})})});
+  // Backend requests are per backend+port totals, repeated on every rule that references the backend: count each port once.
+  vis.forEach(function(r){(r.rules||[]).forEach(function(u){(u.backends||[]).forEach(function(b){var k=b.namespace+'/'+b.name;(bk[k]=bk[k]||{name:b.name,ns:b.namespace,reqs:0,has:false,ports:{}});if(b.requests!=null){(bk[k].pp=bk[k].pp||{})[b.port]=b.requests;bk[k].reqs=Object.keys(bk[k].pp).reduce(function(a,p){return a+bk[k].pp[p]},0);bk[k].has=true};bk[k].ports[b.port]=1})})});
   var map=h('div',{class:'map',id:'mapbox'});
   var svg=sv('svg',{'aria-hidden':'true'});map.appendChild(svg);
   var c1=h('ul',{class:'col side','aria-label':'Entry points'},h('li',{class:'col-h',text:'Entry points'}));
