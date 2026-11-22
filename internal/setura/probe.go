@@ -127,6 +127,13 @@ type ProbeOptions struct {
 	Headers      map[string]string
 	BodyContains string
 	MaxMS        float64 // total latency budget in milliseconds; 0 disables
+
+	// Optional TLS client authentication and policy (see mtls.go).
+	Cert, Key      string
+	ServerName     string
+	MinTLS         string
+	WarnExpiryDays int
+	MinCertDays    int
 }
 
 // NewProbe returns options with the default expected status (200) and timeout (4s).
@@ -189,6 +196,9 @@ func Probe(o ProbeOptions) (*Report, error) {
 	if o.Address != "" && net.ParseIP(o.Address) == nil {
 		return nil, userErrorf("%s does not appear to be an IPv4 or IPv6 address", pyRepr(o.Address))
 	}
+	if err := o.tlsOpts().validate(); err != nil {
+		return nil, err
+	}
 	timeout := time.Duration(o.Timeout * float64(time.Second))
 
 	r := &Report{URL: o.URL, Steps: map[string]*Step{}}
@@ -214,7 +224,14 @@ func Probe(o ProbeOptions) (*Report, error) {
 			conn.Close()
 		}
 	}()
+	var mst *mtlsState
 	fail := func(err error) {
+		if reason, ok := clientCertFailure(err, mst); ok {
+			r.Steps["tls"].Set("state", "failed")
+			r.Steps["tls"].Set("reason", reason)
+			r.Steps["tls"].Set("client_cert", "rejected")
+			return
+		}
 		step := r.Steps[stage]
 		step.Set("state", "failed")
 		step.Set("reason", err.Error())
@@ -273,13 +290,21 @@ func Probe(o ProbeOptions) (*Report, error) {
 				}
 				cfg.RootCAs = pool
 			}
+			var err error
+			if mst, err = o.tlsOpts().configure(cfg); err != nil {
+				return err
+			}
 			tc := tls.Client(conn, cfg)
 			conn = tc
 			_ = tc.SetDeadline(time.Now().Add(timeout))
 			if err := tc.Handshake(); err != nil {
 				return err
 			}
-			r.Steps[stage] = &Step{{"state", "ok"}, {"version", tlsNames[tc.ConnectionState().Version]}}
+			step, reason := o.tlsOpts().tlsStep(tc.ConnectionState(), mst)
+			r.Steps[stage] = step
+			if reason != "" {
+				return fmt.Errorf("%s", reason)
+			}
 		}
 
 		stage = "http"
