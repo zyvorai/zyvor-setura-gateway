@@ -100,6 +100,9 @@ print a shell completion script
 .B echo \-\-name NAME
 run a tiny identity backend that answers with X\-Setura\-Backend
 .TP
+.B licence verify [KEY|\-\-file F] | show
+verify a signed ZYV1 licence key offline (exit 0 valid, 1 invalid)
+.TP
 .B man
 print the manual page (roff)
 .TP
@@ -127,5 +130,7 @@ the check, gate, lint, replay or migrate check failed or found differences, or w
 usage or input error
 .SH GATEWAY ROLLOUT
 \fBsetura gateway rollout\fR lints a candidate snapshot, backs up the live file in \fI.setura\-history\fR, replaces it atomically, waits for the admin /status generation, runs a checks file for an observation window and restores the backup on any failure. The window is judged on the probes and on the gateway's own /stats and /metrics deltas (\fB\-\-max\-error\-rate\fR and \fB\-\-max\-p95\fR apply to both). A candidate that changes canary weights is applied in stages 10,50,100 unless \fB\-\-steps\fR or \fB\-\-no\-steps\fR is given. A rollout lock left by a killed rollout (dead process on this host, or a heartbeat older than \fB\-\-lock\-timeout\fR) is taken over; a live owner never is. Relative certificate paths resolve against the candidate's directory. \fBsetura gateway history\fR lists the backups and \fBsetura gateway rollback\fR restores one.
+.SH LICENCE
+\fBsetura licence verify\fR [KEY | \fB\-\-file\fR F] checks a signed ZYV1 licence key offline against the public keys embedded in the binary and prints the tier, cluster limit, expiry, licensee and status (valid, expired, bad signature, wrong product). \fBsetura licence show\fR checks the key in SETURA_LICENCE_KEY or the file named by SETURA_LICENCE_FILE (default: setura/licence.key in the user config directory). It exits 0 for a valid key, 1 for an invalid one and 2 on a usage error. Setura works without a key; \fBsetura version \-\-verbose\fR only reports the status and never blocks a command.
 .SH SEE ALSO
 https://github.com/zyvorai/zyvor\-setura\-gateway
