@@ -8,6 +8,7 @@ permissions:
 jobs:
   host:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -15,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
       - run: make vet
       - run: make test
       - run: make build && bin/setura version
@@ -25,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
       - run: make build
       - name: Start a disposable K3s cluster
         run: |
@@ -42,7 +43,7 @@ jobs:
       - name: Run a probe from inside K3s
         run: |
           docker build -t setura:local .
-          docker save setura:local | docker exec -i setura-k3s k3s ctr images import -
+          docker save setura:local | docker exec -i setura-k3s ctr -n k8s.io images import -
           kubectl apply -f examples/cluster-check.yaml
           kubectl -n setura-demo create job setura-ci-check --from=cronjob/setura-internal-checks
           kubectl -n setura-demo wait job/setura-ci-check --for=condition=complete --timeout=150s

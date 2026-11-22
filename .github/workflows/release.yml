@@ -13,7 +13,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
       - run: make test
       - run: make dist VERSION=${GITHUB_REF_NAME#v}
       - name: Publish release
