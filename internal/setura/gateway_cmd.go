@@ -31,6 +31,6 @@ func init() {
 		if err := json.Unmarshal(in.Snapshot, &snap); err != nil {
 			return nil, err
 		}
-		return BuildUIState(snap, UIInput{Mode: "gateway", Source: "built-in gateway", Stats: in.Stats, Reload: in.Reload})
+		return BuildUIState(snap, UIInput{Mode: "gateway", Source: "built-in gateway", Stats: in.Stats, Reload: in.Reload, Connections: in.Connections})
 	}
 }

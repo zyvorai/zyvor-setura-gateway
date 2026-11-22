@@ -55,7 +55,7 @@ func TestAccessLogJSONFields(t *testing.T) {
 			t.Errorf("missing %q in %v", k, l)
 		}
 	}
-	if l["path"] != "/ok?q=1" || l["status"].(float64) != 200 || l["request_id"] != r.Header.Get("X-Request-Id") {
+	if l["path"] != "/ok" || l["status"].(float64) != 200 || l["request_id"] != r.Header.Get("X-Request-Id") {
 		t.Errorf("line %v", l)
 	}
 	if !reHex32.MatchString(l["trace_id"].(string)) {

@@ -150,6 +150,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "gateway":
 		return runGateway(rest, stdout, stderr), nil
 
+	case "connections":
+		return runConnections(fs, rest, stdout, stderr, u, stdoutTTY)
+
 	case "ui":
 		return uiCommand(cluster, rest, stdout, stderr)
 

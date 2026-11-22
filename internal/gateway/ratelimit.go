@@ -201,7 +201,7 @@ func (s *Server) rateLimited(w http.ResponseWriter, r *http.Request, st *reqStat
 	if secs < 1 {
 		secs = 1
 	}
-	st.errMsg = "rate limited"
+	st.errMsg, st.rateLimited = "rate limited", true
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	plain(w, http.StatusTooManyRequests, "rate limit exceeded")
 	return true
