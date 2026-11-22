@@ -3,6 +3,7 @@ package setura
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,8 +18,15 @@ import (
 // indicators, anchors, aliases and merge keys (<<), tags, comments, directives
 // and multi-document streams. Tags are honoured for !!str, !!int, !!float,
 // !!bool and !!null and ignored otherwise. Numbers decode to float64 and null
-// to nil, like encoding/json. Not supported: complex keys ("? ") and keys that
-// span lines.
+// to nil, like encoding/json.
+//
+// Unquoted scalars follow what Kubernetes tooling (sigs.k8s.io/yaml on go-yaml
+// v2) does, which is YAML 1.1: y/yes/on and n/no/off (usual spellings) are
+// booleans; 0x1F, 0b101, 0o17, 0755 (octal) and 1_000 are integers; .inf,
+// -.inf and .nan are floats. Quoted scalars are always strings and mapping keys
+// always keep their text. Explicit keys ("? key", possibly spanning lines or
+// being collections) are supported; a collection key is stored under its
+// compact JSON text.
 
 type yline struct {
 	indent    int
@@ -175,7 +183,7 @@ func (p *yparser) block(indent int) any {
 	switch {
 	case isSeqItem(l.text):
 		return p.seq(indent)
-	case keyColon(rest) >= 0:
+	case isExplicitKey(l.text), keyColon(rest) >= 0:
 		return p.mapping(indent)
 	}
 	p.pos++
@@ -191,7 +199,7 @@ func (p *yparser) seq(indent int) any {
 		}
 		rest := strings.TrimLeft(l.text[1:], " ")
 		_, _, bare := splitProps(stripComment(rest))
-		if isSeqItem(bare) || keyColon(bare) >= 0 {
+		if isSeqItem(bare) || isExplicitKey(bare) || keyColon(bare) >= 0 {
 			// Re-read the item as a line indented to where its content starts.
 			// Properties in front of a key belong to the key, so drop them.
 			if bare != strings.TrimSpace(stripComment(rest)) {
@@ -216,6 +224,15 @@ func (p *yparser) mapping(indent int) any {
 		if l.indent != indent || isSeqItem(l.text) {
 			break
 		}
+		if isExplicitKey(l.text) {
+			k, v := p.explicitEntry(indent)
+			if k == "<<" {
+				merges = append(merges, v)
+			} else {
+				out[k] = v
+			}
+			continue
+		}
 		text := stripComment(l.text)
 		_, _, ktext := splitProps(text)
 		i := keyColon(ktext)
@@ -234,6 +251,55 @@ func (p *yparser) mapping(indent int) any {
 	}
 	mergeInto(out, merges)
 	return out
+}
+
+// isExplicitKey reports whether a line starts a "? key" entry.
+func isExplicitKey(t string) bool { return t == "?" || strings.HasPrefix(t, "? ") }
+
+// isValueMarker reports whether a line starts the ": value" of an explicit key.
+func isValueMarker(t string) bool { return t == ":" || strings.HasPrefix(t, ": ") }
+
+// nested reads the node that begins right after a "?" or ":" indicator of a
+// mapping at the given indent; text is what follows the indicator on its line.
+// A block collection that starts on that line is re-read as a line indented to
+// where its content begins.
+func (p *yparser) nested(indent int, l yline, text string, allowSeq bool) any {
+	_, _, bare := splitProps(stripComment(text))
+	if isSeqItem(bare) || isExplicitKey(bare) || keyColon(bare) >= 0 {
+		off := len(l.text) - len(text)
+		p.lines[p.pos] = yline{indent: indent + off, text: text, raw: l.raw, parent: indent, hasParent: true}
+		return p.block(indent + off)
+	}
+	p.pos++
+	return p.value(indent, text, allowSeq)
+}
+
+// explicitEntry reads "? key" and its optional ": value" at the current line.
+func (p *yparser) explicitEntry(indent int) (string, any) {
+	l := p.lines[p.pos]
+	text := strings.TrimLeft(l.text[1:], " ")
+	_, _, bare := splitProps(stripComment(text))
+	var key string
+	switch {
+	case bare == "":
+		p.pos++
+		key = keyText(p.value(indent, text, false), "", false)
+	case isSeqItem(bare) || isExplicitKey(bare) || keyColon(bare) >= 0 ||
+		strings.ContainsRune("[{\"'|>*", rune(bare[0])):
+		key = keyText(p.nested(indent, l, text, false), "", false)
+	default:
+		// A plain scalar key, possibly folded over several lines: keep its text.
+		p.pos++
+		key = p.plain(indent, bare)
+	}
+	var v any
+	if p.skip() {
+		n := p.lines[p.pos]
+		if n.indent == indent && isValueMarker(n.text) {
+			v = p.nested(indent, n, strings.TrimLeft(n.text[1:], " "), true)
+		}
+	}
+	return key, v
 }
 
 // mergeInto applies YAML merge keys: explicit keys win, then earlier merges.
@@ -579,23 +645,86 @@ func scalarString(s string) (out string) {
 	return out
 }
 
-var yamlNumber = regexp.MustCompile(`^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$`)
+var (
+	yamlNumber = regexp.MustCompile(`^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$`)
+	yamlInt    = regexp.MustCompile(`^[-+]?(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0o[0-7_]+|[0-9][0-9_]*)$`)
+	yamlUScore = regexp.MustCompile(`^[-+]?([0-9][0-9_]*\.?[0-9_]*|\.[0-9][0-9_]*)([eE][-+]?[0-9]+)?$`)
+)
+
+// yaml11Bool reports the YAML 1.1 boolean an unquoted scalar spells.
+func yaml11Bool(s string) (val, ok bool) {
+	switch s {
+	case "true", "True", "TRUE", "y", "Y", "yes", "Yes", "YES", "on", "On", "ON":
+		return true, true
+	case "false", "False", "FALSE", "n", "N", "no", "No", "NO", "off", "Off", "OFF":
+		return false, true
+	}
+	return false, false
+}
+
+// yaml11Number parses the numeric forms of YAML 1.1 that go-yaml v2 accepts.
+func yaml11Number(s string) (float64, bool) {
+	switch s {
+	case ".inf", ".Inf", ".INF", "+.inf", "+.Inf", "+.INF":
+		return math.Inf(1), true
+	case "-.inf", "-.Inf", "-.INF":
+		return math.Inf(-1), true
+	case ".nan", ".NaN", ".NAN":
+		return math.NaN(), true
+	}
+	if yamlInt.MatchString(s) {
+		clean := strings.ReplaceAll(s, "_", "")
+		if n, err := strconv.ParseInt(clean, 0, 64); err == nil {
+			return float64(n), true
+		}
+		if n, err := strconv.ParseUint(clean, 0, 64); err == nil {
+			return float64(n), true
+		}
+	}
+	if yamlNumber.MatchString(s) || strings.Contains(s, "_") && yamlUScore.MatchString(s) {
+		if n, err := strconv.ParseFloat(strings.ReplaceAll(s, "_", ""), 64); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
 
 func plainScalar(s string) any {
 	switch s {
 	case "", "~", "null", "Null", "NULL":
 		return nil
-	case "true", "True", "TRUE":
-		return true
-	case "false", "False", "FALSE":
-		return false
 	}
-	if yamlNumber.MatchString(s) {
-		if n, err := strconv.ParseFloat(s, 64); err == nil {
-			return n
-		}
+	if b, ok := yaml11Bool(s); ok {
+		return b
+	}
+	if n, ok := yaml11Number(s); ok {
+		return n
 	}
 	return s
+}
+
+// keyText is the string a mapping key is stored under: the source text of a
+// scalar (so an unquoted on, 0x10 or 1.0 stays as written), the compact JSON
+// of a collection.
+func keyText(v any, raw string, hasRaw bool) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
+		if hasRaw {
+			return raw
+		}
+		return ""
+	case float64, bool:
+		if hasRaw {
+			return raw
+		}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
 }
 
 // applyTag honours the core YAML tags that change a scalar's type. raw is the
@@ -622,18 +751,15 @@ func applyTag(tag string, v any, raw string, hasRaw bool) any {
 			return fmt.Sprint(x)
 		}
 	case "!!int", "!!float":
-		if n, err := strconv.ParseInt(text(), 0, 64); err == nil {
-			return float64(n)
+		if n, ok := yaml11Number(text()); ok {
+			return n
 		}
 		if n, err := strconv.ParseFloat(text(), 64); err == nil {
 			return n
 		}
 	case "!!bool":
-		switch strings.ToLower(text()) {
-		case "true":
-			return true
-		case "false":
-			return false
+		if b, ok := yaml11Bool(text()); ok {
+			return b
 		}
 	case "!!null":
 		return nil
@@ -745,6 +871,12 @@ func (f *flowReader) ws() {
 
 // value reads one flow node, with its anchor and tag properties.
 func (f *flowReader) value() any {
+	v, _, _ := f.valueRaw()
+	return v
+}
+
+// valueRaw is value, also returning a scalar's source text.
+func (f *flowReader) valueRaw() (any, string, bool) {
 	f.ws()
 	var anchor, tag string
 	for f.i < len(f.s) && (f.s[f.i] == '&' || f.s[f.i] == '!') {
@@ -764,7 +896,7 @@ func (f *flowReader) value() any {
 	if anchor != "" && f.anchors != nil {
 		f.anchors[anchor] = v
 	}
-	return v
+	return v, raw, hasRaw
 }
 
 func (f *flowReader) node() (v any, raw string, hasRaw bool) {
@@ -808,7 +940,8 @@ func (f *flowReader) node() (v any, raw string, hasRaw bool) {
 				return out, "", false
 			}
 			before := f.i
-			k := f.value()
+			kv, kraw, khas := f.valueRaw()
+			k := keyText(kv, kraw, khas)
 			f.ws()
 			var v any
 			if f.i < len(f.s) && f.s[f.i] == ':' {
@@ -818,7 +951,7 @@ func (f *flowReader) node() (v any, raw string, hasRaw bool) {
 			if k == "<<" {
 				merges = append(merges, v)
 			} else {
-				out[fmt.Sprint(k)] = v
+				out[k] = v
 			}
 			f.ws()
 			if f.i < len(f.s) && f.s[f.i] == ',' {

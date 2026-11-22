@@ -37,7 +37,7 @@ var commandNames = []string{
 }
 
 // migrateFlags are offered after "setura migrate".
-var migrateFlags = []string{"--ingress", "--routes", "--services", "--ingress-class", "--namespace", "-A", "--ingress-url", "--gateway-url",
+var migrateFlags = []string{"--ingress", "--routes", "--services", "--objects", "--ingress-class", "--namespace", "-A", "--ingress-url", "--gateway-url",
 	"--probe-extra", "--address", "--ingress-address", "--gateway-address", "--ca", "--timeout", "--header", "--format"}
 
 // Completion writes a shell completion script for command names, and for the
