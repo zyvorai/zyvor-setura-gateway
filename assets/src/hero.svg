@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1600 800" width="1600" height="800" role="img" aria-label="Zyvor Setura: know what actually answers. Verify Gateway API routes from the client.">
+  <defs>
+    <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#2997ff" stop-opacity="0.42"/><stop offset="1" stop-color="#2997ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowViolet" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#bf5af2" stop-opacity="0.30"/><stop offset="1" stop-color="#bf5af2" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowTeal" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#66d4cf" stop-opacity="0.18"/><stop offset="1" stop-color="#66d4cf" stop-opacity="0"/></radialGradient>
+    <linearGradient id="headline" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2997ff"/><stop offset="0.55" stop-color="#7d7aff"/><stop offset="1" stop-color="#bf5af2"/></linearGradient>
+    <linearGradient id="logoBg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff5a15"/><stop offset="1" stop-color="#cc420a"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c1c1e"/><stop offset="1" stop-color="#121214"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="30" stdDeviation="30" flood-color="#000" flood-opacity="0.65"/></filter>
+  </defs>
+  <rect x="-200" y="-200" width="2000" height="1200" fill="#000"/>
+  <circle cx="1300" cy="150" r="640" fill="url(#glowBlue)"/>
+  <circle cx="1500" cy="760" r="520" fill="url(#glowViolet)"/>
+  <circle cx="160" cy="820" r="480" fill="url(#glowTeal)"/>
+
+  <g transform="translate(96 92) scale(0.875)">
+    <rect width="64" height="64" rx="15" fill="url(#logoBg)"/>
+    <path d="M18.5,20.5 45.5,20.5 18.5,43.5 45.5,43.5" fill="none" stroke="#fff" stroke-width="8.3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="168" y="134" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#f5f5f7" letter-spacing="0.5">Zyvor Setura</text>
+
+  <text x="96" y="322" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" fill="#f5f5f7" letter-spacing="-2.5">Know what</text>
+  <text x="96" y="420" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" fill="url(#headline)" letter-spacing="-2.5">actually answers.</text>
+  <text x="96" y="508" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">Publish an Envoy Gateway listener and verify</text>
+  <text x="96" y="552" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">every route from the client. One static binary.</text>
+
+  <g transform="translate(96 664)" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="22" fill="#d2d2d7">
+    <rect width="150" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="75" y="30" text-anchor="middle">Go · 1 binary</text>
+    <rect x="166" width="178" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="255" y="30" text-anchor="middle">Gateway API</text>
+    <rect x="360" width="150" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="435" y="30" text-anchor="middle">K3s · Envoy</text>
+  </g>
+
+  <g transform="translate(900 170)" filter="url(#shadow)">
+    <rect width="620" height="430" rx="22" fill="url(#card)" stroke="#3a3a3c"/>
+    <circle cx="34" cy="32" r="8" fill="#ff5f57"/><circle cx="62" cy="32" r="8" fill="#febc2e"/><circle cx="90" cy="32" r="8" fill="#28c840"/>
+    <text x="310" y="39" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" fill="#86868b">setura explain</text>
+    <g font-family="Menlo, Monaco, monospace" font-size="20">
+      <text x="34" y="100" fill="#86868b">$ <tspan fill="#f5f5f7">setura explain https://orders.test</tspan></text>
+      <text x="34" y="130" fill="#f5f5f7">    --backend orders-v1</text>
+      <text x="34" y="190" fill="#f5f5f7">dns      <tspan fill="#30d158">ok</tspan>         <tspan fill="#86868b">addresses=['127.0.0.1']</tspan></text>
+      <text x="34" y="228" fill="#f5f5f7">tcp      <tspan fill="#30d158">ok</tspan>         <tspan fill="#86868b">peer=127.0.0.1</tspan></text>
+      <text x="34" y="266" fill="#f5f5f7">tls      <tspan fill="#30d158">ok</tspan>         <tspan fill="#86868b">version=TLSv1.3</tspan></text>
+      <text x="34" y="304" fill="#f5f5f7">http     <tspan fill="#30d158">ok</tspan>         <tspan fill="#86868b">status=200 expected=200</tspan></text>
+      <text x="34" y="342" fill="#f5f5f7">backend  <tspan fill="#30d158">ok</tspan>         <tspan fill="#86868b">identity=orders-v1</tspan></text>
+      <text x="34" y="400" fill="#86868b"># exit status 0: every stage passed</text>
+    </g>
+  </g>
+</svg>
