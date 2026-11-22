@@ -91,7 +91,7 @@ func (c *CORS) allowOrigin(origin string) (value string, ok, echo bool) {
 	return "", false, false
 }
 
-func joinList(v []string) string { return strings.Join(v, ", ") }
+func commaJoin(v []string) string { return strings.Join(v, ", ") }
 
 func hasStar(v []string) bool {
 	for _, s := range v {
@@ -128,7 +128,7 @@ func (c *CORS) preflightHeaders(in *http.Request) http.Header {
 	case hasStar(c.AllowMethods):
 		h.Set("Access-Control-Allow-Methods", "*")
 	case len(c.AllowMethods) > 0:
-		h.Set("Access-Control-Allow-Methods", joinList(c.AllowMethods))
+		h.Set("Access-Control-Allow-Methods", commaJoin(c.AllowMethods))
 	}
 	switch {
 	case hasStar(c.AllowHeaders) && c.credentials():
@@ -138,7 +138,7 @@ func (c *CORS) preflightHeaders(in *http.Request) http.Header {
 	case hasStar(c.AllowHeaders):
 		h.Set("Access-Control-Allow-Headers", "*")
 	case len(c.AllowHeaders) > 0:
-		h.Set("Access-Control-Allow-Headers", joinList(c.AllowHeaders))
+		h.Set("Access-Control-Allow-Headers", commaJoin(c.AllowHeaders))
 	}
 	age := c.MaxAge
 	if age == 0 {
@@ -162,7 +162,7 @@ func (c *CORS) applyResponse(h http.Header, in *http.Request) {
 		h.Set("Access-Control-Allow-Credentials", "true")
 	}
 	if len(c.ExposeHeaders) > 0 {
-		h.Set("Access-Control-Expose-Headers", joinList(c.ExposeHeaders))
+		h.Set("Access-Control-Expose-Headers", commaJoin(c.ExposeHeaders))
 	}
 }
 
@@ -202,18 +202,18 @@ func (l *RTListener) preflightTarget(r *http.Request, host string) (*Entry, *COR
 }
 
 func describeCORS(c *CORS) string {
-	parts := []string{"origins " + joinList(c.AllowOrigins)}
+	parts := []string{"origins " + commaJoin(c.AllowOrigins)}
 	if c.credentials() {
 		parts = append(parts, "credentials")
 	}
 	if len(c.AllowMethods) > 0 {
-		parts = append(parts, "methods "+joinList(c.AllowMethods))
+		parts = append(parts, "methods "+commaJoin(c.AllowMethods))
 	}
 	if len(c.AllowHeaders) > 0 {
-		parts = append(parts, "headers "+joinList(c.AllowHeaders))
+		parts = append(parts, "headers "+commaJoin(c.AllowHeaders))
 	}
 	if len(c.ExposeHeaders) > 0 {
-		parts = append(parts, "exposes "+joinList(c.ExposeHeaders))
+		parts = append(parts, "exposes "+commaJoin(c.ExposeHeaders))
 	}
 	return "CORS: " + strings.Join(parts, "; ") + "; preflights are answered by the gateway"
 }

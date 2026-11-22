@@ -64,6 +64,7 @@ func (a *httpAdmin) Status(ctx context.Context) (*builtin.StatusDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	adminToken(req)
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err

@@ -26,6 +26,7 @@ spec:
             - --bind=0.0.0.0
             - --port-offset=8000   # 80 -> 8080, 443 -> 8443 without root
             - --admin=0.0.0.0:19000
+            - --admin-open-ready   # kubelet probes read /ready; every other admin path needs the token
             - --leader-elect       # one replica writes status, all serve traffic
 {{- if .Values.exposeGatewayPorts }}
             - --expose-gateway-ports
@@ -35,6 +36,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}
           env:
+            - name: SETURA_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: setura-gateway-admin, key: token}}
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_NAMESPACE

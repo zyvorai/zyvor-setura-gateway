@@ -24,14 +24,14 @@ func set016(t *testing.T, snap obj) []string {
 	}
 	var out []string
 	for _, f := range asList(rep["findings"]) {
-		if m := asMap(f); m["id"] == "SET016" {
+		if m := asMap(f); m["id"] == "SET019" {
 			out = append(out, asStr(m["resource"])+": "+asStr(m["message"]))
 		}
 	}
 	return out
 }
 
-func TestLintSET016(t *testing.T) {
+func TestLintSET019(t *testing.T) {
 	back := []any{obj{"name": "a", "port": 80}}
 	good := obj{"backendRefs": back, "filters": []any{
 		obj{"type": "CORS", "cors": obj{"allowOrigins": []any{"https://app.example.com", "https://*.dev.example.com"}}},

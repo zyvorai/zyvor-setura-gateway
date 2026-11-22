@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -102,6 +104,15 @@ subjects:
     name: setura-gateway
     namespace: NS
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: setura-gateway-admin
+  namespace: NS
+type: Opaque
+stringData:
+  token: ADMINTOK   # generated for this printout: replace it if you keep the YAML around
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
@@ -137,12 +148,15 @@ spec:
             - --bind=0.0.0.0
             - --port-offset=8000   # 80 -> 8080, 443 -> 8443 without root
             - --admin=0.0.0.0:19000
+            - --admin-open-ready   # kubelet probes read /ready; every other admin path needs the token
             - --leader-elect       # one replica writes status, all serve traffic
 EXPOSE_ARG          securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}
           env:
+            - name: SETURA_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: setura-gateway-admin, key: token}}
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_NAMESPACE
@@ -185,6 +199,8 @@ spec:
 	}
 	y = strings.Replace(y, "EXPOSE_RULES", exposeRules, 1)
 	y = strings.Replace(y, "EXPOSE_ARG", exposeArg, 1)
-	r := strings.NewReplacer("NS", o.Namespace, "CLASS", o.ClassName, "IMAGE", o.Image, "REPLICAS", fmt.Sprint(o.Replicas))
+	tok := make([]byte, 24)
+	rand.Read(tok)
+	r := strings.NewReplacer("ADMINTOK", hex.EncodeToString(tok), "NS", o.Namespace, "CLASS", o.ClassName, "IMAGE", o.Image, "REPLICAS", fmt.Sprint(o.Replicas))
 	return r.Replace(y)
 }

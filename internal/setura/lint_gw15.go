@@ -19,7 +19,7 @@ const (
 // gw15Kinds are captured best effort, like GRPCRoutes (the CRDs are optional).
 var gw15Kinds = []string{tcpRoute, udpRoute, listenerSetRes, backendTLSPolicy}
 
-// gw15Rules evaluates SET016: HTTPRoute rules and BackendTLSPolicies that use
+// gw15Rules evaluates SET019: HTTPRoute rules and BackendTLSPolicies that use
 // a Gateway API 1.5 feature the built-in gateway would refuse (a CORS filter
 // with a malformed origin, an ExternalAuth filter without a protocol or
 // backend, invalid session persistence, a backendRequest timeout longer than
@@ -31,7 +31,7 @@ func gw15Rules(specs obj, ns string) []obj {
 		resource, name, _ := strings.Cut(key, "/")
 		var id string
 		add := func(msg string) {
-			findings = append(findings, obj{"id": "SET016", "severity": ruleSeverity("SET016"), "resource": id, "message": msg})
+			findings = append(findings, obj{"id": "SET019", "severity": ruleSeverity("SET019"), "resource": id, "message": msg})
 		}
 		spec := asMap(specs[key])
 		switch resource {

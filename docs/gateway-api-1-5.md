@@ -5,7 +5,7 @@ against the 1.7.0 types): the HTTPRoute CORS and ExternalAuth filters, BackendTL
 backend request timeouts, session persistence, rule names, ListenerSet, static Gateway
 addresses, namespace selector expressions, and TCPRoute and UDPRoute. Everything works from a
 snapshot file and from the Kubernetes source (`--kubernetes`), is shown by `setura why`, and is
-checked by lint rule SET016 where a mistake would make the gateway refuse the route.
+checked by lint rule SET019 where a mistake would make the gateway refuse the route.
 
 A route or policy that the gateway refuses never stops the rest from serving: it gets
 `Accepted=False` with `UnsupportedValue` (or the reasons below) and keeps no traffic.
@@ -160,7 +160,7 @@ A route or policy that the gateway refuses never stops the rest from serving: it
   `shapeResponse` for the headers the gateway adds (CORS, response header modifiers), the same
   preflight routing as the proxy, the backend timeout, session policy, backend TLS and L4
   listeners. `TestUpstreamRequestMatchesProxy` fails when the two diverge.
-* **SET016** (error) reports a rule or BackendTLSPolicy the gateway would refuse: a malformed
+* **SET019** (error) reports a rule or BackendTLSPolicy the gateway would refuse: a malformed
   CORS origin, ExternalAuth without protocol or backendRef, invalid session persistence, a
   `backendRequest` longer than `request`, a policy without hostname or CA source. It calls the
   gateway's own validators.

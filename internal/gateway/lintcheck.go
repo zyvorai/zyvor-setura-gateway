@@ -7,7 +7,7 @@ import (
 
 // CheckRule reports why the built-in gateway would refuse an HTTPRoute rule
 // because of the Gateway API 1.5 features it uses: a CORS or ExternalAuth
-// filter, session persistence or backend timeouts. Lint rule SET016 calls it,
+// filter, session persistence or backend timeouts. Lint rule SET019 calls it,
 // so the linter and the data plane share one definition of "valid".
 func CheckRule(raw []byte) error {
 	var r Rule

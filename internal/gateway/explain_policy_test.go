@@ -110,6 +110,11 @@ func TestUpstreamRequestMatchesProxy(t *testing.T) {
 				if !strings.HasPrefix(sv, "00-0af7651916cd43dd8448eb211c80319c-") || !strings.HasSuffix(sv, "-01") || !strings.HasPrefix(v, "00-0af7651916cd43dd8448eb211c80319c-") {
 					t.Errorf("%s%s: traceparent explain %q proxy %q", c.host, c.target, v, sv)
 				}
+			case "authorization":
+				// explain redacts credentials; the proxy forwards the client's value
+				if v != "<redacted>" || sv != "Bearer ok" {
+					t.Errorf("%s%s: authorization explain %q proxy %q", c.host, c.target, v, sv)
+				}
 			case "x-user":
 				// ExternalAuth: the answer is only known at run time, so explain
 				// shows a placeholder where the proxy sends the service's value.

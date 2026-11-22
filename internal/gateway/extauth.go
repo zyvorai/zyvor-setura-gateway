@@ -88,7 +88,7 @@ func (a *ExternalAuth) responseHeaders() []string {
 func (a *ExternalAuth) describe() string {
 	s := "ask the " + a.Protocol + " authorization service " + a.BackendRef.Name + " before forwarding"
 	if h := a.responseHeaders(); len(h) > 0 {
-		s += "; headers from an allowing answer replace the request's: " + joinList(h)
+		s += "; headers from an allowing answer replace the request's: " + commaJoin(h)
 	}
 	return s
 }

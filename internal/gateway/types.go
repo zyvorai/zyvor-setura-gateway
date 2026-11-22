@@ -40,6 +40,8 @@ type Gateway struct {
 	Addresses         []GatewayAddress
 	AllowedListeners  *RouteNamespaces
 	BackendClientCert *ObjRef
+	// TLS is spec.tls (Gateway API 1.5 frontend TLS validation).
+	TLS *GatewayTLS
 }
 
 // Key is namespace/name.
@@ -133,6 +135,8 @@ type Rule struct {
 		Request        string `json:"request,omitempty"`
 		BackendRequest string `json:"backendRequest,omitempty"`
 	} `json:"timeouts,omitempty"`
+	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth).
+	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -399,22 +403,19 @@ type fileConfig struct {
 type gatewaySpec struct {
 	GatewayClassName string     `json:"gatewayClassName"`
 	Listeners        []Listener `json:"listeners"`
+	// TLS is spec.tls: frontend client certificate validation and the backend client certificate.
+	TLS *GatewayTLS `json:"tls,omitempty"`
 	// Addresses are the static addresses the Gateway asks for (reported in status).
 	Addresses []GatewayAddress `json:"addresses,omitempty"`
 	// AllowedListeners says which ListenerSets may attach (default: none).
 	AllowedListeners *struct {
 		Namespaces *RouteNamespaces `json:"namespaces,omitempty"`
 	} `json:"allowedListeners,omitempty"`
-	TLS *struct {
-		Backend *struct {
-			ClientCertificateRef *ObjRef `json:"clientCertificateRef,omitempty"`
-		} `json:"backend,omitempty"`
-	} `json:"tls,omitempty"`
 }
 
 // gateway builds the Gateway a gatewaySpec describes.
 func (s gatewaySpec) gateway(ns, name string, generation int64) *Gateway {
-	g := &Gateway{NS: ns, Name: name, Generation: generation, ClassName: s.GatewayClassName, Listeners: s.Listeners, Addresses: s.Addresses}
+	g := &Gateway{NS: ns, Name: name, Generation: generation, ClassName: s.GatewayClassName, Listeners: s.Listeners, TLS: s.TLS, Addresses: s.Addresses}
 	if s.AllowedListeners != nil {
 		g.AllowedListeners = s.AllowedListeners.Namespaces
 	}
@@ -472,6 +473,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
 			annotateHTTP(spec.Rules, spec.Annotations)
+			annotateAuth(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

@@ -65,7 +65,7 @@ func httpsBackend(t *testing.T, p *pki, clientCA *x509.CertPool, dnsNames []stri
 	return strings.TrimPrefix(srv.URL, "https://"), func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), seenSubjects...) }
 }
 
-func caPEM(p *pki) string {
+func pkiCAPEM(p *pki) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.ca.Raw}))
 }
 
@@ -91,7 +91,7 @@ func policyConds(s *Server, key string) map[string]Condition {
 func TestBackendTLSPolicyVerifiesBackend(t *testing.T) {
 	p := newPKI(t)
 	addr, _ := httpsBackend(t, p, nil, []string{"secure.internal"}, "spiffe://mesh/ns/a/sa/secure")
-	cas := m{"ca-bundle": m{"pem": caPEM(p)}, "junk": m{"pem": "not a certificate"}}
+	cas := m{"ca-bundle": m{"pem": pkiCAPEM(p)}, "junk": m{"pem": "not a certificate"}}
 	good := policy("secure", m{"hostname": "secure.internal", "caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca-bundle"}}})
 	// Plain host:port endpoints are upgraded to https by the policy.
 	s := startServer(t, btlsSnapshot(t, addr, map[string]m{"p": good}, cas, httpGateway("")), nil)
@@ -117,7 +117,7 @@ func TestBackendTLSPolicyVerifiesBackend(t *testing.T) {
 	}
 	// A different CA: verification fails.
 	other := newPKI(t)
-	s = startServer(t, btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca-bundle": m{"pem": caPEM(other)}}, httpGateway("")), nil)
+	s = startServer(t, btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca-bundle": m{"pem": pkiCAPEM(other)}}, httpGateway("")), nil)
 	if r = get(t, s, "x.test", "/"); r.Status < 500 {
 		t.Errorf("an untrusted certificate must fail, got %d", r.Status)
 	}
@@ -126,7 +126,7 @@ func TestBackendTLSPolicyVerifiesBackend(t *testing.T) {
 func TestBackendTLSPolicySubjectAltNames(t *testing.T) {
 	p := newPKI(t)
 	addr, _ := httpsBackend(t, p, nil, []string{"secure.internal"}, "spiffe://mesh/ns/a/sa/secure")
-	cas := m{"ca": m{"pem": caPEM(p)}}
+	cas := m{"ca": m{"pem": pkiCAPEM(p)}}
 	with := func(sans l) []byte {
 		return btlsSnapshot(t, addr, map[string]m{"p": policy("secure", m{"hostname": "sni-only.test", "subjectAltNames": sans,
 			"caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}})}, cas, httpGateway(""))
@@ -146,7 +146,7 @@ func TestBackendTLSPolicySubjectAltNames(t *testing.T) {
 func TestBackendTLSPolicyInvalid(t *testing.T) {
 	p := newPKI(t)
 	addr, _ := httpsBackend(t, p, nil, []string{"secure.internal"})
-	cas := m{"ca": m{"pem": caPEM(p)}, "junk": m{"pem": "garbage"}}
+	cas := m{"ca": m{"pem": pkiCAPEM(p)}, "junk": m{"pem": "garbage"}}
 	cases := []struct {
 		name     string
 		v        m
@@ -179,7 +179,7 @@ func TestBackendTLSPolicyInvalid(t *testing.T) {
 func TestBackendTLSPolicyConflictAndGeneration(t *testing.T) {
 	p := newPKI(t)
 	addr, _ := httpsBackend(t, p, nil, []string{"secure.internal"})
-	cas := m{"ca": m{"pem": caPEM(p)}}
+	cas := m{"ca": m{"pem": pkiCAPEM(p)}}
 	mk := func(name, created string) m {
 		pol := policy("secure", m{"hostname": "secure.internal", "caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}})
 		pol["metadata"] = m{"creationTimestamp": created}
@@ -216,7 +216,7 @@ func TestBackendTLSMutual(t *testing.T) {
 	good := policy("secure", m{"hostname": "secure.internal", "caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}})
 	gw := httpGateway("")
 	gw["tls"] = m{"backend": m{"clientCertificateRef": m{"name": "client-cert"}}}
-	raw := btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca": m{"pem": caPEM(p)}}, gw)
+	raw := btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca": m{"pem": pkiCAPEM(p)}}, gw)
 	var doc m
 	if err := jsonUnmarshalT(raw, &doc); err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestBackendTLSMutual(t *testing.T) {
 		t.Errorf("gateway ResolvedRefs: %+v", c)
 	}
 	// Without the Gateway's client certificate the backend refuses the handshake.
-	s = startServer(t, btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca": m{"pem": caPEM(p)}}, httpGateway("")), nil)
+	s = startServer(t, btlsSnapshot(t, addr, map[string]m{"p": good}, m{"ca": m{"pem": pkiCAPEM(p)}}, httpGateway("")), nil)
 	if r := get(t, s, "x.test", "/"); r.Status < 500 {
 		t.Errorf("a backend that requires mTLS must refuse a client without a certificate, got %d", r.Status)
 	}

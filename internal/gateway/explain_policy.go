@@ -18,6 +18,7 @@ type ExplainServer struct {
 	RateLimit  RateLimitConfig   // --rate-limit/--rate-burst/--rate-key
 	Resilience ResilienceOptions // retry budget and body limit
 	ShadowDiff int               // --shadow-diff default sample percent
+	AuthClock  func() time.Time  // clock of token validation (the running gateway's)
 
 	limiter *limiter // live limiter of a running gateway (admin endpoint)
 }
@@ -25,7 +26,7 @@ type ExplainServer struct {
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, limiter: s.obs.limiter}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter}
 }
 
 // TraceMirror is one mirror target of the winning rule.
@@ -108,6 +109,7 @@ func (e ExplainServer) describeMirror(m *CMirror) TraceMirror {
 func (tr *Trace) explainPolicy(w *TraceWinner, e *Entry, q ExplainRequest, r *http.Request) {
 	rule := e.Rule
 	srv := q.Server
+	tr.explainAuth(w, e, q, r)
 	if e.GRPC {
 		w.Notes = append(w.Notes, "gRPC calls are not rate limited, retried or mirrored by the built-in gateway")
 	} else {

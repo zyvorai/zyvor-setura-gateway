@@ -145,8 +145,11 @@ type Trace struct {
 	// recorders, filled by the match code when a Trace is attached
 	lrec   []listenerRec
 	chosen *RTListener
-	erec   []entryRec
-	trec   []tlsRec
+	// credHeaders and credQuery name where the winning rule's auth policy reads
+	// credentials, so the echoed request can hide them.
+	credHeaders, credQuery []string
+	erec                   []entryRec
+	trec                   []tlsRec
 }
 
 type listenerRec struct {
@@ -258,6 +261,7 @@ type TraceWinner struct {
 	MirrorTargets []TraceMirror   `json:"mirror_targets,omitempty"`
 	Retry         *TraceRetry     `json:"retry,omitempty"`
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
+	Auth          *TraceAuth      `json:"auth,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 
 	// Gateway API 1.5 additions (explain_ext.go).
@@ -491,6 +495,7 @@ func valueOp(v cvm) string {
 // considered, with a reason for each decision.
 func Explain(t *Table, q ExplainRequest) *Trace {
 	tr := &Trace{Request: q}
+	defer tr.redactRequest()
 	now := q.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -1029,10 +1034,10 @@ func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, ep
 	}
 	u := target + out.URL.EscapedPath()
 	if out.URL.RawQuery != "" {
-		u += "?" + out.URL.RawQuery
+		u += "?" + redactQuery(out.URL.RawQuery)
 	}
 	hdr := map[string]string{}
-	for k, v := range out.Header {
+	for k, v := range redactedHeaders(out.Header) {
 		hdr[k] = strings.Join(v, ",")
 	}
 	return &TraceUpstream{Method: out.Method, URL: u, Host: out.Host, Headers: hdr}

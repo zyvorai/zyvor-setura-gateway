@@ -51,7 +51,7 @@ func TestKubernetesGatewayAPI15(t *testing.T) {
 	api.put("services", "shop", "secure", m{"spec": m{"ports": l{m{"name": "https", "port": 443}}}})
 	api.put("endpointslices", "shop", "secure-a", m{"metadata": m{"labels": m{"kubernetes.io/service-name": "secure"}},
 		"endpoints": l{m{"addresses": l{hostOf(secureAddr)}, "conditions": m{"ready": true}}}, "ports": l{m{"name": "https", "port": portOf(secureAddr)}}})
-	api.configMap("shop", "secure-ca", m{"ca.crt": caPEM(p)})
+	api.configMap("shop", "secure-ca", m{"ca.crt": pkiCAPEM(p)})
 	api.put("backendtlspolicies", "shop", "secure", m{"metadata": m{"generation": 4}, "spec": m{
 		"targetRefs": l{m{"group": "", "kind": "Service", "name": "secure"}},
 		"validation": m{"hostname": "secure.internal", "caCertificateRefs": l{m{"group": "", "kind": "ConfigMap", "name": "secure-ca"}}}},
