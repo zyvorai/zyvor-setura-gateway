@@ -21,13 +21,13 @@
 
   <text x="96" y="322" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" fill="#f5f5f7" letter-spacing="-2.5">Know what</text>
   <text x="96" y="420" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" fill="url(#headline)" letter-spacing="-2.5">actually answers.</text>
-  <text x="96" y="508" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">Publish an Envoy Gateway listener and verify</text>
-  <text x="96" y="552" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">every route from the client. One static binary.</text>
+  <text x="96" y="508" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">A built-in Gateway API gateway and a verifier.</text>
+  <text x="96" y="552" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" fill="#a1a1a6">No Envoy required. One static binary.</text>
 
   <g transform="translate(96 664)" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="22" fill="#d2d2d7">
     <rect width="150" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="75" y="30" text-anchor="middle">Go · 1 binary</text>
     <rect x="166" width="178" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="255" y="30" text-anchor="middle">Gateway API</text>
-    <rect x="360" width="150" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="435" y="30" text-anchor="middle">K3s · Envoy</text>
+    <rect x="360" width="170" height="46" rx="23" fill="#1c1c1e" stroke="#3a3a3c"/><text x="445" y="30" text-anchor="middle">Any gateway</text>
   </g>
 
   <g transform="translate(900 170)" filter="url(#shadow)">

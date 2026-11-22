@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,12 +138,15 @@ func TestUpDemo(t *testing.T) {
 	}()
 	var port string
 	waitFor(t, "demo hint", func() bool {
-		mm := regexp.MustCompile(`setura explain http://orders\.mactra\.test:(\d+)/checkout --address 127\.0\.0\.1 --backend orders-v1`).FindStringSubmatch(out.String())
+		mm := regexp.MustCompile(`setura explain http://orders\.mactra\.test:(\d+)/checkout --address 127\.0\.0\.1`).FindStringSubmatch(out.String())
 		if mm != nil {
 			port = mm[1]
 		}
 		return mm != nil
 	})
+	if strings.Contains(out.String(), "--backend") {
+		t.Errorf("hint asserts a backend although the route is a canary split:\n%s", out.String())
+	}
 	c := client("127.0.0.1:"+port, nil)
 	counts := map[string]int{}
 	for i := 0; i < 300; i++ {

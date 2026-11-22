@@ -278,8 +278,16 @@ func demoHint(s *Server) string {
 		if len(r.Rules[0].Matches) > 0 && r.Rules[0].Matches[0].Path != nil && r.Rules[0].Matches[0].Path.Value != "" {
 			path = r.Rules[0].Matches[0].Path.Value
 		}
-		if len(r.Rules[0].BackendRefs) > 0 {
-			backend = r.Rules[0].BackendRefs[0].Name
+		// Only suggest asserting a backend when exactly one can answer, so the
+		// suggested command always passes (a canary split would fail ~10%).
+		var live []string
+		for _, b := range r.Rules[0].BackendRefs {
+			if b.Weight == nil || *b.Weight > 0 {
+				live = append(live, b.Name)
+			}
+		}
+		if len(live) == 1 {
+			backend = live[0]
 		}
 	}
 	for _, l := range t.Listeners {

@@ -20,6 +20,16 @@ jobs:
       - run: make vet
       - run: make test
       - run: make build && bin/setura version
+      - name: Built-in gateway smoke (no Envoy, no cluster)
+        run: |
+          bin/setura gateway up examples/builtin-demo.json > gateway.log 2>&1 &
+          GW=$!
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:19000/ready >/dev/null && break; sleep 1; done
+          bin/setura explain http://orders.mactra.test:8080/checkout --address 127.0.0.1
+          bin/setura bench http://orders.mactra.test:8080/checkout --address 127.0.0.1 --requests 100 --concurrency 5
+          bin/setura lint --snapshot examples/builtin-demo.json
+          kill $GW || true
+          cat gateway.log
   k3s:
     runs-on: ubuntu-latest
     steps:

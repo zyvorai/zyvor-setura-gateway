@@ -2,6 +2,9 @@
 
 ## 0.5.0
 
+- **Built-in gateway: no Envoy required.** `setura gateway run|up|install` is a Gateway API data plane in pure Go inside the same binary: HTTP/HTTPS listeners, TLS with SNI, weighted routing with the spec's match precedence, header, redirect, rewrite and mirror filters, hot reload, lint-gated config, Gateway API status, an admin API, and an in-cluster controller mode. See `docs/builtin-gateway.md` for what is and is not implemented.
+- **`echo`**: a tiny identity backend. The quickstart and the demo manifest no longer need Python.
+
 - **`watch`**: continuous probing with state-change events, Prometheus `/metrics`, and a JSON-lines history.
 - **`bench`**, **HTTP/2** (`--http2`) and **`grpc-health`**.
 - **mTLS**: client certificates, minimum TLS version, certificate and expiry evidence in the TLS stage, and a `certs` command.

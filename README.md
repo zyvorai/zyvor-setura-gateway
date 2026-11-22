@@ -4,7 +4,7 @@
 
 # Zyvor Setura
 
-**Know what actually answers.** Publish an Envoy Gateway listener and verify every Gateway API route from the client.
+**Know what actually answers.** A built-in Gateway API gateway and a client-side verifier in one Go binary. No Envoy required.
 
 [![CI](https://github.com/zyvorai/zyvor-setura-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyvor-setura-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zyvorai/zyvor-setura-gateway?display_name=tag&sort=semver&color=0071e3&labelColor=1d1d1f)](https://github.com/zyvorai/zyvor-setura-gateway/releases)
@@ -23,9 +23,12 @@
 
 ---
 
-A route can be **Accepted**, **Programmed**, and still send your users to the wrong application. Cluster-side tools tell you what the controller believes. **Setura sends a real request down the client path** and tells you which hop broke, who really answered, and whether it is safe to roll forward.
+A route can be **Accepted**, **Programmed**, and still send your users to the wrong application. Setura closes that gap from both ends:
 
-It is one static Go binary for macOS and Linux. It reads through your existing `kubectl` credentials, changes nothing in the cluster, and the probe itself needs only the Go standard library.
+- **A gateway of its own.** `setura gateway` is a Gateway API data plane written in Go and built into the binary: HTTP and HTTPS listeners, weighted routing, header and path matching, redirects, rewrites, TLS with SNI, hot reload and status reporting. **You do not need Envoy, Envoy Gateway or any other proxy.**
+- **A verifier for any gateway.** Setura sends a real request down the client path and tells you which hop broke, who really answered, and whether it is safe to roll forward. It works against its own gateway, Envoy Gateway, Traefik, or anything that speaks HTTP.
+
+It is one static Go binary for macOS and Linux. It reads through your existing `kubectl` credentials, never changes your cluster unless you ask it to, and uses only the Go standard library.
 
 <div align="center">
 <img src="assets/pipeline.png" alt="Setura checks DNS, TCP, TLS, HTTP and backend identity in order and stops at the first failure." width="100%">
@@ -52,15 +55,31 @@ docker run --rm ghcr.io/zyvorai/zyvor-setura-gateway:latest version
 setura version
 ```
 
-**Try the probe** with no Kubernetes at all. Setura ships a tiny identity backend for exactly this. In one terminal:
+**Run a gateway and verify it in 30 seconds**, with no Kubernetes and no Envoy:
+
+```sh
+setura gateway up examples/builtin-demo.json
+```
+
+```text
+demo backend orders-v1      http://127.0.0.1:19101
+demo backend orders-v2      http://127.0.0.1:19102
+serving setura-demo/dev/web http://orders.mactra.test (listening on 127.0.0.1:8080)
+admin http://127.0.0.1:19000 (/ready /config /stats /status)
+```
+
+The demo is a 90/10 canary. In another terminal:
+
+```sh
+setura explain http://orders.mactra.test:8080/checkout --address 127.0.0.1
+setura bench   http://orders.mactra.test:8080/checkout --address 127.0.0.1 --requests 400 --concurrency 10
+curl -s http://127.0.0.1:19000/stats      # per-route and per-backend counters
+```
+
+**Probe anything.** Setura also ships a tiny identity backend, handy for trying the verifier on its own:
 
 ```sh
 setura echo --name hello --listen 127.0.0.1:9090
-```
-
-In another:
-
-```sh
 setura explain http://localhost:9090/ --backend hello
 ```
 
@@ -77,7 +96,7 @@ setura explain http://localhost:9090/ --backend hello
   ✓ Passed in 2.3 ms
 ```
 
-**Publish a real Gateway.** Use an isolated K3s cluster, or a cluster whose kubeconfig your Mac can reach. Check `kubectl config current-context` first, because the demo fixture creates a namespace and a cluster-scoped GatewayClass.
+**Already run Envoy Gateway?** Setura can publish and verify it too. Use an isolated K3s cluster, or a cluster whose kubeconfig your Mac can reach. Check `kubectl config current-context` first, because the demo fixture creates a namespace and a cluster-scoped GatewayClass.
 
 ```sh
 helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.8.6 \
@@ -105,6 +124,8 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | `publish GATEWAY --listener NAME` | Finds the single matching Envoy Service and runs `kubectl port-forward` on `127.0.0.1`. `--dry-run` prints the exact command. |
 | `explain URL` | One HTTP/1.1 or HTTP/2 GET with per-stage evidence: DNS, TCP, TLS, HTTP, backend, assertions. Flags: `--json`, `--status`, `--backend`, `--address`, `--ca`, `--timeout`, `--header`, `--body-contains`, `--max-ms`, `--http2`, and mTLS (`--cert`, `--key`, `--tls-server-name`, `--min-tls`, `--warn-expiry-days`). |
 | `check FILE` | Runs a JSON file of route assertions. `--junit FILE` writes JUnit XML, `--sarif FILE` writes SARIF, `--format github` emits workflow annotations. Expected `404`s can be positive assertions. |
+| `gateway run\|up\|install` | The built-in Gateway API data plane: `up` runs a one-command local demo, `run --config FILE` serves a config with hot reload, `run --kubernetes` runs as an in-cluster controller, and `install` prints (never applies) the manifests. [Details](docs/builtin-gateway.md) |
+| `echo --name NAME` | A tiny identity backend that answers with `X-Setura-Backend`, for demos and tests. |
 | `watch URL...` | Re-probes on an interval and prints only state changes. `--listen` serves Prometheus `/metrics`, `--history` appends JSON lines. [Details](docs/watch.md) |
 | `bench URL` | Repeated probes with p50/p90/p99 latency, error rate and status histogram, and budget flags that fail the run. |
 | `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
@@ -186,6 +207,29 @@ setura impact Service/apps/orders --snapshot snapshot.json
 
 [Open the live sample map](https://zyvorai.github.io/zyvor-setura-gateway/route-map.html) or read the [map and AI walkthrough](docs/map-ai.md). Impact walks declared references upstream and ignores zero-weight backends.
 
+## A gateway of its own
+
+`setura gateway` serves Gateway API routes directly from the binary. Its config is the same snapshot format the rest of Setura reads, plus a `backends` section mapping Services to upstream addresses, so one file can be linted, mapped, diffed, served and verified.
+
+```sh
+setura gateway run --config gateway.json                 # serve, reload when the file changes
+setura gateway run --config gateway.json --port-map 8080=18080 --bind 0.0.0.0
+setura gateway run --kubernetes                          # in-cluster controller (class zyvor.dev/setura-gateway)
+setura gateway install --namespace setura-system | kubectl apply -f -   # you decide when to apply
+```
+
+| Area | Implemented |
+| --- | --- |
+| Listeners | HTTP and HTTPS, TLS termination with SNI certificate selection, HTTP/2 via ALPN, WebSocket upgrade, wildcard hostnames, `allowedRoutes` |
+| Matching | Path (exact, prefix, regex), headers, query parameters and method, with the spec's precedence rules |
+| Backends | Weighted `backendRefs` (weight 0 is never served), round-robin endpoints, active health checks, request timeouts |
+| Filters | Request and response header modification, redirects, URL rewrite, request mirroring |
+| Errors | 404 for no match, 500 for no valid backend, 502 and 504 for upstream failures; `X-Setura-Backend` always names the backend that answered |
+| Operations | Hot reload with zero dropped connections, lint-gated config (a config with lint errors is refused and the old one keeps serving), JSON access log, admin `/ready`, `/config`, `/stats` and `/status` |
+| Kubernetes | Reads Gateways, HTTPRoutes, Services, EndpointSlices, Secrets and ReferenceGrants with the service account, writes Accepted, ResolvedRefs and Programmed status back |
+
+**Honest limits.** Not implemented: GRPCRoute, TLSRoute, TCPRoute, UDPRoute and TLS passthrough; retries, session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, h2c, rate limiting and authentication. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The Kubernetes mode polls instead of watching, has no leader election, and has only been tested against a fake API server so far. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
+
 ## Watch it, graph it
 
 ```sh
@@ -225,7 +269,7 @@ Setura is complementary to the tools that read cluster state:
 | Tool | Good at | Setura adds |
 | --- | --- | --- |
 | [`gwctl`](https://github.com/kubernetes-sigs/gwctl) | Read-only inspection of Gateway API resources and attached policies | A real request through the listener, and an offline lint |
-| [`egctl`](https://gateway.envoyproxy.io/docs/tasks/operations/egctl/) | Envoy Gateway config translation and status | Controller-neutral client checks and rollout gates |
+| [`egctl`](https://gateway.envoyproxy.io/docs/tasks/operations/egctl/) | Envoy Gateway config translation and status | Controller-neutral client checks and rollout gates, plus a gateway of its own so Envoy is optional |
 | [Gateway API conformance suite](https://gateway-api.sigs.k8s.io/concepts/conformance) | Proving an *implementation* meets the spec | Proving *your routes* behave, on every deploy |
 
 ## Verification

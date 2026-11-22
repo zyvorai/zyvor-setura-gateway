@@ -24,3 +24,11 @@ GitHub Actions run [44995886688](https://github.com/zyvorai/zyvor-setura-gateway
 Also run by hand: the `linux/amd64` release binary (a static ELF) was copied to a Linux x86-64 host and exercised there with `explain` (passing and failing), `lint`, `map` and `completion`.
 
 Not covered: Windows (unsupported), `linux/arm64` and `darwin/amd64` execution (cross-compiled only), GatewayClasses other than Envoy Gateway, and HTTPS listeners against a live cluster.
+
+## Version 0.5.0
+
+Seven feature tracks were added and merged: the built-in gateway, `watch`, `bench`, HTTP/2 and gRPC health, mTLS and `certs`, lint rules `SET010` to `SET014` with SARIF, annotations and baselines, AI providers with redaction, a rewritten terminal UX, and distribution files. The Go suite passes under `go test -race`.
+
+Exercised by hand with a built binary: `gateway up` served the demo config with no Envoy; `explain` passed through it; 400 requests split 367 / 33 across the 90/10 canary; unmatched paths and unknown hosts returned 404; `/status` and `/stats` reported; the config linted clean. `bench`, `watch` (with history), `echo` and the typo suggestion also ran. `explain --json` and piped `check` output keep their documented shapes.
+
+Not covered: the built-in gateway's in-cluster controller mode was only tested against a fake Kubernetes API server, never a real cluster. No load test and no run of the upstream Gateway API conformance suite. The GitHub Action, the pre-commit hook, the install-script "latest" lookup, the Homebrew formula under `brew`, and the container image workflow had not been run when this was written.

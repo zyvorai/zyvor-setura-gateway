@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zyvor Setura: know what actually answers</title>
-<meta name="description" content="Publish an Envoy Gateway listener and verify every Gateway API route from the client. One static binary for macOS and Linux. Lint, probe, gate and map your routes.">
+<meta name="description" content="A built-in Gateway API gateway and a client-side verifier in one Go binary. No Envoy required. Serve, probe, lint, gate and map your routes.">
 <link rel="canonical" href="https://zyvorai.github.io/zyvor-setura-gateway/">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Zyvor Setura: know what actually answers">
-<meta property="og:description" content="Verify Gateway API routes from the client. Probe the real path, lint your specs, gate every rollout.">
+<meta property="og:description" content="A built-in Gateway API gateway and a verifier in one Go binary. No Envoy required.">
 <meta property="og:image" content="https://zyvorai.github.io/zyvor-setura-gateway/og-image.png">
 <meta property="og:url" content="https://zyvorai.github.io/zyvor-setura-gateway/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Zyvor Setura: know what actually answers">
-<meta name="twitter:description" content="Verify Gateway API routes from the client. Probe the real path, lint your specs, gate every rollout.">
+<meta name="twitter:description" content="A built-in Gateway API gateway and a verifier in one Go binary. No Envoy required.">
 <meta name="twitter:image" content="https://zyvorai.github.io/zyvor-setura-gateway/og-image.png">
 <meta name="theme-color" content="#000000">
 <noscript><style>.reveal{opacity:1!important;transform:none!important}</style></noscript>
@@ -153,6 +153,7 @@ footer a{color:var(--ink-2)}footer a:hover{color:var(--ink)}
 <nav>
   <div class="wrap">
     <a class="brand" href="#top"><img src="favicon.svg" alt="">Setura</a>
+    <a class="hide-sm" href="#gateway">Gateway</a>
     <a class="hide-sm" href="#how">How it works</a>
     <a class="hide-sm" href="#features">Features</a>
     <a class="hide-sm" href="#lint">Lint</a>
@@ -167,12 +168,12 @@ footer a{color:var(--ink-2)}footer a:hover{color:var(--ink)}
   <div class="wrap">
     <p class="eyebrow">Zyvor Setura</p>
     <h1>Know what<br><span class="grad">actually answers.</span></h1>
-    <p class="lede">Publish an Envoy Gateway listener and verify every route from the client. Probe the real path, lint your specs, gate every rollout. One static binary.</p>
+    <p class="lede">A Gateway API gateway built into one static binary, and a verifier that checks what really answers. No Envoy required.</p>
     <div class="cta">
       <a class="btn primary" href="#pricing">Buy a license</a>
       <a class="btn ghost" href="https://github.com/zyvorai/zyvor-setura-gateway#quickstart">Try it free for 30 days</a>
     </div>
-    <div class="install"><span class="p">$</span><span>go install github.com/zyvorai/zyvor-setura-gateway/cmd/setura@latest</span></div>
+    <div class="install"><span class="p">$</span><span>setura gateway up examples/builtin-demo.json</span></div>
     <div class="terminal reveal">
       <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
 <pre><span class="dim">$</span> setura explain https://orders.test --backend orders-v1
@@ -185,6 +186,29 @@ assert   unused</pre>
     </div>
   </div>
 </header>
+
+<section class="dark" id="gateway" style="padding-top:20px">
+  <div class="wrap">
+    <p class="kicker">Built in</p>
+    <h2>Your own gateway.<br>No Envoy required.</h2>
+    <p class="sub">Setura serves Gateway API routes straight from the binary: listeners, weighted routing, filters, TLS and hot reload. Point it at a config, or run it in your cluster.</p>
+    <div class="split reveal">
+      <div>
+        <h3>One file. Lint it, serve it, verify it.</h3>
+        <p>The gateway reads the same snapshot format as <span class="inline" style="background:#1c1c1e;color:#f5f5f7">lint</span> and <span class="inline" style="background:#1c1c1e;color:#f5f5f7">map</span>. A config with lint errors is refused and the old one keeps serving, so a bad edit never takes traffic down. Already on Envoy Gateway? Setura verifies that too.</p>
+      </div>
+      <div class="pre"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+<pre><span class="dim">$</span> setura gateway up examples/builtin-demo.json
+demo backend orders-v1  <span class="dim">http://127.0.0.1:19101</span>
+demo backend orders-v2  <span class="dim">http://127.0.0.1:19102</span>
+serving setura-demo/dev/web <span class="dim">:8080</span>
+admin <span class="dim">http://127.0.0.1:19000</span>
+
+<span class="dim">$</span> setura bench http://orders.mactra.test:8080/checkout \
+    --address 127.0.0.1 --requests 400</pre></div>
+    </div>
+  </div>
+</section>
 
 <section id="how">
   <div class="wrap">
@@ -306,7 +330,8 @@ assert   unused</pre>
     <div class="faq">
       <details><summary>Is it open source?</summary><p>The full source is public, under the Zyvor Production License v1.0. That is source-available rather than OSI open source: it is free for evaluation and every non-production use, and production use needs a commercial license.</p></details>
       <details><summary>What counts as production?</summary><p>Using Setura to support live business operations, customers or revenue-generating services. Running it in a lab, a CI pipeline for pre-production, a demo, or for research and education is non-production. The license text is the authority; ask <a href="mailto:sales@zyvor.dev">sales@zyvor.dev</a> if you are unsure.</p></details>
-      <details><summary>Does it change my cluster?</summary><p>No. Every command reads through your existing kubectl credentials. <span class="inline">publish</span> runs a foreground <span class="inline">kubectl port-forward</span> and stops when you press Ctrl-C.</p></details>
+      <details><summary>Do I need Envoy?</summary><p>No. <span class="inline">setura gateway</span> is a Gateway API data plane built into the binary. It does not yet cover everything Envoy does (no GRPCRoute, retries or rate limiting), so if you need those today, run Envoy Gateway and let Setura verify it.</p></details>
+      <details><summary>Does it change my cluster?</summary><p>Not unless you ask. Every command reads through your existing kubectl credentials. <span class="inline">publish</span> runs a foreground <span class="inline">kubectl port-forward</span> and stops when you press Ctrl-C.</p></details>
       <details><summary>How is it different from gwctl or egctl?</summary><p>Those tools inspect and translate cluster resources. Setura is complementary: it sends a real request through the listener and checks what answered, then lints the specs offline. Use them together.</p></details>
       <details><summary>Where does the AI run?</summary><p>Only against a local Ollama model on 127.0.0.1, and only if you pass <span class="inline">--model</span>. Without it, Setura just summarizes the evidence.</p></details>
     </div>
