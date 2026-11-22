@@ -244,6 +244,11 @@ func (a *accessLogger) close() {
 // FlushAccessLog waits (up to a few seconds) until every queued line has
 // been handed to the writer. Intended for tests and shutdown paths.
 func (s *Server) FlushAccessLog() {
+	// A handler queues its log line after the response is written, so a caller
+	// that just read a response must also wait for requests still in the handler.
+	for deadline := time.Now().Add(time.Second); s.inflight.Load() > 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	if a := s.obs.access; a != nil {
 		for deadline := time.Now().Add(5 * time.Second); a.pending.Load() > 0 && time.Now().Before(deadline); {
 			time.Sleep(time.Millisecond)

@@ -65,11 +65,12 @@ type boundPort struct {
 
 // Server is the built-in gateway data plane.
 type Server struct {
-	opts  Options
-	table atomic.Pointer[Table]
-	stats *Stats
-	obs   *obs
-	conns *connTable // nil when connection history is disabled
+	opts     Options
+	table    atomic.Pointer[Table]
+	stats    *Stats
+	obs      *obs
+	conns    *connTable   // nil when connection history is disabled
+	inflight atomic.Int64 // requests inside the data-plane handler, until their log line is queued
 
 	mu       sync.Mutex
 	ports    map[int]*boundPort
@@ -170,7 +171,11 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		return nil
 	}
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.serveHTTP(w, r, spec) })}
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.inflight.Add(1)
+			defer s.inflight.Add(-1)
+			s.serveHTTP(w, r, spec)
+		})}
 	enableH2C(srv, pg.TLS)
 	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
 	s.ports[spec] = bp
