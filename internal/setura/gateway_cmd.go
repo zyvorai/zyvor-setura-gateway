@@ -21,6 +21,12 @@ func gatewayLint(raw []byte) (bool, string) {
 }
 
 func runGateway(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "rollout", "history", "rollback":
+			return runRolloutCommand(args[0], args[1:], stdout, stderr)
+		}
+	}
 	builtin.DefaultImage = "ghcr.io/zyvorai/zyvor-setura-gateway:" + Version
 	return builtin.Main(args, stdout, stderr, gatewayLint)
 }
