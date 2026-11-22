@@ -28,6 +28,7 @@ Commands:
   snapshot / diff BEFORE AFTER      capture and compare Gateway and HTTPRoute specs
   map / impact TARGET               render or query the declared route topology
   lint                              statically analyze Gateway and HTTPRoute specs (offline)
+  gateway run|up|install            built-in Gateway API data plane (no Envoy needed)
   completion bash|zsh|fish          print a shell completion script
   ai REPORT [--model NAME]          explain saved evidence, optionally with local Ollama
   doctor / capabilities / exposure  check permissions, controllers and Service exposure
@@ -139,6 +140,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "version":
 		fmt.Fprintln(stdout, "setura", Version)
 		return 0, nil
+
+	case "gateway":
+		return runGateway(rest, stdout, stderr), nil
 
 	case "publish":
 		listener := fs.String("listener", "", "listener name (required)")

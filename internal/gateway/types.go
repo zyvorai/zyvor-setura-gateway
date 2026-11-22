@@ -1,0 +1,456 @@
+// Package gateway is Setura's built-in Gateway API data plane: an HTTP/HTTPS
+// reverse proxy that serves Gateway and HTTPRoute specs using only the Go
+// standard library. It never imports the rest of Setura; the CLI injects the
+// linter and passes in the pieces it needs.
+package gateway
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Identifiers shared with the Setura snapshot format.
+const (
+	SnapshotSchema = "setura.route-specs/v1"
+	ControllerName = "zyvor.dev/setura-gateway"
+	APIGroup       = "gateway.networking.k8s.io"
+	gatewayKey     = "gateways." + APIGroup
+	routeKey       = "httproutes." + APIGroup
+	// BackendHeader carries the backend identity (Service name) on responses.
+	BackendHeader = "X-Setura-Backend"
+)
+
+// Gateway is the subset of a Gateway the data plane honours.
+type Gateway struct {
+	NS, Name   string
+	Generation int64
+	ClassName  string
+	Listeners  []Listener
+}
+
+// Key is namespace/name.
+func (g *Gateway) Key() string { return g.NS + "/" + g.Name }
+
+// Listener mirrors a Gateway listener.
+type Listener struct {
+	Name          string         `json:"name"`
+	Hostname      string         `json:"hostname,omitempty"`
+	Port          int            `json:"port"`
+	Protocol      string         `json:"protocol"`
+	TLS           *ListenerTLS   `json:"tls,omitempty"`
+	AllowedRoutes *AllowedRoutes `json:"allowedRoutes,omitempty"`
+}
+
+// ListenerTLS is a listener's TLS block.
+type ListenerTLS struct {
+	Mode            string   `json:"mode,omitempty"`
+	CertificateRefs []ObjRef `json:"certificateRefs,omitempty"`
+}
+
+// ObjRef references another object.
+type ObjRef struct {
+	Group     string `json:"group,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// AllowedRoutes limits which routes may attach to a listener.
+type AllowedRoutes struct {
+	Namespaces *RouteNamespaces `json:"namespaces,omitempty"`
+	Kinds      []struct {
+		Group string `json:"group,omitempty"`
+		Kind  string `json:"kind"`
+	} `json:"kinds,omitempty"`
+}
+
+// RouteNamespaces is allowedRoutes.namespaces.
+type RouteNamespaces struct {
+	From     string `json:"from,omitempty"`
+	Selector *struct {
+		MatchLabels      map[string]string `json:"matchLabels,omitempty"`
+		MatchExpressions []json.RawMessage `json:"matchExpressions,omitempty"`
+	} `json:"selector,omitempty"`
+}
+
+// ParentRef attaches a route to a Gateway (and optionally one listener).
+type ParentRef struct {
+	Group       string `json:"group,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace,omitempty"`
+	SectionName string `json:"sectionName,omitempty"`
+	Port        int    `json:"port,omitempty"`
+}
+
+// Route is an HTTPRoute.
+type Route struct {
+	NS, Name   string
+	Generation int64
+	Created    time.Time
+	Parents    []ParentRef
+	Hostnames  []string
+	Rules      []Rule
+}
+
+// Key is namespace/name.
+func (r *Route) Key() string { return r.NS + "/" + r.Name }
+
+// Rule is one HTTPRoute rule.
+type Rule struct {
+	Matches     []Match      `json:"matches,omitempty"`
+	Filters     []Filter     `json:"filters,omitempty"`
+	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
+	Timeouts    *struct {
+		Request        string `json:"request,omitempty"`
+		BackendRequest string `json:"backendRequest,omitempty"`
+	} `json:"timeouts,omitempty"`
+}
+
+// Match is one HTTPRouteMatch.
+type Match struct {
+	Path        *PathMatch   `json:"path,omitempty"`
+	Headers     []ValueMatch `json:"headers,omitempty"`
+	QueryParams []ValueMatch `json:"queryParams,omitempty"`
+	Method      string       `json:"method,omitempty"`
+}
+
+// PathMatch is a path matcher.
+type PathMatch struct {
+	Type  string `json:"type,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+// ValueMatch matches a header or query parameter.
+type ValueMatch struct {
+	Type  string `json:"type,omitempty"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// Filter is an HTTPRoute filter.
+type Filter struct {
+	Type                   string     `json:"type"`
+	RequestHeaderModifier  *HeaderMod `json:"requestHeaderModifier,omitempty"`
+	ResponseHeaderModifier *HeaderMod `json:"responseHeaderModifier,omitempty"`
+	RequestRedirect        *Redirect  `json:"requestRedirect,omitempty"`
+	URLRewrite             *Rewrite   `json:"urlRewrite,omitempty"`
+	RequestMirror          *Mirror    `json:"requestMirror,omitempty"`
+}
+
+// NameValue is a header name and value.
+type NameValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// HeaderMod edits headers.
+type HeaderMod struct {
+	Set    []NameValue `json:"set,omitempty"`
+	Add    []NameValue `json:"add,omitempty"`
+	Remove []string    `json:"remove,omitempty"`
+}
+
+// PathMod rewrites or redirects a path.
+type PathMod struct {
+	Type               string `json:"type"`
+	ReplaceFullPath    string `json:"replaceFullPath,omitempty"`
+	ReplacePrefixMatch string `json:"replacePrefixMatch,omitempty"`
+}
+
+// Redirect is the RequestRedirect filter.
+type Redirect struct {
+	Scheme     string   `json:"scheme,omitempty"`
+	Hostname   string   `json:"hostname,omitempty"`
+	Path       *PathMod `json:"path,omitempty"`
+	Port       int      `json:"port,omitempty"`
+	StatusCode int      `json:"statusCode,omitempty"`
+}
+
+// Rewrite is the URLRewrite filter.
+type Rewrite struct {
+	Hostname string   `json:"hostname,omitempty"`
+	Path     *PathMod `json:"path,omitempty"`
+}
+
+// Mirror is the RequestMirror filter.
+type Mirror struct {
+	BackendRef BackendRef `json:"backendRef"`
+	Percent    *int       `json:"percent,omitempty"`
+}
+
+// BackendRef references a Service.
+type BackendRef struct {
+	Group     string   `json:"group,omitempty"`
+	Kind      string   `json:"kind,omitempty"`
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	Weight    *int     `json:"weight,omitempty"`
+	Filters   []Filter `json:"filters,omitempty"`
+}
+
+// BackendDef maps a Service port to upstream endpoints.
+type BackendDef struct {
+	Endpoints          []string     `json:"endpoints"`
+	Timeout            string       `json:"timeout,omitempty"`
+	HealthCheck        *HealthCheck `json:"healthCheck,omitempty"`
+	InsecureSkipVerify bool         `json:"insecureSkipVerify,omitempty"`
+}
+
+// HealthCheck is an active HTTP health check.
+type HealthCheck struct {
+	Path     string `json:"path"`
+	Interval string `json:"interval,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`
+}
+
+// UnmarshalJSON accepts "host:port", ["host:port", ...] or an object.
+func (b *BackendDef) UnmarshalJSON(raw []byte) error {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		b.Endpoints = []string{one}
+		return nil
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		b.Endpoints = many
+		return nil
+	}
+	type alias BackendDef
+	var a struct {
+		alias
+		URL  string   `json:"url"`
+		URLs []string `json:"urls"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return err
+	}
+	*b = BackendDef(a.alias)
+	if a.URL != "" {
+		b.Endpoints = append(b.Endpoints, a.URL)
+	}
+	b.Endpoints = append(b.Endpoints, a.URLs...)
+	return nil
+}
+
+// SecretDef supplies a TLS key pair, as files or inline PEM. File paths in a
+// config file are resolved relative to that file.
+type SecretDef struct {
+	CertFile string `json:"certFile,omitempty"`
+	KeyFile  string `json:"keyFile,omitempty"`
+	Cert     string `json:"cert,omitempty"`
+	Key      string `json:"key,omitempty"`
+}
+
+func (s SecretDef) load() (tls.Certificate, error) {
+	cert, key := []byte(s.Cert), []byte(s.Key)
+	var err error
+	if s.CertFile != "" {
+		if cert, err = os.ReadFile(s.CertFile); err != nil {
+			return tls.Certificate{}, err
+		}
+	}
+	if s.KeyFile != "" {
+		if key, err = os.ReadFile(s.KeyFile); err != nil {
+			return tls.Certificate{}, err
+		}
+	}
+	if len(cert) == 0 || len(key) == 0 {
+		return tls.Certificate{}, fmt.Errorf("secret has no certificate or key")
+	}
+	pair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		return pair, err
+	}
+	if len(pair.Certificate) > 0 {
+		pair.Leaf, _ = x509.ParseCertificate(pair.Certificate[0])
+	}
+	return pair, nil
+}
+
+// Grant is a ReferenceGrant.
+type Grant struct {
+	Namespace string
+	From      []struct{ Group, Kind, Namespace string }
+	To        []struct{ Group, Kind, Name string }
+}
+
+// permits reports whether fromKind in fromNS may reference toKind/name in the
+// grant's namespace.
+func (g Grant) permits(fromKind, fromNS, toGroup, toKind, toNS, name string) bool {
+	if g.Namespace != toNS {
+		return false
+	}
+	okFrom := false
+	for _, f := range g.From {
+		okFrom = okFrom || (f.Kind == fromKind && f.Namespace == fromNS && f.Group == APIGroup)
+	}
+	for _, t := range g.To {
+		if okFrom && t.Kind == toKind && t.Group == toGroup && (t.Name == "" || t.Name == name) {
+			return true
+		}
+	}
+	return false
+}
+
+// Config is everything the data plane needs, whatever its source.
+type Config struct {
+	Namespace  string
+	Gateways   []*Gateway
+	Routes     []*Route
+	Backends   map[string]*BackendDef // namespace/name:port
+	Secrets    map[string]SecretDef   // namespace/name
+	Grants     []Grant
+	Namespaces map[string]map[string]string // namespace -> labels
+	// ClassStatus lets a source learn about GatewayClass handling.
+	Classes []string
+}
+
+type fileConfig struct {
+	Schema          string                     `json:"schema"`
+	Namespace       string                     `json:"namespace"`
+	Resources       map[string]json.RawMessage `json:"resources"`
+	Backends        map[string]BackendDef      `json:"backends"`
+	Secrets         map[string]SecretDef       `json:"secrets"`
+	ReferenceGrants []struct {
+		Metadata struct {
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+		Spec struct {
+			From []struct{ Group, Kind, Namespace string } `json:"from"`
+			To   []struct{ Group, Kind, Name string }      `json:"to"`
+		} `json:"spec"`
+	} `json:"referenceGrants"`
+	Namespaces map[string]struct {
+		Labels map[string]string `json:"labels"`
+	} `json:"namespaces"`
+}
+
+type gatewaySpec struct {
+	GatewayClassName string     `json:"gatewayClassName"`
+	Listeners        []Listener `json:"listeners"`
+}
+
+type routeSpec struct {
+	ParentRefs []ParentRef `json:"parentRefs"`
+	Hostnames  []string    `json:"hostnames"`
+	Rules      []Rule      `json:"rules"`
+}
+
+// ParseConfig reads a Setura snapshot (setura.route-specs/v1) extended with
+// backends and secrets sections. Relative secret paths resolve against dir.
+func ParseConfig(raw []byte, dir string) (*Config, error) {
+	var fc fileConfig
+	if err := json.Unmarshal(raw, &fc); err != nil {
+		return nil, fmt.Errorf("config is not valid JSON: %w", err)
+	}
+	if fc.Schema != SnapshotSchema || fc.Resources == nil {
+		return nil, fmt.Errorf("config must be a %s snapshot with a resources object", SnapshotSchema)
+	}
+	ns := fc.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	cfg := &Config{Namespace: ns, Backends: map[string]*BackendDef{}, Secrets: map[string]SecretDef{}, Namespaces: map[string]map[string]string{}}
+	for _, key := range sortedKeys(fc.Resources) {
+		kind, rest, _ := strings.Cut(key, "/")
+		rns, name := ns, rest
+		if a, b, ok := strings.Cut(rest, "/"); ok {
+			rns, name = a, b
+		}
+		switch kind {
+		case gatewayKey:
+			var spec gatewaySpec
+			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			cfg.Gateways = append(cfg.Gateways, &Gateway{NS: rns, Name: name, ClassName: spec.GatewayClassName, Listeners: spec.Listeners})
+		case routeKey:
+			var spec routeSpec
+			if err := json.Unmarshal(fc.Resources[key], &spec); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+		}
+	}
+	for k, v := range fc.Backends {
+		v := v
+		key := k
+		if !strings.Contains(key, "/") {
+			key = ns + "/" + key
+		}
+		cfg.Backends[key] = &v
+	}
+	abs := func(p string) string {
+		if p == "" || filepath.IsAbs(p) || dir == "" {
+			return p
+		}
+		return filepath.Join(dir, p)
+	}
+	for k, v := range fc.Secrets {
+		key := k
+		if !strings.Contains(key, "/") {
+			key = ns + "/" + key
+		}
+		v.CertFile, v.KeyFile = abs(v.CertFile), abs(v.KeyFile)
+		cfg.Secrets[key] = v
+	}
+	for _, g := range fc.ReferenceGrants {
+		gr := Grant{Namespace: g.Metadata.Namespace}
+		if gr.Namespace == "" {
+			gr.Namespace = ns
+		}
+		gr.From, gr.To = g.Spec.From, g.Spec.To
+		cfg.Grants = append(cfg.Grants, gr)
+	}
+	for k, v := range fc.Namespaces {
+		cfg.Namespaces[k] = v.Labels
+	}
+	return cfg, nil
+}
+
+// backendKey is the lookup key for a Service port.
+func backendKey(ns, name string, port int) string {
+	return fmt.Sprintf("%s/%s:%d", ns, name, port)
+}
+
+// parseEndpoint accepts host:port or an http(s) URL.
+func parseEndpoint(e string) (*url.URL, error) {
+	if !strings.Contains(e, "://") {
+		if _, _, err := net.SplitHostPort(e); err != nil {
+			return nil, fmt.Errorf("endpoint %q: want host:port or http(s) URL", e)
+		}
+		e = "http://" + e
+	}
+	u, err := url.Parse(e)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("endpoint %q: want host:port or http(s) URL", e)
+	}
+	return &url.URL{Scheme: u.Scheme, Host: u.Host}, nil
+}
+
+func parseDur(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(s)
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
