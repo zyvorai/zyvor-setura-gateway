@@ -33,6 +33,7 @@ var helpGroups = []helpGroup{
 		{"certs", "HOST:PORT", "show and verify the presented TLS certificate chain"},
 		{"snapshot", "", "capture Gateway and HTTPRoute specs"},
 		{"map", "", "render the declared route topology"},
+		{"ui", "[--listen ADDR]", "live read-only web dashboard: route map, lint, traffic, feed"},
 		{"impact", "TARGET", "query what a resource change would affect"},
 	}},
 	{"Analyze", []helpEntry{
@@ -71,6 +72,7 @@ var cmdExamples = map[string][]string{
 	"lint":      {"setura lint --snapshot before.json --strict"},
 	"doctor":    {"setura doctor -n demo"},
 	"ai":        {"setura ai report.json --model llama3"},
+	"ui":        {"setura ui --snapshot before.json", "setura ui --kube -n demo --listen 127.0.0.1:9090"},
 }
 
 func writeHelp(w io.Writer, u *ui) {

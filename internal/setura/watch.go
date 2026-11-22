@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/zyvorai/zyvor-setura-gateway/internal/webui"
 )
 
 // minWatchInterval is the shortest interval the CLI accepts.
@@ -43,15 +45,19 @@ type watcher struct {
 	count    int           // stop after this many rounds; 0 means unlimited
 	duration time.Duration // stop after this long; 0 means unlimited
 
-	probe   func(ProbeOptions) (*Report, error)
-	now     func() time.Time
-	newTick func(time.Duration) (<-chan time.Time, func())
-	after   func(time.Duration) <-chan time.Time
-	out     io.Writer
-	history io.Writer
-	metrics *metricsStore
-	OnEvent func(WatchEvent)
-	state   map[string]*targetState
+	probe           func(ProbeOptions) (*Report, error)
+	now             func() time.Time
+	newTick         func(time.Duration) (<-chan time.Time, func())
+	after           func(time.Duration) <-chan time.Time
+	out             io.Writer
+	history         io.Writer
+	metrics         *metricsStore
+	OnEvent         func(WatchEvent)
+	state           map[string]*targetState
+	uiAddr, uiToken string // --ui and --ui-token
+	uiRedact        bool
+	board           *healthBoard // dashboard state, nil unless --ui
+	hub             *webui.Hub   // dashboard live feed, nil unless --ui
 }
 
 func newWatcher(targets []ProbeOptions, interval time.Duration, out io.Writer) *watcher {
@@ -130,8 +136,27 @@ func (w *watcher) observe(r *Report) []WatchEvent {
 	return evs
 }
 
+// publishProbe sends one probe result to the dashboard feed.
+func (w *watcher) publishProbe(r *Report) {
+	ev := webui.Event{Kind: "probe", Level: "ok", Target: r.URL, Text: fmt.Sprintf("ok in %.0f ms", r.ElapsedMS)}
+	if b := backendOf(r); b != "" && r.OK {
+		ev.Text += " via " + b
+	}
+	if !r.OK {
+		stage, reason := failure(r)
+		ev.Level, ev.Text = "warn", "failed at "+stage
+		if reason != "" {
+			ev.Text += ": " + reason
+		}
+	}
+	w.hub.Publish(ev)
+}
+
 func (w *watcher) emit(evs []WatchEvent) {
 	for _, e := range evs {
+		if w.hub != nil && e.Kind == "change" {
+			w.hub.Publish(webui.Event{Kind: "change", Level: "warn", Target: e.Target, Text: e.Text})
+		}
 		if w.OnEvent != nil {
 			w.OnEvent(e)
 		}
@@ -166,6 +191,12 @@ func (w *watcher) round() error {
 		}
 		if w.metrics != nil {
 			w.metrics.Record(r)
+		}
+		if w.board != nil {
+			w.board.Record(r, w.now())
+		}
+		if w.hub != nil {
+			w.publishProbe(r)
 		}
 		if w.history != nil {
 			stage, _ := failure(r)
@@ -315,6 +346,16 @@ func runWatch(w *watcher, ctx context.Context, listen string, allowRemote bool, 
 		defer stop()
 		fmt.Fprintf(stderr, "setura watch: metrics on http://%s/metrics\n", addr)
 	}
+	if w.uiAddr != "" {
+		w.board, w.hub = newHealthBoard(), webui.NewHub(200)
+		h := webui.New(webui.Options{State: watchUIState(w.board, w.uiRedact), Hub: w.hub, Token: w.uiToken})
+		addr, stop, err := webui.Serve(ctx, w.uiAddr, w.uiToken, h)
+		if err != nil {
+			return 0, userError(err.Error())
+		}
+		defer stop()
+		fmt.Fprintf(stderr, "setura watch: dashboard on http://%s/\n", addr)
+	}
 	if historyPath != "" {
 		f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
@@ -340,6 +381,9 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 	duration := fs.Duration("duration", 0, "stop after this long (0 = until interrupted)")
 	listen := fs.String("listen", "", "serve Prometheus metrics on ADDR, for example 127.0.0.1:9464")
 	allowRemote := fs.Bool("allow-remote", false, "allow --listen on a non-loopback address")
+	uiAddr := fs.String("ui", "", "serve the live dashboard on ADDR, for example 127.0.0.1:9090 (read-only)")
+	uiToken := fs.String("ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for --ui, required on non-loopback addresses")
+	uiRedact := fs.Bool("ui-redact", false, "mask hostnames and IPs in the dashboard")
 	history := fs.String("history", "", "append one JSON line per probe to FILE")
 	backend := fs.String("backend", "", "expected X-Setura-Backend response header")
 	ca := fs.String("ca", "", "trusted PEM CA bundle")
@@ -377,6 +421,7 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 	}
 	w := newWatcher(targets, *interval, stdout)
 	w.count, w.duration = *count, *duration
+	w.uiAddr, w.uiToken, w.uiRedact = *uiAddr, *uiToken, *uiRedact
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runWatch(w, ctx, *listen, *allowRemote, *history, stderr)

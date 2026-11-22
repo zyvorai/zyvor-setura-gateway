@@ -1,0 +1,424 @@
+package setura
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// UIStateSchema identifies the document served at /api/state by "setura ui".
+// New top-level sections may be added; the page ignores sections it does not
+// know and hides sections that are absent (health, history, traffic, reload).
+const UIStateSchema = "setura.ui/v1"
+
+// UIInput is everything the dashboard can show besides the declared specs.
+// Every field is optional.
+type UIInput struct {
+	Mode    string // snapshot, cluster, gateway or watch
+	Source  string // human label, for example the snapshot file name
+	Now     time.Time
+	Redact  bool
+	Stats   any // gateway Stats.Snapshot(): per-route and per-backend counters
+	Health  any // {"targets":[{url,ok,stage,backend,ms,since}]}
+	History any // {"points":[...]} filled by a later release
+	Reload  any // {"generation":n,"ok":bool,"time":"...","error":"..."}
+}
+
+// ruleHelp is the plain-language explanation shown for each lint rule.
+var ruleHelp = map[string]struct{ Title, Why, Fix string }{
+	"SET001": {"No gateway serves this route", "The route has no parentRefs, so no Gateway will ever pick it up.", "Add a parentRef that names the Gateway (and listener) that should serve it."},
+	"SET002": {"All traffic is dropped", "Every backend in this rule has weight 0, so matching requests have nowhere to go.", "Give at least one backendRef a weight above 0, or remove the rule."},
+	"SET003": {"Matching requests get an error", "This rule has no backends and no redirect, so matching requests receive a 500.", "Add a backendRef or a RequestRedirect filter to the rule."},
+	"SET004": {"Cross-namespace backend needs permission", "The backend lives in another namespace and that namespace has not granted access.", "Create a ReferenceGrant in the backend's namespace that allows this route to reference it."},
+	"SET005": {"Listener name does not exist", "The parentRef points at a listener (sectionName) the Gateway does not declare.", "Fix the sectionName, or add a listener with that name to the Gateway."},
+	"SET006": {"Hostnames never meet", "The route's hostnames do not overlap the hostname of the listener it attaches to, so it never matches.", "Align the route hostnames with the listener hostname, or attach to a different listener."},
+	"SET007": {"Secure listener has no certificate", "An HTTPS or TLS listener needs tls configuration to serve traffic.", "Add tls.certificateRefs to the listener, or change its protocol to HTTP."},
+	"SET008": {"Two listeners collide", "Two listeners on one Gateway share a name, or the same port, protocol and hostname.", "Give each listener a unique name and a distinct port or hostname."},
+	"SET009": {"Another route shadows this one", "Two routes match the same hostname and path on the same parent, so only one of them is used.", "Make the matches distinct (path, header or hostname), or delete the duplicate."},
+	"SET010": {"gRPC route can never serve", "The GRPCRoute has no parentRefs or no rules.", "Add a parentRef and at least one rule."},
+	"SET011": {"Hostnames never meet", "The route's hostnames do not overlap the hostname of the listener it attaches to.", "Align the route hostnames with the listener hostname."},
+	"SET012": {"Grant permits nothing", "This ReferenceGrant has an empty from or to list.", "Fill in both lists, or delete the grant."},
+	"SET013": {"Listener refuses this route", "The listener's allowedRoutes does not admit this route's namespace or kind.", "Widen allowedRoutes on the listener, or move the route to an allowed namespace."},
+	"SET014": {"Backend weights are invalid", "A weight is negative or too large, or the rule mixes Service and non-Service backends.", "Use weights from 0 up, and keep one kind of backend per rule."},
+}
+
+func routeKindLabel(resource string) string {
+	if resource == grpcRoute {
+		return "GRPCRoute"
+	}
+	return "HTTPRoute"
+}
+
+func matchText(m obj) string {
+	var parts []string
+	if p := asMap(m["path"]); p != nil {
+		v := str(p, "value", "/")
+		switch str(p, "type", "PathPrefix") {
+		case "Exact":
+			parts = append(parts, "path is exactly "+v)
+		case "RegularExpression":
+			parts = append(parts, "path matches regex "+v)
+		default:
+			parts = append(parts, "path starts with "+v)
+		}
+	}
+	if v := asStr(m["method"]); v != "" {
+		parts = append(parts, v)
+	}
+	for _, h := range asList(m["headers"]) {
+		hm := asMap(h)
+		parts = append(parts, fmt.Sprintf("header %s = %s", asStr(hm["name"]), asStr(hm["value"])))
+	}
+	for _, q := range asList(m["queryParams"]) {
+		qm := asMap(q)
+		parts = append(parts, fmt.Sprintf("query %s = %s", asStr(qm["name"]), asStr(qm["value"])))
+	}
+	if len(parts) == 0 {
+		return "every request"
+	}
+	return strings.Join(parts, " · ")
+}
+
+func headerNames(v any) []string {
+	var names []string
+	m := asMap(v)
+	for _, k := range []string{"set", "add"} {
+		for _, h := range asList(m[k]) {
+			names = append(names, asStr(asMap(h)["name"]))
+		}
+	}
+	for _, r := range asList(m["remove"]) {
+		names = append(names, asStr(r))
+	}
+	return names
+}
+
+// filterText describes a filter without ever echoing header values.
+func filterText(f obj) obj {
+	typ := asStr(f["type"])
+	text := typ
+	switch typ {
+	case "RequestHeaderModifier", "ResponseHeaderModifier":
+		key := "requestHeaderModifier"
+		verb := "Changes request headers"
+		if typ == "ResponseHeaderModifier" {
+			key, verb = "responseHeaderModifier", "Changes response headers"
+		}
+		text = verb
+		if n := headerNames(f[key]); len(n) > 0 {
+			text += ": " + strings.Join(n, ", ") + " (values hidden)"
+		}
+	case "RequestRedirect":
+		r := asMap(f["requestRedirect"])
+		code := "302"
+		if c, ok := num(r["statusCode"]); ok {
+			code = fmt.Sprint(int(c))
+		}
+		to := str(r, "hostname", "same host")
+		if p := asMap(r["path"]); p != nil {
+			to += " " + str(p, "replacePrefixMatch", str(p, "replaceFullPath", ""))
+		}
+		text = "Redirects (" + code + ") to " + strings.TrimSpace(to)
+	case "URLRewrite":
+		r := asMap(f["urlRewrite"])
+		var bits []string
+		if h := asStr(r["hostname"]); h != "" {
+			bits = append(bits, "host "+h)
+		}
+		if p := asMap(r["path"]); p != nil {
+			bits = append(bits, "path "+str(p, "replacePrefixMatch", str(p, "replaceFullPath", "")))
+		}
+		text = "Rewrites " + strings.Join(bits, " and ")
+	case "RequestMirror":
+		text = "Mirrors a copy of each request"
+	}
+	return obj{"type": typ, "text": text}
+}
+
+func fnum(v any) float64 { f, _ := num(v); return f }
+
+// counters extracts requests and server errors from a stats counter object.
+func counters(v any) (requests, errors float64) {
+	m := asMap(v)
+	if m == nil {
+		return 0, 0
+	}
+	return fnum(m["requests"]), fnum(asMap(m["status"])["5xx"])
+}
+
+// BuildUIState turns a route snapshot (nil in watch mode) and optional live
+// inputs into the JSON document the dashboard renders. It never includes
+// header values, secrets or endpoints.
+func BuildUIState(snapshot obj, in UIInput) (obj, error) {
+	if in.Now.IsZero() {
+		in.Now = time.Now()
+	}
+	var stats obj
+	if in.Stats != nil {
+		raw, _ := json.Marshal(in.Stats)
+		_ = json.Unmarshal(raw, &stats)
+	}
+	routeStats, backendStats := asMap(stats["routes"]), asMap(stats["backends"])
+
+	ns := ""
+	gateways, routes := []any{}, []any{}
+	findingsBy := map[string][]obj{}
+	var allFindings []obj
+	backendSet := map[string]bool{}
+	listeners := 0
+	if snapshot != nil {
+		report, err := Lint(snapshot)
+		if err != nil {
+			return nil, err
+		}
+		ns = asStr(snapshot["namespace"])
+		for _, f := range asList(report["findings"]) {
+			fm := asMap(f)
+			help := ruleHelp[asStr(fm["id"])]
+			fi := obj{"id": fm["id"], "severity": fm["severity"], "resource": fm["resource"], "message": fm["message"],
+				"title": help.Title, "why": help.Why, "fix": help.Fix}
+			allFindings = append(allFindings, fi)
+			findingsBy[asStr(fm["resource"])] = append(findingsBy[asStr(fm["resource"])], fi)
+		}
+		specs := asMap(snapshot["resources"])
+		for _, key := range sortedKeys(specs) {
+			spec := asMap(specs[key])
+			resource, name, _ := strings.Cut(key, "/")
+			switch resource {
+			case gateway:
+				var ls []any
+				for _, l := range asList(spec["listeners"]) {
+					lm := asMap(l)
+					ls = append(ls, obj{"name": lm["name"], "port": lm["port"], "protocol": lm["protocol"], "hostname": lm["hostname"], "routes": 0})
+				}
+				listeners += len(ls)
+				gateways = append(gateways, obj{"id": "Gateway/" + ns + "/" + name, "name": name, "namespace": ns,
+					"class": spec["gatewayClassName"], "listeners": ls})
+			case route, grpcRoute:
+				kind := routeKindLabel(resource)
+				id := kind + "/" + ns + "/" + name
+				hostnames := []any{}
+				for _, h := range asList(spec["hostnames"]) {
+					hostnames = append(hostnames, h)
+				}
+				var parents []any
+				for _, p := range asList(spec["parentRefs"]) {
+					pm := asMap(p)
+					parents = append(parents, obj{"gateway": pm["name"], "listener": pm["sectionName"]})
+				}
+				var rules []any
+				rt := obj{"id": id, "kind": kind, "name": name, "namespace": ns, "hostnames": hostnames, "parents": parents}
+				var rTotal, rErr float64
+				for i, r := range asList(spec["rules"]) {
+					rule := asMap(r)
+					var matches, filters, backends []any
+					for _, m := range asList(rule["matches"]) {
+						matches = append(matches, matchText(asMap(m)))
+					}
+					if len(matches) == 0 {
+						matches = []any{"every request"}
+					}
+					for _, f := range asList(rule["filters"]) {
+						filters = append(filters, filterText(asMap(f)))
+					}
+					var sum float64
+					type ref struct {
+						m obj
+						w float64
+					}
+					var refs []ref
+					for _, b := range asList(rule["backendRefs"]) {
+						bm := asMap(b)
+						w := 1.0
+						if x, ok := num(bm["weight"]); ok {
+							w = x
+						}
+						if w < 0 {
+							w = 0
+						}
+						sum += w
+						refs = append(refs, ref{bm, w})
+					}
+					for _, r := range refs {
+						bns := str(r.m, "namespace", ns)
+						bkey := fmt.Sprintf("%s/%s:%d", bns, asStr(r.m["name"]), int(fnum(r.m["port"])))
+						backendSet[bns+"/"+asStr(r.m["name"])] = true
+						share := 0.0
+						if sum > 0 {
+							share = r.w / sum
+						}
+						b := obj{"name": r.m["name"], "namespace": bns, "port": r.m["port"], "weight": r.w, "share": share}
+						if c, ok := backendStats[bkey]; ok {
+							req, e := counters(c)
+							b["requests"], b["errors"] = req, e
+						}
+						backends = append(backends, b)
+					}
+					rules = append(rules, obj{"index": i + 1, "matches": matches, "filters": filters, "backends": backends})
+				}
+				rt["rules"] = rules
+				if c, ok := routeStats[ns+"/"+name]; ok {
+					rTotal, rErr = counters(c)
+					rt["traffic"] = obj{"requests": rTotal, "errors": rErr}
+				}
+				fs := findingsBy[id]
+				if fs == nil {
+					fs = []obj{}
+				}
+				rt["findings"] = fs
+				status := "ok"
+				if len(fs) > 0 {
+					status = "attention"
+				}
+				rt["status"] = status
+				routes = append(routes, rt)
+			}
+		}
+		// attach counts to listeners
+		for _, g := range gateways {
+			gm := asMap(g)
+			for _, l := range asList(gm["listeners"]) {
+				lm := asMap(l)
+				n := 0
+				for _, r := range routes {
+					for _, p := range asList(asMap(r)["parents"]) {
+						pm := asMap(p)
+						if pm["gateway"] == gm["name"] && (pm["listener"] == nil || pm["listener"] == lm["name"]) {
+							n++
+							break
+						}
+					}
+				}
+				lm["routes"] = n
+			}
+		}
+	}
+
+	attention := 0
+	for _, r := range routes {
+		if asMap(r)["status"] == "attention" {
+			attention++
+		}
+	}
+	errs, warns := 0, 0
+	for _, f := range allFindings {
+		if f["severity"] == SeverityError {
+			errs++
+		} else {
+			warns++
+		}
+	}
+	failing, targets := 0, 0
+	if h := asMap(in.Health); h != nil {
+		for _, t := range asList(h["targets"]) {
+			targets++
+			if asMap(t)["ok"] == false {
+				failing++
+			}
+		}
+	}
+	status, headline, detail := "ok", "All routes healthy", ""
+	switch {
+	case snapshot == nil && targets == 0:
+		status, headline = "unknown", "Waiting for the first probe"
+	case snapshot == nil && failing == 0:
+		headline = "All targets passing"
+	case snapshot == nil:
+		status, headline = "attention", plural(failing, "target needs", "targets need")+" attention"
+	case len(routes) == 0:
+		status, headline, detail = "unknown", "No routes yet", "Add an HTTPRoute to the snapshot and it will appear here."
+	case attention > 0 || failing > 0:
+		n := attention + failing
+		status, headline = "attention", plural(n, "route needs", "routes need")+" attention"
+		detail = fmt.Sprintf("%d %s, %d %s", errs, pluralWord(errs, "error", "errors"), warns, pluralWord(warns, "warning", "warnings"))
+	}
+	summary := obj{"status": status, "headline": headline, "detail": detail, "gateways": len(gateways), "listeners": listeners,
+		"routes": len(routes), "backends": len(backendSet), "attention": attention, "errors": errs, "warnings": warns}
+
+	state := obj{"schema": UIStateSchema, "generated": in.Now.UTC().Format(time.RFC3339), "mode": in.Mode, "source": in.Source,
+		"namespace": ns, "summary": summary, "gateways": gateways, "routes": routes, "findings": findingList(allFindings),
+		"readOnly": true}
+	if stats != nil {
+		state["traffic"] = obj{"requests": stats["requests"], "unmatched": stats["unmatched"]}
+	}
+	if in.Health != nil {
+		state["health"] = in.Health
+	}
+	if in.History != nil {
+		state["history"] = in.History
+	}
+	if in.Reload != nil {
+		state["reload"] = in.Reload
+	}
+	return scrub(state, in.Redact), nil
+}
+
+func findingList(f []obj) []any {
+	out := make([]any, 0, len(f))
+	for _, x := range f {
+		out = append(out, x)
+	}
+	return out
+}
+
+func pluralWord(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+var secretKey = []string{"secret", "token", "password", "passwd", "authorization", "apikey", "api_key", "privatekey", "private_key", "credential"}
+
+// unmasked keys carry structure or timestamps rather than user data.
+var unmasked = map[string]bool{"schema": true, "generated": true, "time": true, "since": true, "mode": true, "severity": true,
+	"status": true, "kind": true, "headline": true, "detail": true, "title": true, "why": true, "fix": true, "type": true,
+	"level": true, "protocol": true, "stage": true}
+
+// scrub removes keys that look like secrets and, when redact is set, masks
+// hostnames, IPs and namespaces with the same Redactor the AI report uses.
+func scrub(state obj, redact bool) obj {
+	var r *Redactor
+	if redact {
+		r = NewRedactor(ReportNamespaces(state))
+	}
+	var walk func(key string, v any) any
+	walk = func(key string, v any) any {
+		switch t := v.(type) {
+		case map[string]any:
+			out := obj{}
+			for k, x := range t {
+				lk := strings.ToLower(k)
+				drop := false
+				for _, s := range secretKey {
+					if strings.Contains(lk, s) {
+						drop = true
+					}
+				}
+				if !drop {
+					out[k] = walk(k, x)
+				}
+			}
+			return out
+		case []obj:
+			l := make([]any, len(t))
+			for i, x := range t {
+				l[i] = walk(key, x)
+			}
+			return l
+		case []any:
+			l := make([]any, len(t))
+			for i, x := range t {
+				l[i] = walk(key, x)
+			}
+			return l
+		case string:
+			if r != nil && !unmasked[key] {
+				return r.Mask(t, false)
+			}
+		}
+		return v
+	}
+	return asMap(walk("", state))
+}

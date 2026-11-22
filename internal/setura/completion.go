@@ -17,6 +17,7 @@ var commandNames = []string{
 	"snapshot",
 	"diff",
 	"map",
+	"ui",
 	"impact",
 	"lint",
 	"ai",

@@ -24,3 +24,13 @@ func runGateway(args []string, stdout, stderr io.Writer) int {
 	builtin.DefaultImage = "ghcr.io/zyvorai/zyvor-setura-gateway:" + Version
 	return builtin.Main(args, stdout, stderr, gatewayLint)
 }
+
+func init() {
+	builtin.UIStateBuilder = func(in builtin.UIInput) (any, error) {
+		var snap obj
+		if err := json.Unmarshal(in.Snapshot, &snap); err != nil {
+			return nil, err
+		}
+		return BuildUIState(snap, UIInput{Mode: "gateway", Source: "built-in gateway", Stats: in.Stats, Reload: in.Reload})
+	}
+}

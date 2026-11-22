@@ -32,6 +32,9 @@ Flags for run and up:
   --interval DUR        poll interval for config changes (default 1s; 5s with --kubernetes)
   --force               apply configurations that have lint errors
   --access-log FILE|-|off   JSON access log (default "-", stdout)
+  --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
+                        (loopback only unless --ui-token is set)
+  --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
 `
 
 type stringList []string
@@ -45,6 +48,8 @@ type runFlags struct {
 	accessLog  string
 	interval   time.Duration
 	bindFlagFS *flag.FlagSet
+	uiAddr     string
+	uiToken    string
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -55,6 +60,8 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&f.interval, "interval", 0, "config poll interval")
 	fs.BoolVar(&f.opts.Force, "force", false, "apply configurations that have lint errors")
 	fs.StringVar(&f.accessLog, "access-log", "-", "access log file, - for stdout, off to disable")
+	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
+	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
 
 func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, string)) (func(), error) {
@@ -142,7 +149,11 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		} else {
 			src = FileSource{*cfgPath}
 		}
-		if err := New(rf.opts).Run(ctx, src, interval); err != nil {
+		s := New(rf.opts)
+		if err := s.startUIFlag(ctx, &rf, stderr); err != nil {
+			return fail(err)
+		}
+		if err := s.Run(ctx, src, interval); err != nil {
 			return fail(err)
 		}
 		return 0
@@ -162,7 +173,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		defer closeLog()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := Up(ctx, pos[0], rf.opts, rf.interval, stdout, stderr); err != nil {
+		if err := up(ctx, pos[0], rf.opts, rf.interval, stdout, stderr, &rf); err != nil {
 			return fail(err)
 		}
 		return 0
@@ -201,6 +212,18 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 // Up serves a snapshot after starting an in-process demo upstream for every
 // loopback backend endpoint that nothing is already listening on.
 func Up(ctx context.Context, path string, opts Options, interval time.Duration, stdout, stderr io.Writer) error {
+	return up(ctx, path, opts, interval, stdout, stderr, nil)
+}
+
+// startUIFlag starts the dashboard when --ui was given.
+func (s *Server) startUIFlag(ctx context.Context, rf *runFlags, stderr io.Writer) error {
+	if rf == nil || rf.uiAddr == "" {
+		return nil
+	}
+	return s.StartUI(ctx, rf.uiAddr, rf.uiToken, stderr)
+}
+
+func up(ctx context.Context, path string, opts Options, interval time.Duration, stdout, stderr io.Writer, rf *runFlags) error {
 	src := FileSource{path}
 	ld, err := src.Load(ctx)
 	if err != nil {
@@ -237,6 +260,9 @@ func Up(ctx context.Context, path string, opts Options, interval time.Duration, 
 		}
 	}
 	s := New(opts)
+	if err := s.startUIFlag(ctx, rf, stderr); err != nil {
+		return err
+	}
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx, src, interval) }()
 	for deadline := time.Now().Add(10 * time.Second); !s.Ready(); time.Sleep(10 * time.Millisecond) {
