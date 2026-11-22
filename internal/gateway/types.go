@@ -334,6 +334,8 @@ type Config struct {
 	// GRPCRoutes and TLSRoutes are the additional route kinds.
 	GRPCRoutes []*GRPCRoute
 	TLSRoutes  []*TLSRoute
+
+	skipCerts bool // offline replay: do not load listener certificates
 }
 
 type fileConfig struct {

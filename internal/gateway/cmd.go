@@ -23,6 +23,9 @@ Usage:
   setura gateway run --kubernetes [flags]      run as an in-cluster controller and data plane
   setura gateway up FILE [flags]               local demo: start demo backends and serve FILE
   setura gateway install [flags]               print Kubernetes YAML for the controller (never applies)
+  setura gateway rollout --config LIVE --new CANDIDATE --checks CHECKS   guarded rollout with automatic rollback
+  setura gateway history --config LIVE         list config backups
+  setura gateway rollback --config LIVE [--to ID]   restore a backup
 
 Flags for run and up:
   --bind ADDR           listener bind address (default 127.0.0.1)
