@@ -33,6 +33,7 @@ type Options struct {
 	Rand        func(n int) int
 	ConnHistory int               // recent request records kept for /connections (0 = 500, negative disables)
 	Obs         ObsOptions        // access log format, tracing export, rate limiting
+	ShadowDiff  int               // default shadow comparison sample percent (0 = only annotated mirrors compare)
 	Resilience  ResilienceOptions // retries, outlier ejection, default health checks
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
@@ -78,6 +79,7 @@ type Server struct {
 	status   atomic.Pointer[StatusDoc]
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
+	shadow   shadowState
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -400,7 +402,7 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		s.diag("serving %s", l)
 	}
 	if a := s.AdminAddr(); a != "" {
-		s.diag("admin http://%s (/ready /config /stats /status /connections)", a)
+		s.diag("admin http://%s (/ready /config /stats /status /shadow)", a)
 	}
 	write := func() {
 		if sw, ok := src.(StatusWriter); ok {
@@ -489,6 +491,7 @@ func (s *Server) startAdmin() error {
 	}
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) { s.metrics(w, r); s.WriteMetrics(w) })
 	mux.HandleFunc("/connections", s.connectionsHandler)
+	mux.HandleFunc("/shadow", jsonOut(func() any { return s.shadow.Summary() }))
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {
 		if d := s.Status(); d != nil {

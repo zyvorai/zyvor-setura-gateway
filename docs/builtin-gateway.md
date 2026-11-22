@@ -150,6 +150,12 @@ converged cluster sees no writes and drift is repaired on the next poll.
 `setura gateway install` prints the manifests; this tool never applies them. The default
 image is `ghcr.io/zyvorai/zyvor-setura-gateway:VERSION`; override with `--image`.
 
+## Shadow diffing
+
+A `RequestMirror` can compare the mirrored response with the primary one
+without touching what the client sees: see [shadow.md](shadow.md), the
+`--shadow-diff` flag and `setura shadow`.
+
 ## Honest limits
 
 * This is a compact data plane, not a replacement for Envoy at scale. It has had unit,

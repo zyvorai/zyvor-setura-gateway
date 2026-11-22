@@ -64,14 +64,20 @@ statically analyze specs (offline)
 .B diff BEFORE AFTER
 compare two snapshots
 .TP
-.B migrate check [\-\-ingress F] [\-\-routes F] [\-\-services F] [\-\-ingress\-class C]
+.B migrate check [\-\-ingress F] [\-\-routes F] [\-\-services F] [\-\-objects F] [\-\-ingress\-class C]
 compare Ingress rules with their converted HTTPRoute, GRPCRoute and TLSRoute rules
+.TP
+.B replay \-\-log F \-\-before OLD \-\-after NEW
+replay an access log through two gateway configs and report the routing impact
 .TP
 .B ai REPORT [\-\-model NAME]
 explain saved evidence, optionally with local Ollama
 .TP
-.B gateway run|up|install
-built\-in Gateway API data plane, no Envoy needed
+.B gateway run|up|install|rollout|history|rollback
+built\-in Gateway API data plane, no Envoy needed; guarded config rollout
+.TP
+.B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
+compare mirrored responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
 .TP
 .B publish GATEWAY \-\-listener NAME
 forward an Envoy Gateway listener to IPv4 loopback
@@ -108,9 +114,11 @@ Run \fBsetura COMMAND \-h\fR for the flags of a command.
 success
 .TP
 .B 1
-the check, gate, lint or migrate check failed or found differences
+the check, gate, lint, replay or migrate check failed or found differences
 .TP
 .B 2
 usage or input error
+.SH GATEWAY ROLLOUT
+\fBsetura gateway rollout\fR lints a candidate snapshot, backs up the live file in \fI.setura\-history\fR, replaces it atomically, waits for the admin /status generation, runs a checks file for an observation window and restores the backup on any failure. \fBsetura gateway history\fR lists the backups and \fBsetura gateway rollback\fR restores one.
 .SH SEE ALSO
 https://github.com/zyvorai/zyvor\-setura\-gateway

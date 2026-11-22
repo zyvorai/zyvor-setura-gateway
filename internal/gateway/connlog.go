@@ -53,8 +53,6 @@ type attemptRec struct {
 	Health    string  `json:"health,omitempty"`
 }
 
-func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
-
 // attemptTrace gathers httptrace timings for one upstream attempt. Callbacks
 // run on transport goroutines, hence the mutex.
 type attemptTrace struct {

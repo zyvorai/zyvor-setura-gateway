@@ -304,6 +304,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		}
 	}
 
+	sc := s.shadowStart(r, rule.RouteKey, ref.B.Key, mirrors)
+	defer sc.finish()
+
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,
 		FlushInterval: -1,
@@ -333,7 +336,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 				}
 			}
 			injectTrace(pr.Out, st)
-			s.fireMirrors(pr.Out, body, mirrors)
+			s.fireMirrors(pr.Out, body, mirrors, sc)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set(BackendHeader, ref.Name)
@@ -358,11 +361,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			plain(w, code, "upstream error")
 		},
 	}
-	proxy.ServeHTTP(rec, r)
+	proxy.ServeHTTP(sc.wrap(rec), r)
 }
 
 // fireMirrors sends fire-and-forget copies of out to each mirror backend.
-func (s *Server) fireMirrors(out *http.Request, body []byte, mirrors []*CMirror) {
+func (s *Server) fireMirrors(out *http.Request, body []byte, mirrors []*CMirror, sc *shadowReq) {
 	for _, m := range mirrors {
 		if m.Percent <= 0 || (m.Percent < 100 && s.intn(100) >= m.Percent) {
 			continue
@@ -381,6 +384,9 @@ func (s *Server) fireMirrors(out *http.Request, body []byte, mirrors []*CMirror)
 		req.Header.Set("X-Setura-Mirror", "1")
 		req.Host = out.Host
 		client := &http.Client{Transport: s.transport(m.B.Insecure), Timeout: 10 * time.Second}
+		if sc.submit(m, req, client) {
+			continue
+		}
 		s.mirrorWG.Add(1)
 		go func() {
 			defer s.mirrorWG.Done()

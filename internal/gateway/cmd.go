@@ -23,6 +23,9 @@ Usage:
   setura gateway run --kubernetes [flags]      run as an in-cluster controller and data plane
   setura gateway up FILE [flags]               local demo: start demo backends and serve FILE
   setura gateway install [flags]               print Kubernetes YAML for the controller (never applies)
+  setura gateway rollout --config LIVE --new CANDIDATE --checks CHECKS   guarded rollout with automatic rollback
+  setura gateway history --config LIVE         list config backups
+  setura gateway rollback --config LIVE [--to ID]   restore a backup
 
 Flags for run and up:
   --bind ADDR           listener bind address (default 127.0.0.1)
@@ -46,6 +49,8 @@ Flags for run and up:
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
   --log-query           keep query strings in logged and dashboard paths (default: stripped)
   --conn-history N      recent requests kept for /connections and the dashboard (default 500, 0 = off)
+  --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
+                        a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -88,6 +93,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
 	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
 	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
+	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -104,6 +110,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 			}
 			f.opts.PortMap[from] = to
 		}
+	}
+	if f.opts.ShadowDiff < 0 || f.opts.ShadowDiff > 100 {
+		return nil, fmt.Errorf("--shadow-diff %d: want 0-100", f.opts.ShadowDiff)
 	}
 	f.opts.Resilience.OutlierFailures = f.outlier
 	if f.outlier == 0 {
