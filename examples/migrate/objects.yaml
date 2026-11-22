@@ -1,0 +1,44 @@
+# Supporting objects: pass with --objects. Besides Services, they let the check
+# look at endpoints, ReferenceGrants and the default IngressClass.
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: k8s.io/ingress-nginx
+---
+# The named port "http" of Service web (port 8080, targetPort 80) has one
+# endpoint, and it is not ready.
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: web-x7k2p
+  namespace: demo
+  labels:
+    kubernetes.io/service-name: web
+endpoints:
+  - addresses: ["10.0.1.12"]
+    conditions:
+      ready: false
+ports:
+  - name: http
+    port: 80
+---
+# Allows HTTPRoutes of demo to use the Service "metrics" in data. It does not
+# cover the "reports" backend of routes.yaml, so that reference is reported.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: metrics-from-demo
+  namespace: data
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: demo
+  to:
+    - group: ""
+      kind: Service
+      name: metrics
