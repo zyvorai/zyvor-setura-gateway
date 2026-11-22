@@ -31,9 +31,10 @@ type Options struct {
 	AccessLog   io.Writer   // JSON-lines access log, nil to disable
 	Diag        io.Writer   // human diagnostics, nil to discard
 	Rand        func(n int) int
-	ConnHistory int        // recent request records kept for /connections (0 = 500, negative disables)
-	Obs         ObsOptions // access log format, tracing export, rate limiting
-	ShadowDiff  int        // default shadow comparison sample percent (0 = only annotated mirrors compare)
+	ConnHistory int           // recent request records kept for /connections (0 = 500, negative disables)
+	UDPIdle     time.Duration // idle timeout of UDP sessions on UDP listeners (default 30s)
+	Obs         ObsOptions    // access log format, tracing export, rate limiting
+	ShadowDiff  int           // default shadow comparison sample percent (0 = only annotated mirrors compare)
 	// ShadowState is a file the shadow results are snapshotted to every
 	// ShadowStateInterval (default 10s) and reloaded from at start; "" disables.
 	ShadowState         string
@@ -64,10 +65,12 @@ type StatusWriter interface {
 }
 
 type boundPort struct {
-	ln  net.Listener
-	srv *http.Server
-	tls bool
-	raw *rawListener // TLS passthrough listener; srv is nil then
+	ln   net.Listener
+	srv  *http.Server
+	tls  bool
+	raw  *rawListener // TLS passthrough or TCP listener; srv is nil then
+	udp  *udpProxy    // UDP listener; ln and srv are nil then
+	kind string
 }
 
 // Server is the built-in gateway data plane.
@@ -96,6 +99,8 @@ type Server struct {
 	res            *resilience
 	tr, trInsecure *http.Transport
 	grpcTr         grpcTransports
+	btlsTr         sync.Map // BackendTLSPolicy transports by fingerprint
+	l4             l4Stats  // TCP and UDP counters
 	ready          atomic.Bool
 
 	adminLn  net.Listener
@@ -150,6 +155,9 @@ func (s *Server) Addr(specPort int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if bp := s.ports[specPort]; bp != nil {
+		if bp.udp != nil {
+			return bp.udp.pc.LocalAddr().String()
+		}
 		return bp.ln.Addr().String()
 	}
 	return ""
@@ -176,9 +184,22 @@ func (s *Server) Status() *StatusDoc { return s.status.Load() }
 func (s *Server) Stats() *Stats { return s.stats }
 
 func (s *Server) startPort(spec int, pg *PortGroup) error {
-	ln, err := net.Listen("tcp", net.JoinHostPort(s.opts.Bind, strconv.Itoa(s.actualPort(spec))))
+	addr := net.JoinHostPort(s.opts.Bind, strconv.Itoa(s.actualPort(spec)))
+	if pg.L4 == "UDP" {
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return err
+		}
+		s.ports[spec] = &boundPort{udp: s.startUDP(pc, spec), kind: pg.kind()}
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
+	}
+	if pg.L4 == "TCP" {
+		s.ports[spec] = &boundPort{ln: ln, raw: s.startTCP(ln, spec), kind: pg.kind()}
+		return nil
 	}
 	if pg.Passthrough {
 		s.ports[spec] = &boundPort{ln: ln, raw: s.startPassthrough(ln, spec)}
@@ -259,6 +280,7 @@ func (s *Server) Apply(ld *Loaded) error {
 			r.Generation = s.seq
 		}
 	}
+	cfg.stampGenerations(s.seq)
 	if err := s.res.setFile(cfg.Resilience); err != nil {
 		return err
 	}
@@ -272,7 +294,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	sort.Ints(specPorts)
 	for _, p := range specPorts {
 		pg := t.Ports[p]
-		if bp := s.ports[p]; bp != nil && (bp.tls != pg.TLS || (bp.raw != nil) != pg.Passthrough) {
+		if bp := s.ports[p]; bp != nil && (bp.tls != pg.TLS || (bp.raw != nil) != (pg.Passthrough || pg.L4 == "TCP") || (bp.udp != nil) != (pg.L4 == "UDP") || (bp.kind != "" && bp.kind != pg.kind())) {
 			s.closePort(bp)
 			delete(s.ports, p)
 		}
@@ -504,6 +526,7 @@ func (s *Server) Close() {
 	s.mirrorWG.Wait()
 	s.hist.close()
 	s.res.closeTransports()
+	s.closeBackendTLSTransports()
 	s.shadowP.close()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()

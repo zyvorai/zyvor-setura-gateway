@@ -334,6 +334,13 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				timer = time.AfterFunc(pt.PerTry, cancelTry)
 				out = out.WithContext(actx)
 			}
+			if bt := t.rule.BackendTimeout; bt > 0 { // timeouts.backendRequest: headers and body of one attempt
+				var cancelBT context.CancelFunc
+				actx, cancelBT = context.WithTimeout(actx, bt)
+				prev := cancelTry
+				cancelTry = func() { cancelBT(); prev() }
+				out = out.WithContext(actx)
+			}
 			resp, err = t.s.transportFor(t.b, lim).RoundTrip(out)
 			if timer != nil && !timer.Stop() && resp == nil && ctx.Err() == nil {
 				perTryHit = true
@@ -360,7 +367,7 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		// retry decision
 		final := func() (*http.Response, error) {
-			if resp != nil && t.retry != nil && t.retry.PerTry > 0 {
+			if resp != nil && ((t.retry != nil && t.retry.PerTry > 0) || t.rule.BackendTimeout > 0) {
 				resp.Body = &tryBody{ReadCloser: resp.Body, cancel: cancelTry}
 			} else {
 				cancelTry()

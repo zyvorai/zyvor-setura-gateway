@@ -87,7 +87,7 @@ func TestListenerConflictsAndBindFailure(t *testing.T) {
 		m{"name": "web", "protocol": "HTTP", "port": 8080},
 		m{"name": "dup", "protocol": "HTTP", "port": 8080},
 		m{"name": "mixed", "protocol": "HTTPS", "port": 8080, "hostname": "s.test", "tls": m{"certificateRefs": l{m{"name": "c"}}}},
-		m{"name": "tcp", "protocol": "TCP", "port": 9000},
+		m{"name": "tcp", "protocol": "SCTP", "port": 9000},
 		m{"name": "busy", "protocol": "HTTP", "port": 7000},
 	}}
 	s := startServer(t, snap(gw, map[string]m{"r": route("", rule("/", ref("ok", 1)))}, be), func(o *Options) {

@@ -85,6 +85,8 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 			return err
 		}
 		c.TLSRoutes = append(c.TLSRoutes, &TLSRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+	default:
+		return c.parseGatewayAPI15(kind, ns, name, raw)
 	}
 	return nil
 }
@@ -148,7 +150,7 @@ func refWeight(ref BackendRef) int {
 func (t *Table) attachGRPC(r *GRPCRoute) {
 	stub := r.stub()
 	res := &routeResult{Route: stub, Refs: fact{true, "ResolvedRefs", "all references resolved"}}
-	t.routes = append(t.routes, res)
+	t.addRoute(res)
 	crs := make([]*CRule, len(r.Rules))
 	cms := make([][]*CMatch, len(r.Rules))
 	var invalid error

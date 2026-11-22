@@ -34,6 +34,9 @@ type GatewayStatus struct {
 	ObservedGeneration int64            `json:"observedGeneration"`
 	Conditions         []Condition      `json:"conditions"`
 	Listeners          []ListenerStatus `json:"listeners"`
+	// Addresses are the static addresses of spec.addresses; AttachedListenerSets counts admitted ListenerSets.
+	Addresses            []GatewayAddress `json:"addresses,omitempty"`
+	AttachedListenerSets *int             `json:"attachedListenerSets,omitempty"`
 }
 
 // ParentStatus is a route's status for one parentRef.
@@ -65,6 +68,9 @@ type StatusDoc struct {
 	LastReload ReloadInfo                `json:"lastReload"`
 	Gateways   map[string]*GatewayStatus `json:"gateways"`
 	Routes     map[string]*RouteStatus   `json:"routes"`
+	// ListenerSets and Policies are keyed namespace/name (status_ext.go).
+	ListenerSets map[string]*ListenerSetStatus `json:"listenerSets,omitempty"`
+	Policies     map[string]*PolicyStatus      `json:"backendTLSPolicies,omitempty"`
 }
 
 func mkCond(prev []Condition, typ string, f fact, gen int64, now time.Time) Condition {
@@ -100,7 +106,7 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 		doc.Gateways[gw.Key()] = gs
 		allOK, accepted := true, true
 		for _, l := range t.Listeners {
-			if l.GW != gw {
+			if l.GW != gw || l.LS != nil {
 				continue
 			}
 			var oldL []Condition
@@ -177,5 +183,6 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 		}
 		doc.Routes[rr.Route.StatusKey()] = rs
 	}
+	t.extraStatus(doc, now, prev)
 	return doc
 }

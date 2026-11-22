@@ -27,13 +27,20 @@ type Table struct {
 	Listeners []*RTListener
 	Backends  map[string]*Backend
 	routes    []*routeResult
+	// Gateway API 1.5 state (backendtls.go, listenerset.go).
+	policies  []*policyResult
+	policyFor map[string]*policyResult
+	gwCerts   map[string]*gwClientCert
+	sets      []*setResult
+	scope     *routeResult // the route being compiled (backends it uses are recorded on it)
 }
 
 // PortGroup holds the listeners sharing one port.
 type PortGroup struct {
 	Port        int
 	TLS         bool
-	Passthrough bool // raw TCP listener for TLS passthrough (TLSRoute)
+	Passthrough bool   // raw TCP listener for TLS passthrough (TLSRoute)
+	L4          string // "TCP" or "UDP" for plain layer 4 listeners (TCPRoute, UDPRoute)
 	Listeners   []*RTListener
 }
 
@@ -46,7 +53,9 @@ type RTListener struct {
 	Certs      []tls.Certificate
 	Terminate  bool // TLS listener that terminates (mode Terminate) instead of passing through
 	Entries    []*Entry
-	TLSEntries []*TLSEntry // TLSRoute entries (passthrough listeners)
+	TLSEntries []*TLSEntry  // TLSRoute entries (passthrough listeners)
+	L4Entries  []*L4Entry   // TCPRoute and UDPRoute entries
+	LS         *ListenerSet // set when the listener comes from a ListenerSet
 	Attached   int
 	Serving    bool
 	Accepted   fact
@@ -78,6 +87,12 @@ type CRule struct {
 	Retry    *CRetry
 	// GRPCRetry is the retry policy of a GRPCRoute rule.
 	GRPCRetry *CGRPCRetry
+	// Auth resolves the rule's ExternalAuth filters (rule and backendRef level).
+	Auth authTargets
+	// BackendTimeout bounds one request to a backend (timeouts.backendRequest).
+	BackendTimeout time.Duration
+	// Session is the compiled session persistence policy, if any.
+	Session *CSession
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -86,6 +101,7 @@ type CRef struct {
 	B       *Backend
 	Weight  int
 	Filters []Filter
+	Session *CSession // backendRef-level session persistence (Setura extension)
 }
 
 // CMirror is a resolved RequestMirror target.
@@ -119,6 +135,15 @@ type routeResult struct {
 	Route   *Route
 	Parents []*parentResult
 	Refs    fact
+	// Backends are the backends the route resolved (policy ancestors use it).
+	Backends []*Backend
+}
+
+// addRoute registers a route result and makes it the scope backendFor records
+// the backends it resolves on.
+func (t *Table) addRoute(res *routeResult) {
+	t.routes = append(t.routes, res)
+	t.scope = res
 }
 
 // Endpoint is one upstream address.
@@ -135,6 +160,12 @@ type Backend struct {
 	Timeout   time.Duration
 	Health    *HealthCheck
 	Insecure  bool
+	PortName  string
+	// TLS is the BackendTLSPolicy applied to this backend; TLSErr is set when a
+	// policy targets it but cannot be satisfied (connections then fail, 5xx).
+	TLS       *BackendTLS
+	TLSErr    string
+	TLSPolicy string
 	rr        atomic.Uint64
 	hmu       *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
 	CB        *CircuitOptions
@@ -156,7 +187,7 @@ func (b *Backend) pick() *Endpoint {
 }
 
 func newBackend(key, name string, def *BackendDef) (*Backend, error) {
-	b := &Backend{Key: key, Name: name, Health: def.HealthCheck, Insecure: def.InsecureSkipVerify, hmu: new(sync.Mutex)}
+	b := &Backend{Key: key, Name: name, Health: def.HealthCheck, Insecure: def.InsecureSkipVerify, PortName: def.PortName, hmu: new(sync.Mutex)}
 	var err error
 	if def.CircuitBreaker != nil {
 		if err = def.CircuitBreaker.validate(); err != nil {
@@ -259,22 +290,25 @@ func BuildTable(cfg *Config) *Table {
 	gws := append([]*Gateway(nil), cfg.Gateways...)
 	sort.Slice(gws, func(i, j int) bool { return gws[i].Key() < gws[j].Key() })
 
+	t.resolvePolicies()
+	t.resolveListenerSets()
 	portProto := map[int]string{}
 	hostSeen := map[string]string{}
 	for _, gw := range gws {
 		names := map[string]bool{}
-		for _, spec := range gw.Listeners {
-			l := &RTListener{GW: gw, L: spec, Key: gw.Key() + "/" + spec.Name, Host: strings.ToLower(spec.Hostname),
+		for _, ent := range t.listenersOf(gw) {
+			spec := ent.L
+			l := &RTListener{GW: gw, L: spec, LS: ent.LS, Key: ent.key(gw), Host: strings.ToLower(spec.Hostname),
 				Accepted: fact{true, "Accepted", ""}, Resolved: fact{true, "ResolvedRefs", ""}, Conflicted: fact{false, "NoConflicts", ""}}
 			l.L.Protocol = strings.ToUpper(spec.Protocol)
 			t.Listeners = append(t.Listeners, l)
 			proto := l.L.Protocol
 			switch {
-			case names[spec.Name]:
+			case names[ent.key(gw)]:
 				l.Accepted = fact{false, "Invalid", "listener name is declared more than once"}
 				continue
-			case proto != "HTTP" && proto != "HTTPS" && proto != "TLS":
-				l.Accepted = fact{false, "UnsupportedProtocol", "built-in gateway serves HTTP, HTTPS and TLS (passthrough) listeners only"}
+			case proto != "HTTP" && proto != "HTTPS" && proto != "TLS" && proto != "TCP" && proto != "UDP":
+				l.Accepted = fact{false, "UnsupportedProtocol", "built-in gateway serves HTTP, HTTPS, TLS, TCP and UDP listeners only"}
 				continue
 			case proto == "TLS" && spec.TLS == nil:
 				l.Accepted = fact{false, "UnsupportedProtocol", "TLS listeners need a tls block with mode Passthrough or Terminate"}
@@ -286,7 +320,7 @@ func BuildTable(cfg *Config) *Table {
 				l.Accepted = fact{false, "Invalid", "port out of range"}
 				continue
 			}
-			names[spec.Name] = true
+			names[ent.key(gw)] = true
 			if bad := l.invalidKinds(); len(bad) > 0 {
 				l.Resolved = fact{false, "InvalidRouteKinds", "allowedRoutes.kinds names kinds this listener cannot carry: " + strings.Join(bad, ", ")}
 			}
@@ -318,7 +352,7 @@ func BuildTable(cfg *Config) *Table {
 			}
 			pg := t.Ports[spec.Port]
 			if pg == nil {
-				pg = &PortGroup{Port: spec.Port, TLS: proto == "HTTPS", Passthrough: proto == "TLS"}
+				pg = &PortGroup{Port: spec.Port, TLS: proto == "HTTPS", Passthrough: proto == "TLS", L4: l4Proto(proto)}
 				t.Ports[spec.Port] = pg
 			}
 			pg.Listeners = append(pg.Listeners, l)
@@ -336,6 +370,7 @@ func BuildTable(cfg *Config) *Table {
 		t.attach(r)
 	}
 	t.attachExtra()
+	t.attachL4()
 	return t
 }
 
@@ -354,9 +389,9 @@ func (c *Config) resolveCerts(l *RTListener) {
 		}
 		ns := ref.Namespace
 		if ns == "" {
-			ns = l.GW.NS
+			ns = l.ownerNS()
 		}
-		if !c.granted("Gateway", l.GW.NS, "", "Secret", ns, ref.Name) {
+		if !c.granted(l.ownerKind(), l.ownerNS(), "", "Secret", ns, ref.Name) {
 			l.Resolved = fact{false, "RefNotPermitted", fmt.Sprintf("Secret %s/%s needs a ReferenceGrant", ns, ref.Name)}
 			return
 		}
@@ -395,6 +430,7 @@ func (t *Table) backendFor(kind, routeNS string, ref BackendRef) (*Backend, fact
 	}
 	key := backendKey(ns, ref.Name, ref.Port)
 	if b, ok := t.Backends[key]; ok {
+		t.noteUse(b)
 		return b, fact{true, "ResolvedRefs", ""}
 	}
 	def := t.Cfg.Backends[key]
@@ -408,8 +444,23 @@ func (t *Table) backendFor(kind, routeNS string, ref BackendRef) (*Backend, fact
 	if err != nil {
 		return nil, fact{false, "BackendNotFound", err.Error()}
 	}
+	t.applyBackendTLS(b, ns, ref.Name, ref.Port, b.PortName)
 	t.Backends[key] = b
+	t.noteUse(b)
 	return b, fact{true, "ResolvedRefs", ""}
+}
+
+// noteUse records that the route being compiled uses b.
+func (t *Table) noteUse(b *Backend) {
+	if t.scope == nil {
+		return
+	}
+	for _, e := range t.scope.Backends {
+		if e == b {
+			return
+		}
+	}
+	t.scope.Backends = append(t.scope.Backends, b)
 }
 
 func compileMatch(m Match) (*CMatch, error) {
@@ -475,7 +526,14 @@ func compileMatch(m Match) (*CMatch, error) {
 func validFilters(fs []Filter) error {
 	for _, f := range fs {
 		switch f.Type {
-		case "RequestHeaderModifier", "ResponseHeaderModifier", "RequestRedirect", "URLRewrite", "RequestMirror":
+		case "RequestHeaderModifier", "ResponseHeaderModifier", "RequestRedirect", "URLRewrite", "RequestMirror", "ExternalAuth":
+		case "CORS":
+			if f.CORS == nil {
+				return fmt.Errorf("CORS filter has no cors block")
+			}
+			if err := f.CORS.validate(); err != nil {
+				return err
+			}
 		case "ExtensionRef":
 			return fmt.Errorf("ExtensionRef filters are not supported by the built-in gateway: it has no extension mechanism, and ignoring the reference would change what the route does")
 		default:
@@ -501,6 +559,16 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		if cr.Timeout, err = parseDur(rule.Timeouts.Request); err != nil {
 			return nil, nil, fmt.Errorf("timeouts.request: %w", err)
 		}
+		if cr.BackendTimeout, err = parseDur(rule.Timeouts.BackendRequest); err != nil {
+			return nil, nil, fmt.Errorf("timeouts.backendRequest: %w", err)
+		}
+		if cr.Timeout > 0 && cr.BackendTimeout > cr.Timeout {
+			return nil, nil, fmt.Errorf("timeouts.backendRequest %s must not exceed timeouts.request %s", rule.Timeouts.BackendRequest, rule.Timeouts.Request)
+		}
+	}
+	var serr error
+	if cr.Session, serr = compileSession(rule.SessionPersistence); serr != nil {
+		return nil, nil, serr
 	}
 	if rule.Retry != nil {
 		var err error
@@ -512,6 +580,9 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		if !f.OK && refs.OK {
 			*refs = f
 		}
+	}
+	if err := t.compileAuth(r, cr, rule.Filters, note); err != nil {
+		return nil, nil, err
 	}
 	for _, f := range rule.Filters {
 		switch f.Type {
@@ -550,7 +621,14 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		}
 		b, fc := t.backend(r, ref)
 		note(fc)
-		cr.Refs = append(cr.Refs, &CRef{Name: ref.Name, B: b, Weight: w, Filters: ref.Filters})
+		if err := t.compileAuth(r, cr, ref.Filters, note); err != nil {
+			return nil, nil, err
+		}
+		refSess, err := compileSession(ref.SessionPersistence)
+		if err != nil {
+			return nil, nil, err
+		}
+		cr.Refs = append(cr.Refs, &CRef{Name: ref.Name, B: b, Weight: w, Filters: ref.Filters, Session: refSess})
 		cr.Total += w
 	}
 	matches := rule.Matches
@@ -570,7 +648,7 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 
 func (t *Table) attach(r *Route) {
 	res := &routeResult{Route: r, Refs: fact{true, "ResolvedRefs", "all references resolved"}}
-	t.routes = append(t.routes, res)
+	t.addRoute(res)
 	crs := make([]*CRule, len(r.Rules))
 	cms := make([][]*CMatch, len(r.Rules))
 	var invalid error
@@ -605,8 +683,8 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 			pr.Accepted = fact{false, "UnsupportedValue", invalid.Error()}
 			continue
 		}
-		if (p.Group != "" && p.Group != APIGroup) || (p.Kind != "" && p.Kind != "Gateway") {
-			pr.Accepted = fact{false, "NoMatchingParent", "parentRef is not a Gateway"}
+		if (p.Group != "" && p.Group != APIGroup) || (p.Kind != "" && p.Kind != "Gateway" && p.Kind != "ListenerSet") {
+			pr.Accepted = fact{false, "NoMatchingParent", "parentRef is not a Gateway or ListenerSet"}
 			continue
 		}
 		ns := p.Namespace
@@ -614,8 +692,11 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 			ns = routeNS
 		}
 		gw := gateways[ns+"/"+p.Name]
+		if p.Kind == "ListenerSet" {
+			gw = t.setGateway(ns + "/" + p.Name)
+		}
 		if gw == nil {
-			pr.Accepted = fact{false, "NoMatchingParent", fmt.Sprintf("Gateway %s/%s not found", ns, p.Name)}
+			pr.Accepted = fact{false, "NoMatchingParent", fmt.Sprintf("%s %s/%s not found", p.kindName(), ns, p.Name)}
 			continue
 		}
 		candidates, notAllowed, noHost := 0, 0, 0

@@ -56,6 +56,8 @@ func shapeUpstream(out, in *http.Request, clientIP string, tlsPort bool, filters
 		switch {
 		case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
 			applyHeaderMod(out.Header, f.RequestHeaderModifier)
+		case f.Type == "ExternalAuth" && f.ExternalAuth != nil && !grpc:
+			applyAuthToRequest(out, in, f.ExternalAuth)
 		case f.Type == "URLRewrite" && f.URLRewrite != nil && !grpc:
 			if f.URLRewrite.Hostname != "" {
 				out.Host = f.URLRewrite.Hostname
@@ -63,6 +65,22 @@ func shapeUpstream(out, in *http.Request, clientIP string, tlsPort bool, filters
 			if p := f.URLRewrite.Path; p != nil {
 				out.URL.Path, out.URL.RawPath = rewritePath(out.URL.Path, p, m), ""
 			}
+		}
+	}
+}
+
+// shapeResponse is the response-side counterpart of shapeUpstream: every
+// ResponseHeaderModifier and CORS filter, in order, applied to the headers h
+// of a response to the inbound request in. The proxy runs it on upstream
+// responses, redirects and authorization denials; the explainer runs it on a
+// blank header set to show what the client would receive.
+func shapeResponse(h http.Header, in *http.Request, filters []Filter) {
+	for _, f := range filters {
+		switch {
+		case f.Type == "ResponseHeaderModifier" && f.ResponseHeaderModifier != nil:
+			applyHeaderMod(h, f.ResponseHeaderModifier)
+		case f.Type == "CORS" && f.CORS != nil:
+			f.CORS.applyResponse(h, in)
 		}
 	}
 }
