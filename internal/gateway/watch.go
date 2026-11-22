@@ -29,7 +29,7 @@ type Background interface {
 // kubeCtl holds the controller options that sit beside the API client.
 type kubeCtl struct {
 	Poll        bool          // --poll: no watches, the server polls
-	Resync      time.Duration // safety relist while watching (Secrets are not watched)
+	Resync      time.Duration // safety relist while watching (referenced Secrets and ConfigMaps have their own watches)
 	Lease       *LeaseConfig  // nil: no leader election, every replica writes status
 	SvcName     string        // the install Service (Gateway status.addresses)
 	SvcNS       string
@@ -40,6 +40,8 @@ type kubeCtl struct {
 	watchBackoff time.Duration // first reconnect delay (default 500ms)
 	watchTimeout int           // server-side seconds per watch request (default 300)
 	fallbackPoll time.Duration // wake interval while a watch is unavailable (default 5s)
+
+	refs refWatches // per-object watches of referenced Secrets and ConfigMaps (certwatch.go)
 
 	elect atomic.Pointer[elector] // set by Start, read by isLeader from other goroutines
 	wg    sync.WaitGroup
@@ -79,7 +81,7 @@ func podNamespace() string {
 func addControllerFlags(fs *flag.FlagSet, c *controllerFlags) {
 	ns := podNamespace()
 	fs.BoolVar(&c.poll, "poll", false, "poll the Kubernetes API every --interval instead of using watches")
-	fs.DurationVar(&c.resync, "resync", time.Minute, "safety relist interval while watching (picks up TLS Secret changes)")
+	fs.DurationVar(&c.resync, "resync", time.Minute, "safety relist interval while watching (Secrets and ConfigMaps are watched per object; this is the net under them)")
 	fs.BoolVar(&c.leaderElect, "leader-elect", false, "elect a status-writing leader through a coordination.k8s.io Lease (all replicas keep serving)")
 	fs.StringVar(&c.leaseName, "lease-name", "setura-gateway", "Lease name for --leader-elect")
 	fs.StringVar(&c.leaseNS, "lease-namespace", ns, "Lease namespace (default: POD_NAMESPACE or the pod's namespace)")
@@ -146,6 +148,10 @@ func (k *KubeSource) Start(ctx context.Context, wake func()) time.Duration {
 	if k.Poll {
 		return 0
 	}
+	k.refs.mu.Lock()
+	k.refs.ctx, k.refs.wake = ctx, wake
+	k.refs.mu.Unlock()
+	k.syncRefWatches()
 	for _, t := range watchTargets {
 		k.wg.Add(1)
 		go func(paths []string, optional bool) {
@@ -264,7 +270,7 @@ func (k *KubeSource) pollFallback(ctx context.Context, wake func()) {
 // trying each candidate path on 404.
 func (k *KubeSource) listVersion(ctx context.Context, paths []string) (rv, path string, err error) {
 	for _, p := range paths {
-		b, e := k.do(ctx, http.MethodGet, p+"?limit=1", nil, "")
+		b, e := k.do(ctx, http.MethodGet, withQuery(p, "limit=1"), nil, "")
 		var ae *apiError
 		if errors.As(e, &ae) && ae.Status == http.StatusNotFound && len(paths) > 1 {
 			err = e
@@ -306,7 +312,7 @@ func (k *KubeSource) stream(ctx context.Context, path string, rv *string, wake f
 	}
 	rctx, cancel := context.WithTimeout(ctx, time.Duration(timeout+30)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(rctx, http.MethodGet, k.base+path+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(rctx, http.MethodGet, k.base+withQuery(path, q.Encode()), nil)
 	if err != nil {
 		return err
 	}

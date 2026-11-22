@@ -61,7 +61,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]

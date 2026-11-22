@@ -157,8 +157,8 @@ them matches; the backend still makes the real choice.
 
 On a `TLS` listener with `tls.mode: Terminate` the gateway completes the handshake itself and
 forwards the decrypted bytes over plain TCP to the backend (`host:port` endpoints; there
-is no re-encryption, and no PROXY protocol, so the backend sees the gateway as the client
-address). It reuses the HTTPS certificate machinery: `certificateRefs` resolve like an HTTPS
+is no re-encryption and no outbound PROXY protocol, so the backend sees the gateway as the client
+address; the listener itself can accept PROXY protocol from a trusted load balancer). It reuses the HTTPS certificate machinery: `certificateRefs` resolve like an HTTPS
 listener's (Secrets, `ReferenceGrant`s, hot reload of rotated files), and the certificate is
 picked per SNI with the same selection (hostname match, else the first). TLS 1.2 or newer.
 The ClientHello is read first (to pick the listener by SNI exactly as for passthrough), then
@@ -172,7 +172,7 @@ rules) negotiates nothing and goes to a rule without ALPN. Handshake failures, r
 backend errors close the connection and are logged with `"method":"TLS"` like passthrough
 connections; `Listening()` shows `tls-terminate`.
 
-Not implemented: TCPRoute and UDPRoute, PROXY protocol, re-encrypting to the backend,
+Not implemented: outbound PROXY protocol on terminate listeners, re-encrypting to the backend,
 client-certificate authentication, and TLS 1.3 Encrypted ClientHello (the SNI is then the
 public name).
 

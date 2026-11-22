@@ -209,7 +209,8 @@ Resilience series (retries, ejection, circuit breaking) are in [resilience.md](r
 * OTLP is HTTP with JSON only: no gRPC, no protobuf, no gzip of payloads. Spans still queued
   when the process is killed (rather than stopped) are lost, and a collector that is down for
   longer than the retries last loses the spans of that time.
-* `X-Forwarded-For` trust is by peer address only; there is no PROXY protocol and no
+* `X-Forwarded-For` trust is by peer address only; with `--proxy-protocol` the peer address
+  is the one the PROXY header carries (see [certificates](certificates.md)). There is no
   `Forwarded` (RFC 7239) header handling.
 
 ## Shadow diffing

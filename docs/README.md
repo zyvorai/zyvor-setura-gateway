@@ -14,6 +14,8 @@
 - [Built-in gateway](builtin-gateway.md): listeners, matching, filters, hot reload, Kubernetes mode, honest limits.
 - [GRPCRoute and TLSRoute](grpc-tls-routes.md): gRPC over h2c and h2, TLS passthrough by SNI.
 - [Resilience](resilience.md): retries, outlier ejection, health checks.
+- [Certificates and edge protocols](certificates.md): ACME, certificate reload, PROXY protocol, h2c upstreams, Alt-Svc.
+- [HTTP/3](http3.md): why the gateway does not serve it, and the edge-proxy recommendation.
 - [Traffic security](security.md): JWT, API keys, basic auth, address lists, client certificates, OCSP stapling, admin token.
 - [Observability](observability.md): access logs, rotation, tracing, OTLP, rate limiting, `/metrics`.
 - [Connections](connections.md): who connected to what, over which protocol.

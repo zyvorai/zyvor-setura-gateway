@@ -36,6 +36,16 @@ Flags for run and up:
   --admin-token TOKEN   bearer token for the admin endpoint (or SETURA_ADMIN_TOKEN); required to bind off loopback
   --admin-open-ready    leave /ready reachable without the token (kubelet probes)
   --ocsp-staple         fetch and staple OCSP responses for listener certificates (default off)
+  --acme-dir DIR        enable ACME (RFC 8555): HTTPS listeners with a hostname and no certificateRefs get certificates
+                        from a CA, stored in DIR (0600 files); renewed at 2/3 of the lifetime, hot-swapped into the listener
+  --acme-directory URL  ACME directory (default: Let's Encrypt STAGING, which issues untrusted certificates)
+  --acme-production     use the Let's Encrypt production directory (explicit on purpose)
+  --acme-email ADDR     ACME account contact
+  --acme-challenge http-01|tls-alpn-01   preferred challenge (default http-01 when a plain HTTP listener exists)
+  --acme-dns-hook CMD   DNS-01 for wildcards: CMD present|cleanup DOMAIN VALUE (publish or remove the _acme-challenge TXT)
+  --proxy-protocol N=CIDR[,..]   accept PROXY protocol v1/v2 on spec port N from these sources only; repeatable
+                        (a backend option proxyProtocol: v1|v2 sends it upstream; see docs/certificates.md)
+  --alt-svc VALUE       send an Alt-Svc header on HTTPS responses, to advertise an HTTP/3-capable edge in front (docs/http3.md)
   --interval DUR        poll interval for config changes (default 1s; with --kubernetes only used by --poll, default 5s)
   --poll                with --kubernetes: poll instead of using watches
   --resync DUR          with --kubernetes: safety relist while watching (default 1m)
@@ -106,6 +116,7 @@ type runFlags struct {
 	connHist   int
 	uiAddr     string
 	uiToken    string
+	cert       certFlags
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -146,6 +157,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&f.opts.AdminToken, "admin-token", os.Getenv("SETURA_ADMIN_TOKEN"), "bearer token for the admin endpoint")
 	fs.BoolVar(&f.opts.AdminOpenReady, "admin-open-ready", false, "leave /ready open without the admin token")
 	fs.BoolVar(&f.opts.OCSPStaple, "ocsp-staple", false, "staple OCSP responses to listener certificates")
+	addCertFlags(fs, &f.cert)
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -199,6 +211,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
+	if err := f.cert.apply(&f.opts); err != nil {
+		return nil, err
+	}
 	if err := f.obs.apply(&f.opts); err != nil {
 		return nil, err
 	}

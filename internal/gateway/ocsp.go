@@ -401,6 +401,7 @@ func (s *Server) ocspSync(t *Table) {
 			certs = append(certs, l.Certs...)
 		}
 	}
+	certs = append(certs, s.acme.allCerts()...)
 	m := s.ocsp.Load()
 	if m == nil {
 		m = newOCSPManager(s.diag)

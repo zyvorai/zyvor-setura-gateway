@@ -115,6 +115,9 @@ func (e *apiError) Error() string {
 }
 
 func (k *KubeSource) do(ctx context.Context, method, path string, body []byte, ctype string) ([]byte, error) {
+	if method == http.MethodGet {
+		k.refs.note(path)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, k.base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -202,6 +205,7 @@ func (k *KubeSource) warn(format string, a ...any) {
 
 // Load implements Source.
 func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
+	k.refs.begin()
 	classItems, err := k.list(ctx, apiGatewayV1+"/gatewayclasses")
 	if err != nil {
 		return nil, err
@@ -324,8 +328,9 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			Type         string `json:"type"`
 			ExternalName string `json:"externalName"`
 			Ports        []struct {
-				Name string `json:"name"`
-				Port int    `json:"port"`
+				Name        string  `json:"name"`
+				Port        int     `json:"port"`
+				AppProtocol *string `json:"appProtocol"`
 			} `json:"ports"`
 		}
 		if json.Unmarshal(s.Spec, &spec) != nil {
@@ -334,6 +339,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		key := s.Metadata.Namespace + "/" + s.Metadata.Name
 		for _, sp := range spec.Ports {
 			def := &BackendDef{PortName: sp.Name}
+			kubeBackendProtocol(def, sp.AppProtocol, s.Metadata.Annotations)
 			if spec.Type == "ExternalName" && spec.ExternalName != "" {
 				def.Endpoints = []string{net.JoinHostPort(spec.ExternalName, fmt.Sprint(sp.Port))}
 			}
@@ -438,6 +444,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes,
 		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts}})
 	sum := sha256.Sum256(sig)
+	k.syncRefWatches()
 	return &Loaded{Config: cfg, Hash: hex.EncodeToString(sum[:])}, nil
 }
 

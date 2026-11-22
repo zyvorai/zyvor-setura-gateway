@@ -150,7 +150,7 @@ A route or policy that the gateway refuses never stops the rest from serving: it
   `_l4_bytes_in_total`, `_l4_bytes_out_total` (labels protocol, route, backend) and
   `setura_gateway_udp_sessions_open`. `/stats`, `/connections` and the access log record TCP
   connections and UDP sessions too.
-* Not done: PROXY protocol, UDP health checks and retries, rate limits on L4 listeners, and
+* PROXY protocol is accepted on TCP listeners and can be sent to TCP backends (see [certificates](certificates.md)). Not done: UDP health checks and retries, rate limits on L4 listeners, and
   several routes sharing one listener (the oldest wins).
 
 ## `setura why`, lint and snapshots

@@ -239,6 +239,10 @@ type BackendDef struct {
 	// CircuitBreaker overrides the gateway-wide circuit breaking defaults for
 	// this backend (negative numbers lift a default limit).
 	CircuitBreaker *CircuitConfig `json:"circuitBreaker,omitempty"`
+	// Protocol "h2c" speaks HTTP/2 with prior knowledge to plain http:// endpoints.
+	Protocol string `json:"protocol,omitempty"`
+	// ProxyProtocol "v1" or "v2" sends a PROXY protocol header on every upstream connection.
+	ProxyProtocol string `json:"proxyProtocol,omitempty"`
 }
 
 // HealthCheck is an active HTTP health check.
@@ -348,13 +352,16 @@ func (g Grant) permits(fromKind, fromNS, toGroup, toKind, toNS, name string) boo
 
 // Config is everything the data plane needs, whatever its source.
 type Config struct {
-	Namespace  string
-	Gateways   []*Gateway
-	Routes     []*Route
-	Backends   map[string]*BackendDef // namespace/name:port
-	Secrets    map[string]SecretDef   // namespace/name
-	Grants     []Grant
-	Namespaces map[string]map[string]string // namespace -> labels
+	// ACME and ACMEDNS are set by the server: listeners without certificateRefs
+	// get ACME certificates, wildcards only when a DNS-01 hook exists.
+	ACME, ACMEDNS bool
+	Namespace     string
+	Gateways      []*Gateway
+	Routes        []*Route
+	Backends      map[string]*BackendDef // namespace/name:port
+	Secrets       map[string]SecretDef   // namespace/name
+	Grants        []Grant
+	Namespaces    map[string]map[string]string // namespace -> labels
 	// Resilience is the optional "resilience" block of a config file.
 	Resilience *ResilienceConfig
 	// GrantsCaptured records that ReferenceGrants were read from the source

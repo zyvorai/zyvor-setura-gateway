@@ -459,6 +459,11 @@ func (s *Server) passthrough(rl *rawListener, c net.Conn, port int) {
 			break
 		}
 	}
+	if up != nil && err == nil {
+		if err = writeProxyTo(up, ref.B, c); err != nil {
+			up.Close()
+		}
+	}
 	if len(attempts) > 1 {
 		line.Attempts = attempts
 	}
