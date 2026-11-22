@@ -64,14 +64,19 @@ build provenance with `actions/attest-build-provenance`, verifiable using
 
 ## Deploy the demo stack to a lab host
 
-`scripts/deploy-remote.sh [user@host]` follows the same pattern as the other Zyvor repos: rsync the tree to `~/zyvor-setura-gateway`, `docker compose up --build -d`, then a remote smoke test (the 90/10 canary split, a 404 for an unmatched path, the dashboard API).
+`scripts/deploy-remote.sh` deploys the built-in gateway, two identity backends and the dashboard the same way our other lab hosts are deployed: a static host binary run by `systemd --user` units (lingering, `Restart=always`), a health check, and a summary.
 
 ```sh
-./scripts/deploy-remote.sh sus@80.79.5.173           # loopback only (default)
-PUBLIC=1 ./scripts/deploy-remote.sh sus@80.79.5.173  # also expose the gateway port and open it in ufw
+./scripts/deploy-remote.sh sus@80.79.5.173           # or: HOST USER
+./scripts/deploy-remote.sh sus@80.79.5.173 --public  # also bind the gateway on all interfaces and open its port
+./scripts/deploy-remote.sh sus@80.79.5.173 --status | --logs | --restart | --uninstall
+./scripts/deploy-remote.sh sus@80.79.5.173 --container   # docker compose instead of systemd
 ```
 
-- The gateway listens on `127.0.0.1:18090`, the dashboard on `127.0.0.1:18091` and the admin API on `127.0.0.1:18092`. Only the gateway port is ever published on all interfaces, and only with `PUBLIC=1`.
-- The dashboard token is generated on the server into `~/zyvor-setura-gateway/.env` (mode 600) and is never printed. View the dashboard through a tunnel: `ssh -L 18091:127.0.0.1:18091 user@host`, then open `http://127.0.0.1:18091/?token=...` once to set the cookie.
-- If the SSH user is not in the `docker` group the script falls back to `sudo docker`.
-- Re-running the script redeploys in place; the stack restarts with `restart: unless-stopped`.
+- It cross-builds a static `linux/amd64` binary, uploads it, verifies the SHA-256 on the host, keeps the previous binary as `bin/setura.prev`, and swaps the config atomically (the gateway hot-reloads it).
+- The gateway listens on `PORT` (default 18090), the dashboard on `PORT+1` and the admin API on `PORT+2`. The dashboard and admin API are always loopback. View the dashboard through a tunnel: `ssh -L 18091:127.0.0.1:18091 user@host`, then open `http://127.0.0.1:18091/`.
+- Without `--public` nothing is exposed and no firewall rule changes. With it, the gateway port is opened in `ufw` or `firewalld`.
+- It enables lingering for the SSH user so the units survive logout, which is the one system-level setting it changes.
+- The smoke test checks the 90/10 canary split, a 404 for an unmatched path and the dashboard API.
+- `--uninstall` removes the units and containers and leaves `~/zyvor-setura-gateway` (config and `.env`) in place.
+- `--container` uses `compose.yaml`; the dashboard token is generated on the host into `.env` (mode 600) and never printed. If the SSH user is not in the `docker` group, it falls back to `sudo docker`.
