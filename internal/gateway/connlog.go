@@ -291,6 +291,9 @@ func (s *Server) buildLine(rec *recorder, r *http.Request, st *reqState, start, 
 		Backend: st.backend, BackendWeight: st.weight, Remote: r.RemoteAddr, RequestID: st.reqID, TraceID: st.trace.TraceID,
 		SpanID: st.trace.SpanID, Error: st.errMsg, Protocol: protocolOf(r), HTTPVersion: r.Proto, RateLimited: st.rateLimited}
 	l.ClientIP, l.ClientPort = splitRemote(r.RemoteAddr)
+	if c := s.trusted.clientIP(r); len(s.trusted) > 0 && c != l.ClientIP {
+		l.ClientIP, l.ClientPort = c, 0 // the real client behind a trusted proxy: its port is unknown
+	}
 	if st.matched {
 		m := st.match
 		l.Match = &m

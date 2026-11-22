@@ -182,6 +182,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 		status = 200
 	}
 	s.stats.record(st.route, st.backend, status)
+	s.hist.observe(st.route, status, time.Since(start))
 	s.latency.observe(st.route, st.backend, time.Since(start))
 	s.observe(rec, r, st, start, status)
 }
@@ -283,10 +284,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	var replay []byte
 	canReplay := false
 	if rule.Retry != nil {
-		replay, canReplay = bufferBody(r, s.res.o.RetryBodyLimit)
+		replay, canReplay = bufferBody(r, s.res.opt().RetryBodyLimit)
 	}
-	rt := s.newTransport(ref.B, ep, rule.Retry, replay, canReplay)
+	rt := s.newTransport(rule, ref, ep, rule.Retry, replay, canReplay)
 	rt.st = st
+	var pristine, inbound *http.Request
 
 	var body []byte
 	var sp *bodySpool
@@ -322,11 +324,15 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		ErrorLog:      log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
+			pristine, inbound = pr.Out.Clone(pr.Out.Context()), pr.In // before filters, for retries on another backendRef
 			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false)
+			s.chainForwardedFor(pr.In, pr.Out)
 			injectTrace(pr.Out, st)
 			s.fireMirrorsOrSpool(pr.Out, body, mirrors, sc, sp)
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			ref := rt.ref // a retry may have moved to another backendRef
+			st.backend = ref.B.Key
 			resp.Header.Set(BackendHeader, ref.Name)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
@@ -339,14 +345,29 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			st.errMsg = err.Error()
+			st.backend = rt.b.Key
 			code := http.StatusBadGateway
 			if errors.Is(err, context.DeadlineExceeded) {
 				code = http.StatusGatewayTimeout
 			}
-			w.Header().Set(BackendHeader, ref.Name)
+			w.Header().Set(BackendHeader, rt.ref.Name)
 			rt.annotate(w.Header())
+			var shed *circuitReject
+			if errors.As(err, &shed) {
+				w.Header().Set(CircuitHeader, shed.Reason)
+				w.Header().Set("Retry-After", "1")
+				plain(w, http.StatusServiceUnavailable, "upstream shed load: circuit breaker "+shed.Reason)
+				return
+			}
 			plain(w, code, "upstream error")
 		},
+	}
+	rt.rebuild = func(ctx context.Context, nr *CRef) *http.Request {
+		out := pristine.Clone(ctx)
+		shapeUpstream(out, inbound, remoteIP(inbound), pg.TLS, requestFilters(rule, nr), e.Match, false)
+		s.chainForwardedFor(inbound, out)
+		injectTrace(out, st)
+		return out
 	}
 	proxy.ServeHTTP(sc.wrap(rec), r)
 }

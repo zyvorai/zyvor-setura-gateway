@@ -2,7 +2,11 @@
 
 A live, read-only web dashboard for your routes. One page, embedded in the
 binary: no npm, no CDN, no external fonts or requests. It follows your system
-light or dark setting.
+light or dark setting, and a button in the header (before the `?` button) switches between
+system, light and dark. The choice is kept in the browser's `localStorage` (key
+`setura-theme`; "system" removes it), works from the keyboard like any button (Tab to it,
+Enter or Space) and announces the current mode and the next one to screen readers. If
+storage is unavailable it still works for the visit.
 
     setura ui --snapshot before.json            # a saved snapshot, re-read when it changes
     setura ui --kube -n demo                    # the current cluster
@@ -126,6 +130,23 @@ per-backend request counters, and reload events. `setura watch ... --ui ADDR
   "error": {"message": "...", "hint": "..."}
 }
 ```
+
+In `setura gateway ... --ui` mode the gateway fills `history` itself: it samples every
+route once a second into a ring of the last 120 seconds (two minutes) and draws the three
+busiest routes (over that window) as sparklines: requests per second, server (5xx) error rate in
+percent, and p95 latency in milliseconds. Latency is bucketed (1, 2, 5, 10, 20, 50, 100, 200,
+500, 1000, 2000, 5000 ms, then 10000), so p95 is the upper bound of the bucket holding the 95th
+percentile, a coarse estimate. An idle second is a zero point, routes silent for the whole
+window disappear, and nothing is sampled until the dashboard is opened. History is in
+memory and starts empty after a restart. Other modes (`--snapshot`, `--kube`, `watch`) have no
+producer, so the section stays hidden there.
+
+In gateway mode the lint findings use the same ReferenceGrants as the data plane: the state
+the dashboard lints includes the gateway's grants (and its GRPCRoutes, TLSRoutes and
+namespaced objects), so a cross-namespace `backendRef` without a grant is an error when the
+source supplied grants (a config file with `referenceGrants` or `referencegrants.*`
+resources, or the cluster) and a warning when it did not, exactly as `setura lint` on the
+file says. Lint reads the file's top-level `referenceGrants` array for this too.
 
 `traffic`, `reload`, `health`, `history` and `error` are optional. The page
 renders a section when it is present and hides it when it is absent, so a

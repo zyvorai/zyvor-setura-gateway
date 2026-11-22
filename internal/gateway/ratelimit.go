@@ -19,6 +19,11 @@ type RateLimitConfig struct {
 	Per   time.Duration // default one second
 	Burst int           // bucket size; default ceil(rate per second), at least 1
 	Key   string        // "ip" (default), "route" or "header:NAME"
+	// Share divides the rate (and an explicit burst) by the number of gateway
+	// replicas, as an approximation of a shared limit: each replica enforces
+	// its 1/Share of the budget, which is exact only when traffic is spread
+	// evenly. 0 or 1 means a single replica.
+	Share int
 }
 
 // ParseRate parses "100/s", "30/m", "5000/h" or a bare number (per second).
@@ -49,6 +54,9 @@ func (c *RateLimitConfig) validate() error {
 	if c.Burst < 0 {
 		return errors.New("burst must not be negative")
 	}
+	if c.Share < 0 {
+		return errors.New("share must not be negative")
+	}
 	switch k := c.Key; {
 	case k == "" || k == "ip" || k == "route":
 	case strings.HasPrefix(k, "header:") && len(k) > len("header:"):
@@ -74,6 +82,7 @@ type limiter struct {
 	burst   float64
 	key     string
 	header  string
+	trusted trustedNets
 	now     func() time.Time
 	buckets map[string]*bucket
 	limited map[string]int64 // per route
@@ -90,8 +99,15 @@ func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
 	if now == nil {
 		now = time.Now
 	}
-	perSec := c.Rate / c.Per.Seconds()
+	share := c.Share
+	if share < 1 {
+		share = 1
+	}
+	perSec := c.Rate / c.Per.Seconds() / float64(share)
 	burst := c.Burst
+	if burst > 0 && share > 1 {
+		burst = int(math.Ceil(float64(burst) / float64(share)))
+	}
 	if burst <= 0 {
 		burst = int(math.Ceil(perSec))
 		if burst < 1 {
@@ -123,11 +139,11 @@ func (l *limiter) bucketKey(route string, r *http.Request) string {
 	case l.header != "":
 		v := r.Header.Get(l.header)
 		if v == "" {
-			v = "ip:" + clientIP(r)
+			v = "ip:" + l.trusted.clientIP(r)
 		}
 		return route + "\x00" + v
 	}
-	return route + "\x00" + clientIP(r)
+	return route + "\x00" + l.trusted.clientIP(r)
 }
 
 // allow takes one token for the request. When refused it returns how long

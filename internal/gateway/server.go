@@ -38,7 +38,10 @@ type Options struct {
 	// ShadowStateInterval (default 10s) and reloaded from at start; "" disables.
 	ShadowState         string
 	ShadowStateInterval time.Duration
-	Resilience          ResilienceOptions // retries, outlier ejection, default health checks
+	Resilience          ResilienceOptions // retries, outlier ejection, circuit breaking, default health checks
+	// HistoryInterval is the dashboard history sampling period (default 1s;
+	// negative disables the sampler goroutine, for tests that sample by hand).
+	HistoryInterval time.Duration
 	// Lint inspects a snapshot and reports whether it has no lint errors.
 	Lint func(snapshot []byte) (ok bool, report string)
 }
@@ -85,6 +88,8 @@ type Server struct {
 	health   context.CancelFunc
 	mirrorWG sync.WaitGroup
 	shadow   shadowState
+	hist     *rateHistory
+	trusted  trustedNets
 	shadowP  *shadowPersist
 	latency  latencyStats
 
@@ -111,7 +116,8 @@ func New(opts Options) *Server {
 	if hist == 0 {
 		hist = DefaultConnHistory
 	}
-	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true)}
+	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
+		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 	s.shadowP = s.startShadowPersist()
 	return s
 }
@@ -253,7 +259,11 @@ func (s *Server) Apply(ld *Loaded) error {
 			r.Generation = s.seq
 		}
 	}
+	if err := s.res.setFile(cfg.Resilience); err != nil {
+		return err
+	}
 	t := BuildTable(cfg)
+	s.carryState(s.table.Load(), t)
 	bindErr := map[string]string{}
 	specPorts := make([]int, 0, len(t.Ports))
 	for p := range t.Ports {
@@ -342,6 +352,9 @@ func (s *Server) Listening() []string {
 			scheme = "https"
 		case "TLS":
 			scheme = "tls-passthrough"
+			if l.Terminate {
+				scheme = "tls-terminate"
+			}
 		}
 		host := l.Host
 		if host == "" {
@@ -489,6 +502,8 @@ func (s *Server) Close() {
 		s.adminSrv.Close()
 	}
 	s.mirrorWG.Wait()
+	s.hist.close()
+	s.res.closeTransports()
 	s.shadowP.close()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
@@ -563,6 +578,9 @@ func (c *Config) Dump() map[string]any {
 			"parentRefs": r.Parents, "hostnames": r.Hostnames, "rules": r.Rules})
 	}
 	out := map[string]any{"namespace": c.Namespace, "gateways": gws, "httproutes": routes, "backends": c.Backends, "secrets": sortedKeys(c.Secrets)}
+	if c.Resilience != nil {
+		out["resilience"] = c.Resilience
+	}
 	c.dumpExtra(out)
 	return out
 }

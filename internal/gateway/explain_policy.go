@@ -25,7 +25,7 @@ type ExplainServer struct {
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: s.res.o, ShadowDiff: s.opts.ShadowDiff, limiter: s.obs.limiter}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, limiter: s.obs.limiter}
 }
 
 // TraceMirror is one mirror target of the winning rule.
@@ -126,7 +126,7 @@ func (tr *Trace) explainPolicy(w *TraceWinner, e *Entry, q ExplainRequest, r *ht
 }
 
 func (e ExplainServer) retry(c *CRetry, method string) *TraceRetry {
-	o := newResilience(e.Resilience).o
+	o := *newResilience(e.Resilience).opt()
 	tr := &TraceRetry{Attempts: c.Attempts, Backoff: c.Backoff.String(), Idempotent: isIdempotent(method)}
 	for code := range c.Codes {
 		tr.Codes = append(tr.Codes, code)

@@ -31,7 +31,7 @@ text format uses the same names as `key="value"` pairs.
 
 | Field | Meaning |
 |-------|---------|
-| `client_ip`, `client_port` | The TCP peer, split from `remote`. |
+| `client_ip`, `client_port` | The TCP peer, split from `remote`. When the peer is one of `--trusted-proxies`, `client_ip` is the real client from `X-Forwarded-For` and `client_port` is omitted (see [observability](observability.md)). |
 | `listener`, `listener_port` | The listener that matched and the local port the client connected to. |
 | `protocol` | `HTTP/1.1`, `HTTP/2` (over TLS), `h2c`, `WebSocket`, `gRPC` or `TLS-passthrough`. |
 | `http_version` | The protocol version the client spoke (`HTTP/1.1`, `HTTP/2.0`). |

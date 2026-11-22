@@ -43,17 +43,35 @@ Flags for run and up:
   --force               apply configurations that have lint errors
   --access-log FILE|-|off   access log (default "-", stdout)
   --access-log-format json|text   access log format (default json)
+  --access-log-max-size SIZE    rotate the access log file past SIZE (100, 64k, 10MB, 1g; default off)
+  --access-log-keep N           rotated files to keep (default: all)
+  --access-log-gzip             gzip rotated files
+                        (a file access log also rotates on SIGHUP; a file moved away by logrotate is reopened)
   --otlp-endpoint HOST:PORT|URL   export spans via OTLP/HTTP JSON (default off)
   --rate-limit N/s|N/m|N/h  local token-bucket rate limit (default off)
   --rate-burst N        bucket size (default: the per-second rate)
   --rate-key ip|route|header:NAME   what a bucket is keyed on (default ip)
+  --rate-limit-share N  divide the rate by N, the declared replica count (an approximation of a
+                        shared limit; no state is shared between replicas)
+  --trusted-proxies CIDR[,..]   believe X-Forwarded-For only from these peers (client IP for rate
+                        limits and access logs; appended to, not replaced, when forwarded)
+  --otlp-retries N, --otlp-backoff DUR, --otlp-queue N   OTLP export retry count (default 4, -1 = none),
+                        first backoff (250ms, doubling) and bounded span queue (2048)
   --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)
   --retry-header        add X-Setura-Retries to responses (default off)
+  --retry-cross-backend retries may move to another weighted backendRef (rule retry.crossBackend overrides)
+  --retry-jitter F      randomise retry backoff by +/- F, 0-1 (default 0; rule retry.jitter overrides)
+  --cb-max-requests N, --cb-max-pending N, --cb-max-connections N   circuit-breaker limits per backend
+                        (a backend's circuitBreaker block overrides; default off)
+  --cb-failures N, --cb-open-for DUR, --cb-probes N   open the circuit after N consecutive failures
+                        for DUR (30s), then let N probes through (1)
+  (a "resilience" block in the config file sets the same options; flags win over it)
   --outlier-failures N  consecutive 5xx/connect failures that eject an endpoint (default 5, 0 = off)
   --outlier-base-ejection DUR  first ejection time, doubling each time (default 30s)
   --outlier-max-ejection DUR   ejection time cap (default 5m)
   --health-path PATH    active-check every backend without its own healthCheck (default off)
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
+                        (a backend healthCheck with protocol "grpc" probes grpc.health.v1)
   --log-query           keep query strings in logged and dashboard paths (default: stripped)
   --conn-history N      recent requests kept for /connections and the dashboard (default 500, 0 = off)
   --shadow-diff PCT     compare RequestMirror responses with the primary for PCT percent of requests;
@@ -78,6 +96,8 @@ type runFlags struct {
 	bindFlagFS *flag.FlagSet
 	obs        obsFlags
 	outlier    int
+	rotate     RotateOptions
+	rotateSize string
 	connHist   int
 	uiAddr     string
 	uiToken    string
@@ -93,14 +113,27 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&f.accessLog, "access-log", "-", "access log file, - for stdout, off to disable")
 	addObsFlags(fs, &f.obs)
 	r := &f.opts.Resilience
-	fs.IntVar(&r.RetryBudgetPercent, "retry-budget", 20, "retries as a percentage of recent requests")
+	// Unset flags stay zero so the config file's resilience block (then the
+	// built-in defaults) can fill them in; the real defaults are in the text.
+	fs.IntVar(&r.RetryBudgetPercent, "retry-budget", 0, "retries as a percentage of recent requests (default 20)")
 	fs.BoolVar(&r.RetryHeader, "retry-header", false, "add X-Setura-Retries to responses")
-	fs.IntVar(&f.outlier, "outlier-failures", 5, "consecutive failures that eject an endpoint, 0 disables")
-	fs.DurationVar(&r.OutlierBaseEject, "outlier-base-ejection", 30*time.Second, "first ejection duration")
-	fs.DurationVar(&r.OutlierMaxEject, "outlier-max-ejection", 5*time.Minute, "maximum ejection duration")
+	fs.BoolVar(&r.RetryCrossBackend, "retry-cross-backend", false, "retries may move to another weighted backendRef")
+	fs.Float64Var(&r.RetryJitter, "retry-jitter", 0, "randomise retry backoff by +/- this fraction (0-1)")
+	fs.IntVar(&f.outlier, "outlier-failures", -1, "consecutive failures that eject an endpoint, 0 disables (default 5)")
+	fs.DurationVar(&r.OutlierBaseEject, "outlier-base-ejection", 0, "first ejection duration (default 30s)")
+	fs.DurationVar(&r.OutlierMaxEject, "outlier-max-ejection", 0, "maximum ejection duration (default 5m)")
 	fs.StringVar(&r.HealthPath, "health-path", "", "default active health check path")
-	fs.DurationVar(&r.HealthInterval, "health-interval", 5*time.Second, "default active check interval")
-	fs.DurationVar(&r.HealthTimeout, "health-timeout", 2*time.Second, "default active check timeout")
+	fs.DurationVar(&r.HealthInterval, "health-interval", 0, "default active check interval (default 5s)")
+	fs.DurationVar(&r.HealthTimeout, "health-timeout", 0, "default active check timeout (default 2s)")
+	fs.IntVar(&r.Circuit.MaxRequests, "cb-max-requests", 0, "circuit breaker: concurrent requests per backend")
+	fs.IntVar(&r.Circuit.MaxPending, "cb-max-pending", 0, "circuit breaker: requests allowed to wait for a slot")
+	fs.IntVar(&r.Circuit.MaxConnections, "cb-max-connections", 0, "circuit breaker: upstream connections per backend")
+	fs.IntVar(&r.Circuit.FailureThreshold, "cb-failures", 0, "circuit breaker: consecutive failures that open it")
+	fs.DurationVar(&r.Circuit.OpenFor, "cb-open-for", 0, "circuit breaker: time open before probing (default 30s)")
+	fs.IntVar(&r.Circuit.HalfOpenProbes, "cb-probes", 0, "circuit breaker: probe requests while half-open (default 1)")
+	fs.StringVar(&f.rotateSize, "access-log-max-size", "", "rotate the access log file past this size (100, 64k, 10MB, 1g)")
+	fs.IntVar(&f.rotate.Keep, "access-log-keep", 0, "rotated access log files to keep (default all)")
+	fs.BoolVar(&f.rotate.Gzip, "access-log-gzip", false, "gzip rotated access log files")
 	fs.IntVar(&f.connHist, "conn-history", DefaultConnHistory, "recent requests kept for /connections, 0 disables")
 	fs.IntVar(&f.opts.ShadowDiff, "shadow-diff", 0, "compare mirrored responses for PCT percent of requests (0 = only annotated mirrors)")
 	fs.StringVar(&f.opts.ShadowState, "shadow-state", "", "persist shadow results to FILE (atomic snapshots, reloaded at start)")
@@ -124,12 +157,29 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	if f.opts.ShadowDiff < 0 || f.opts.ShadowDiff > 100 {
 		return nil, fmt.Errorf("--shadow-diff %d: want 0-100", f.opts.ShadowDiff)
 	}
-	f.opts.Resilience.OutlierFailures = f.outlier
-	if f.outlier == 0 {
+	switch {
+	case f.outlier < 0: // unset
+		f.opts.Resilience.OutlierFailures = 0
+	case f.outlier == 0:
 		f.opts.Resilience.OutlierFailures = -1
+	default:
+		f.opts.Resilience.OutlierFailures = f.outlier
 	}
-	if f.opts.Resilience.RetryBudgetPercent < 1 || f.opts.Resilience.RetryBudgetPercent > 100 {
-		return nil, fmt.Errorf("--retry-budget %d: want 1-100", f.opts.Resilience.RetryBudgetPercent)
+	if b := f.opts.Resilience.RetryBudgetPercent; b != 0 && (b < 1 || b > 100) {
+		return nil, fmt.Errorf("--retry-budget %d: want 1-100", b)
+	}
+	if j := f.opts.Resilience.RetryJitter; j < 0 || j > 1 {
+		return nil, fmt.Errorf("--retry-jitter %v: want 0-1", j)
+	}
+	if f.rotateSize != "" {
+		n, err := ParseSize(f.rotateSize)
+		if err != nil {
+			return nil, fmt.Errorf("--access-log-max-size: %w", err)
+		}
+		f.rotate.MaxSize = n
+	}
+	if f.rotate.Keep < 0 {
+		return nil, fmt.Errorf("--access-log-keep %d: want 0 or more", f.rotate.Keep)
 	}
 	if f.connHist < 0 {
 		return nil, fmt.Errorf("--conn-history %d: want 0 (off) or a positive count", f.connHist)
@@ -149,12 +199,27 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	case "-":
 		f.opts.AccessLog = stdout
 	default:
-		fh, err := os.OpenFile(f.accessLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+		rf, err := newRotatingFile(f.accessLog, f.rotate)
 		if err != nil {
 			return nil, err
 		}
-		f.opts.AccessLog = fh
-		closeFn = func() { fh.Close() }
+		f.opts.AccessLog = rf
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		stopHup := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-hup:
+					if err := rf.Reopen(); err != nil {
+						fmt.Fprintf(stderr, "access log: reopen on SIGHUP: %v\n", err)
+					}
+				case <-stopHup:
+					return
+				}
+			}
+		}()
+		closeFn = func() { signal.Stop(hup); close(stopHup); rf.Close() }
 	}
 	return closeFn, nil
 }

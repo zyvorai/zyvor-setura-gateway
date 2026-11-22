@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +19,8 @@ type ResilienceOptions struct {
 	RetryBudgetWindow  time.Duration // sliding window for the budget (default 10s)
 	RetryBodyLimit     int64         // largest request body buffered for replay (default 64 KiB)
 	RetryHeader        bool          // add X-Setura-Retries to responses (default off)
+	RetryCrossBackend  bool          // retries may move to another weighted backendRef (a rule's retry.crossBackend overrides)
+	RetryJitter        float64       // backoff jitter as a fraction, 0-1 (a rule's retry.jitter overrides; default 0 = none)
 
 	// Passive outlier ejection. OutlierFailures < 0 disables it.
 	OutlierFailures  int           // consecutive 5xx or connection failures that eject an endpoint (default 5)
@@ -29,6 +33,10 @@ type ResilienceOptions struct {
 	HealthInterval time.Duration
 	HealthTimeout  time.Duration
 
+	// Circuit breaking defaults for every backend; a backend's circuitBreaker
+	// block overrides them field by field. The zero value disables it.
+	Circuit CircuitOptions
+
 	// Test hooks.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -39,16 +47,32 @@ const RetryHeaderName = "X-Setura-Retries"
 
 // resilience is the server-wide state shared by retries, ejection and metrics.
 type resilience struct {
-	o ResilienceOptions
+	raw ResilienceOptions // flags / Options as given (zero = unset)
+	cur atomic.Pointer[ResilienceOptions]
 
-	mu        sync.Mutex
-	budgets   map[string]*budget
-	retries   map[string]int64
-	denied    map[string]int64
-	ejections map[string]int64
+	mu             sync.Mutex
+	budgets        map[string]*budget
+	retries        map[string]int64
+	denied         map[string]int64
+	ejections      map[string]int64
+	crossRetries   map[string]int64
+	perTryTimeouts map[string]int64
+	breakers       map[string]*breaker
+	transports     map[string]*http.Transport // per-backend transports (maxConnections)
 }
 
+// opt returns the effective options: flags, then the config file's
+// resilience block, then built-in defaults.
+func (rs *resilience) opt() *ResilienceOptions { return rs.cur.Load() }
+
 func newResilience(o ResilienceOptions) *resilience {
+	rs := &resilience{raw: o, budgets: map[string]*budget{}, retries: map[string]int64{}, denied: map[string]int64{}, ejections: map[string]int64{},
+		crossRetries: map[string]int64{}, perTryTimeouts: map[string]int64{}, breakers: map[string]*breaker{}, transports: map[string]*http.Transport{}}
+	rs.cur.Store(normalizeResilience(o))
+	return rs
+}
+
+func normalizeResilience(o ResilienceOptions) *ResilienceOptions {
 	if o.RetryBudgetPercent <= 0 {
 		o.RetryBudgetPercent = 20
 	}
@@ -73,19 +97,25 @@ func newResilience(o ResilienceOptions) *resilience {
 	if o.OutlierMaxEject < o.OutlierBaseEject {
 		o.OutlierMaxEject = o.OutlierBaseEject
 	}
-	return &resilience{o: o, budgets: map[string]*budget{}, retries: map[string]int64{}, denied: map[string]int64{}, ejections: map[string]int64{}}
+	if o.HealthInterval <= 0 {
+		o.HealthInterval = 5 * time.Second
+	}
+	if o.HealthTimeout <= 0 {
+		o.HealthTimeout = 2 * time.Second
+	}
+	return &o
 }
 
 func (rs *resilience) now() time.Time {
-	if rs.o.Now != nil {
-		return rs.o.Now()
+	if rs.opt().Now != nil {
+		return rs.opt().Now()
 	}
 	return time.Now()
 }
 
 func (rs *resilience) sleep(ctx context.Context, d time.Duration) error {
-	if rs.o.Sleep != nil {
-		return rs.o.Sleep(ctx, d)
+	if rs.opt().Sleep != nil {
+		return rs.opt().Sleep(ctx, d)
 	}
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -108,7 +138,7 @@ func (rs *resilience) budgetFor(key string) *budget {
 	defer rs.mu.Unlock()
 	b := rs.budgets[key]
 	if b == nil {
-		b = &budget{width: rs.o.RetryBudgetWindow / budgetBuckets}
+		b = &budget{width: rs.opt().RetryBudgetWindow / budgetBuckets}
 		if b.width <= 0 {
 			b.width = time.Millisecond
 		}
@@ -175,7 +205,7 @@ func (b *Backend) choose(now time.Time, skip map[*Endpoint]bool) *Endpoint {
 
 // observe feeds one upstream outcome into passive outlier detection.
 func (rs *resilience) observe(b *Backend, ep *Endpoint, bad bool, now time.Time) {
-	if rs.o.OutlierFailures < 0 {
+	if rs.opt().OutlierFailures < 0 {
 		return
 	}
 	b.hmu.Lock()
@@ -192,7 +222,7 @@ func (rs *resilience) observe(b *Backend, ep *Endpoint, bad bool, now time.Time)
 		return
 	}
 	st.fails++
-	if st.fails < rs.o.OutlierFailures {
+	if st.fails < rs.opt().OutlierFailures {
 		return
 	}
 	others := 0
@@ -204,12 +234,12 @@ func (rs *resilience) observe(b *Backend, ep *Endpoint, bad bool, now time.Time)
 	if others == 0 {
 		return // never eject the last healthy endpoint
 	}
-	d := rs.o.OutlierBaseEject
-	for i := 0; i < st.ejections && d < rs.o.OutlierMaxEject; i++ {
+	d := rs.opt().OutlierBaseEject
+	for i := 0; i < st.ejections && d < rs.opt().OutlierMaxEject; i++ {
 		d *= 2
 	}
-	if d > rs.o.OutlierMaxEject {
-		d = rs.o.OutlierMaxEject
+	if d > rs.opt().OutlierMaxEject {
+		d = rs.opt().OutlierMaxEject
 	}
 	st.until = now.Add(d)
 	st.ejections++
@@ -255,16 +285,19 @@ type healthConfig struct {
 	path               string
 	interval, timeout  time.Duration
 	unhealthy, healthy int
+	grpc               bool   // probe grpc.health.v1.Health/Check instead of an HTTP GET
+	service            string // gRPC health service name ("" = whole server)
 }
 
 func (s *Server) healthConfigFor(b *Backend) *healthConfig {
 	hc := b.Health
-	if hc == nil && s.res.o.HealthPath == "" {
+	if hc == nil && s.res.opt().HealthPath == "" {
 		return nil
 	}
-	c := &healthConfig{path: s.res.o.HealthPath, interval: s.res.o.HealthInterval, timeout: s.res.o.HealthTimeout, unhealthy: 1, healthy: 1}
+	c := &healthConfig{path: s.res.opt().HealthPath, interval: s.res.opt().HealthInterval, timeout: s.res.opt().HealthTimeout, unhealthy: 1, healthy: 1}
 	if hc != nil {
 		c.path = hc.Path
+		c.grpc, c.service = strings.EqualFold(hc.Protocol, "grpc"), hc.Service
 		if d, err := parseDur(hc.Interval); err == nil && d > 0 {
 			c.interval = d
 		}
@@ -278,7 +311,7 @@ func (s *Server) healthConfigFor(b *Backend) *healthConfig {
 			c.healthy = hc.HealthyThreshold
 		}
 	}
-	if c.path == "" {
+	if c.path == "" && !c.grpc {
 		c.path = "/"
 	}
 	if c.interval <= 0 {
@@ -318,7 +351,9 @@ func (s *Server) startHealth(ctx context.Context, b *Backend) {
 // checkEndpoint probes one endpoint once and applies the thresholds.
 func (s *Server) checkEndpoint(ctx context.Context, client *http.Client, c *healthConfig, b *Backend, ep *Endpoint) {
 	ok := false
-	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL.String()+c.path, nil); err == nil {
+	if c.grpc {
+		ok = s.grpcHealthProbe(ctx, c, b, ep)
+	} else if req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL.String()+c.path, nil); err == nil {
 		if resp, err := client.Do(req); err == nil {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
