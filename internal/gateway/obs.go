@@ -17,6 +17,7 @@ type ObsOptions struct {
 	AccessLogBuffer int    // queued lines before dropping (default 4096)
 	OTLPEndpoint    string // OTLP/HTTP collector, "" disables span export
 	OTLPInterval    time.Duration
+	LogQuery        bool // keep the query string in logged paths (default: stripped)
 	RateLimit       RateLimitConfig
 	Now             func() time.Time // clock for rate limiting (tests)
 }
@@ -114,11 +115,13 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 type obsFlags struct {
 	format, rate, key, otlp string
 	burst                   int
+	logQuery                bool
 }
 
 func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
 	fs.StringVar(&f.format, "access-log-format", "json", "access log format: json or text")
 	fs.StringVar(&f.otlp, "otlp-endpoint", "", "export spans to this OTLP/HTTP collector (host:port or URL)")
+	fs.BoolVar(&f.logQuery, "log-query", false, "keep query strings in logged paths (default: stripped, they often hold tokens)")
 	fs.StringVar(&f.rate, "rate-limit", "", "local rate limit such as 100/s, 600/m (empty disables)")
 	fs.IntVar(&f.burst, "rate-burst", 0, "rate limit bucket size (default: the per-second rate)")
 	fs.StringVar(&f.key, "rate-key", "ip", "rate limit key: ip, route or header:NAME")
@@ -130,7 +133,7 @@ func (f *obsFlags) apply(o *Options) error {
 	default:
 		return fmt.Errorf("--access-log-format %q: want json or text", f.format)
 	}
-	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint = f.format, f.otlp
+	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint, o.Obs.LogQuery = f.format, f.otlp, f.logQuery
 	if f.rate == "" {
 		return nil
 	}

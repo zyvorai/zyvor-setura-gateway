@@ -12,6 +12,7 @@ var DefaultImage = "ghcr.io/zyvorai/zyvor-setura-gateway:latest"
 type InstallOptions struct {
 	Namespace, Image, ClassName string
 	Replicas                    int
+	ExposePorts                 bool // controller adds Service ports for Gateway listener ports
 }
 
 // Install returns Kubernetes YAML for the in-cluster controller. Setura only
@@ -48,10 +49,10 @@ metadata:
   name: setura-gateway
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses", "gateways", "httproutes", "referencegrants"]
+    resources: ["gatewayclasses", "gateways", "httproutes", "grpcroutes", "tlsroutes", "referencegrants"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "tlsroutes/status"]
     verbs: ["get", "patch", "update"]
   - apiGroups: [""]
     resources: ["services", "namespaces"]
@@ -62,6 +63,31 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: setura-gateway
+  namespace: NS
+rules:
+  # Leader election Lease (--leader-elect).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+EXPOSE_RULES---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: setura-gateway
+  namespace: NS
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: setura-gateway
+subjects:
+  - kind: ServiceAccount
+    name: setura-gateway
+    namespace: NS
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -111,10 +137,16 @@ spec:
             - --bind=0.0.0.0
             - --port-offset=8000   # 80 -> 8080, 443 -> 8443 without root
             - --admin=0.0.0.0:19000
-          securityContext:
+            - --leader-elect       # one replica writes status, all serve traffic
+EXPOSE_ARG          securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
           ports:
             - {name: http, containerPort: 8080}
             - {name: https, containerPort: 8443}
@@ -131,14 +163,28 @@ metadata:
   name: setura-gateway
   namespace: NS
 spec:
-  # Change the type to LoadBalancer to expose the gateway. Add a port for every
-  # extra listener port your Gateways declare (spec port N maps to N+8000 below 1024).
+  # Change the type to LoadBalancer to expose the gateway. The controller writes this
+  # Service's address into Gateway status.addresses. Add a port for every extra listener
+  # port your Gateways declare (spec port N maps to N+8000 below 1024), or install with
+  # --expose-gateway-ports and the controller adds the ports itself.
   type: ClusterIP
   selector: {app.kubernetes.io/name: setura-gateway}
   ports:
     - {name: http, port: 80, targetPort: http}
     - {name: https, port: 443, targetPort: https}
 `
+	exposeRules, exposeArg := "", ""
+	if o.ExposePorts {
+		exposeRules = `  # --expose-gateway-ports: patch the controller's own Service, nothing else.
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["setura-gateway"]
+    verbs: ["patch"]
+`
+		exposeArg = "            - --expose-gateway-ports\n"
+	}
+	y = strings.Replace(y, "EXPOSE_RULES", exposeRules, 1)
+	y = strings.Replace(y, "EXPOSE_ARG", exposeArg, 1)
 	r := strings.NewReplacer("NS", o.Namespace, "CLASS", o.ClassName, "IMAGE", o.Image, "REPLICAS", fmt.Sprint(o.Replicas))
 	return r.Replace(y)
 }

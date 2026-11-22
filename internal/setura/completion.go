@@ -20,6 +20,7 @@ var commandNames = []string{
 	"replay",
 	"map",
 	"ui",
+	"connections",
 	"impact",
 	"lint",
 	"ai",
@@ -52,6 +53,9 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
 	"--shadow-diff", "--shadow-state"}
 
+// connectionsFlags are offered after "setura connections".
+var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
+
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
@@ -68,6 +72,7 @@ var flagSets = []struct {
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
 	{"why", whyFlags},
+	{"connections", connectionsFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

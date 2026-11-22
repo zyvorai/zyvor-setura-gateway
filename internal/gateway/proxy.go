@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,7 +25,11 @@ type recorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int64
+	open   *openConn // set for streams listed in the open connection table
 }
+
+// bytesOut is the number of body bytes written to the client so far.
+func (r *recorder) bytesOut() int64 { return atomic.LoadInt64(&r.bytes) }
 
 func (r *recorder) WriteHeader(code int) {
 	if r.status == 0 {
@@ -38,7 +43,10 @@ func (r *recorder) Write(p []byte) (int, error) {
 		r.status = 200
 	}
 	n, err := r.ResponseWriter.Write(p)
-	r.bytes += int64(n)
+	atomic.AddInt64(&r.bytes, int64(n))
+	if r.open != nil {
+		r.open.out.Add(int64(n))
+	}
 	return n, err
 }
 
@@ -117,6 +125,55 @@ type reqState struct {
 	rule                             *int
 	reqID                            string
 	trace                            traceInfo
+
+	match       int // index of the matching match within the rule
+	matched     bool
+	weight      int // weight of the chosen backendRef
+	rateLimited bool
+	grpcSvc     string
+	grpcMethod  string
+	in          *countReader
+	open        *openConn
+	up          upInfo
+}
+
+// countBody makes the request body count the bytes it delivers.
+func (st *reqState) countBody(r *http.Request) {
+	if r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	st.in = &countReader{rc: r.Body}
+	r.Body = st.in
+}
+
+// noteUpstream mirrors the chosen upstream into the open connection entry.
+func (st *reqState) noteUpstream() {
+	if st.open != nil {
+		addr := st.up.addr
+		st.open.set(func(v *OpenView) { v.UpstreamAddr = addr })
+	}
+}
+
+// trackOpen lists a WebSocket or gRPC stream until the handler returns.
+func (s *Server) trackOpen(rec *recorder, r *http.Request, st *reqState, kind string) func() {
+	ip, port := splitRemote(r.RemoteAddr)
+	o, done := s.conns.register(OpenView{Kind: kind, ClientIP: ip, ClientPort: port, ListenerPort: localPort(r),
+		Protocol: protocolOf(r), Host: r.Host, Path: s.logPath(r)})
+	if o != nil {
+		rec.open, st.open = o, o
+		if st.in != nil {
+			st.in.mirror = &o.in
+		}
+	}
+	return done
+}
+
+// markRoute fills the open entry once routing is known.
+func (st *reqState) markRoute() {
+	if st.open != nil {
+		l, rt, b := st.listener, st.route, st.backend
+		st.open.set(func(v *OpenView) { v.Listener, v.Route, v.Backend = l, rt, b })
+	}
 }
 
 func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start time.Time) {
@@ -152,7 +209,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	rec := &recorder{ResponseWriter: w}
 	st := &reqState{}
 	s.beginTrace(rec, r, st)
+	st.countBody(r)
 	defer func() { s.logRequest(rec, r, st, start) }()
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		defer s.trackOpen(rec, r, st, "websocket")()
+	}
 	t := s.table.Load()
 	var pg *PortGroup
 	if t != nil {
@@ -178,6 +239,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	st.route = rule.RouteKey
 	idx := rule.Index
 	st.rule = &idx
+	st.match, st.matched = e.MatchIdx, true
+	st.markRoute()
 	if s.rateLimited(rec, r, st) {
 		return
 	}
@@ -204,7 +267,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	ep := ref.B.choose(s.res.now(), nil)
-	st.backend = ref.B.Key
+	st.backend, st.weight = ref.B.Key, ref.Weight
+	st.markRoute()
 
 	timeout := rule.Timeout
 	if bt := ref.B.Timeout; bt > 0 && (timeout == 0 || bt < timeout) {
@@ -222,6 +286,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		replay, canReplay = bufferBody(r, s.res.o.RetryBodyLimit)
 	}
 	rt := s.newTransport(ref.B, ep, rule.Retry, replay, canReplay)
+	rt.st = st
 
 	var body []byte
 	var sp *bodySpool

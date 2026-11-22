@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,8 @@ type fakeAPI struct {
 	patches []string
 	denySA  bool
 	t       *testing.T
+	rv      int // resourceVersion counter
+	watch   fakeWatchState
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
@@ -50,7 +53,23 @@ func (f *fakeAPI) put(collection, ns, name string, obj m) {
 	if _, ok := md["generation"]; !ok {
 		md["generation"] = 1
 	}
+	typ := "MODIFIED"
+	if f.objects[collection][ns+"/"+name] == nil {
+		typ = "ADDED"
+	}
 	f.objects[collection][ns+"/"+name] = obj
+	f.emit(collection, typ, obj)
+}
+
+// del removes an object and tells watchers.
+func (f *fakeAPI) del(collection, ns, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	obj := f.objects[collection][ns+"/"+name]
+	delete(f.objects[collection], ns+"/"+name)
+	if obj != nil {
+		f.emit(collection, "DELETED", obj)
+	}
 }
 
 func (f *fakeAPI) get(collection, ns, name string) m {
@@ -72,6 +91,9 @@ func (f *fakeAPI) patchLog() []string {
 func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer test-token" {
 		http.Error(w, "unauthorized", 401)
+		return
+	}
+	if f.serveExtra(w, r) {
 		return
 	}
 	f.mu.Lock()
@@ -112,6 +134,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			st[k] = v
 		}
 		obj["status"] = st
+		f.emit(coll, "MODIFIED", obj)
 		w.Write([]byte("{}"))
 		return
 	}
@@ -126,17 +149,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(o)
 		return
 	}
-	coll := map[string]string{
-		"/apis/gateway.networking.k8s.io/v1/gatewayclasses": "gatewayclasses",
-		"/apis/gateway.networking.k8s.io/v1/gateways":       "gateways",
-		"/apis/gateway.networking.k8s.io/v1/httproutes":     "httproutes",
-		"/apis/gateway.networking.k8s.io/v1/grpcroutes":     "grpcroutes",
-		"/apis/gateway.networking.k8s.io/v1/tlsroutes":      "tlsroutes",
-		"/api/v1/services":                                        "services",
-		"/apis/discovery.k8s.io/v1/endpointslices":                "endpointslices",
-		"/apis/gateway.networking.k8s.io/v1beta1/referencegrants": "referencegrants",
-		"/api/v1/namespaces":                                      "namespaces",
-	}[path]
+	coll := fakeColl[path]
 	if coll == "" || (coll == "referencegrants" && f.denySA) {
 		http.Error(w, "forbidden", 403)
 		return
@@ -145,7 +158,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	for _, k := range sortedKeys(f.objects[coll]) {
 		items = append(items, f.objects[coll][k])
 	}
-	json.NewEncoder(w).Encode(m{"items": items, "metadata": m{}})
+	json.NewEncoder(w).Encode(m{"items": items, "metadata": m{"resourceVersion": fmt.Sprint(f.rv)}})
 }
 
 func (f *fakeAPI) seed(upstream string) {
@@ -180,6 +193,7 @@ func kubeServer(t *testing.T, api *fakeAPI, token func() string) (*Server, *Kube
 		token = func() string { return "test-token" }
 	}
 	ks := NewKubeSource(api.URL, api.Client(), token, nil)
+	ks.Poll = true // these tests drive the polling path; watch_test.go covers watches
 	s := New(Options{PortMap: map[int]int{8080: 0}, Admin: "off"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -332,6 +346,7 @@ func TestKubernetesModeTLSFromSecretAndGrants(t *testing.T) {
 		"tls.crt": base64.StdEncoding.EncodeToString(c), "tls.key": base64.StdEncoding.EncodeToString(k)}})
 	api.put("referencegrants", "certs", "g", m{"spec": m{"from": l{m{"group": APIGroup, "kind": "Gateway", "namespace": "infra"}}, "to": l{m{"group": "", "kind": "Secret"}}}})
 	ks := NewKubeSource(api.URL, api.Client(), func() string { return "test-token" }, nil)
+	ks.Poll = true
 	s := New(Options{PortMap: map[int]int{8443: 0}, Admin: "off"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

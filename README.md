@@ -15,7 +15,7 @@
 [![Contact sales](https://img.shields.io/badge/Contact_sales-1d1d1f?style=for-the-badge)](mailto:sales@zyvor.dev?subject=Zyvor%20Setura)
 [![Website](https://img.shields.io/badge/Website-66d4cf?style=for-the-badge&labelColor=1d1d1f)](https://zyvorai.github.io/zyvor-setura-gateway/)
 
-[Quickstart](#quickstart) · [Commands](#commands) · [Lint](#lint-your-routes-before-traffic-does) · [Route map](docs/map-ai.md) · [Operators guide](docs/operators.md) · [Pricing](#pricing-and-licensing)
+[Quickstart](#quickstart) · [Commands](#commands) · [Lint](#lint-your-routes-before-traffic-does) · [Change safely](#change-it-without-guessing) · [Route map](docs/map-ai.md) · [Operators guide](docs/operators.md) · [Pricing](#pricing-and-licensing)
 
 <img src="assets/hero.png" alt="Zyvor Setura: know what actually answers. A terminal shows setura explain passing DNS, TCP, TLS, HTTP and backend checks." width="100%">
 
@@ -131,6 +131,10 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
 | `certs HOST:PORT` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. |
 | `ui` | A read-only live dashboard: route map, traffic split, findings with fixes, live feed. Also `--ui ADDR` on `gateway run` and `watch`. Loopback by default. |
+| `why METHOD URL` | Explains a routing decision: every candidate, why it won or lost, filters, backend odds and the upstream request. |
+| `replay --log F --before A --after B` | Replays an access log through two configs and reports the routing impact. |
+| `gateway rollout\|history\|rollback` | Guarded config rollout with automatic rollback, and the backups it keeps. |
+| `shadow` | Reads shadow-diff results from a running gateway; `--fail-under PCT` gates a rollout. |
 | `migrate check` | Compares Ingress rules with their converted HTTPRoutes (offline or live) and flags nginx annotations with no Gateway API equivalent. |
 | `history FILE` | Per-route uptime, p50/p95 and regressions from a `watch --history` file. |
 | `lint` | Static analysis of Gateway, HTTPRoute, GRPCRoute and TLSRoute specs with stable rule IDs. Text, JSON, SARIF and GitHub output, baselines, offline. |
@@ -233,6 +237,30 @@ setura gateway install --namespace setura-system | kubectl apply -f -   # you de
 | Kubernetes | Reads Gateways, HTTPRoutes, Services, EndpointSlices, Secrets and ReferenceGrants with the service account, writes Accepted, ResolvedRefs and Programmed status back |
 
 **Honest limits.** Not implemented: TCPRoute, UDPRoute and TLS termination on TLS listeners; session persistence, CORS and ExtensionRef filters, BackendTLSPolicy; HTTP/3, circuit breaking, shared rate limits across replicas and authentication. It has not passed the upstream Gateway API conformance suite and has had no load test. A route that uses an unsupported filter is marked `Accepted=False` instead of being silently half-served. The Kubernetes mode polls instead of watching, has no leader election, and has only been tested against a fake API server so far. The admin endpoint is unauthenticated and loopback-only by default. If you need those features today, run Envoy Gateway and let Setura verify it. Full detail: [docs/builtin-gateway.md](docs/builtin-gateway.md).
+
+## Change it without guessing
+
+Setura is both the gateway and the thing that verifies it, so it can answer the questions that usually need a postmortem.
+
+```sh
+setura why GET http://orders.example.test:8080/checkout/pay --config gateway.json   # why did it go there?
+setura replay --log access.jsonl --before old.json --after new.json --fail-on any   # what will this change break?
+setura gateway rollout --config live.json --new candidate.json --checks checks.json  # apply, probe, roll back on failure
+setura shadow --fail-under 99.5                                                      # does the new backend answer the same?
+setura migrate check --ingress ingress.yaml --routes routes.yaml                     # Ingress vs converted HTTPRoute
+setura gateway run --config gateway.json --ui 127.0.0.1:9090                         # live dashboard
+```
+
+| Question | Command | What you get |
+| --- | --- | --- |
+| Why did this request reach that backend? | [`why`](docs/why.md) | Every listener, route and rule considered, the precedence rule that decided it, filters as their effect on the request, backend odds, and the request the backend would receive. The same matching code the live proxy uses. |
+| What will this config change break? | [`replay`](docs/replay.md) | Real access-log traffic run through the old and new config in-process: routes, backends and outcomes that would change, grouped by request shape. `--fail-on` gates CI. |
+| Can I ship it safely? | [`gateway rollout`](docs/rollout.md) | Lint, back up, atomic swap, wait for the gateway to confirm, probe, optional progressive weights, automatic rollback on a failed check, a rejected reload or Ctrl-C. Plus `history` and `rollback`. |
+| Does the new version answer the same? | [`shadow`](docs/shadow.md) | A mirror that compares status, headers, body (JSON-aware, ignorable paths) and latency without ever touching the client response. |
+| Will my Ingress migration behave the same? | [`migrate check`](docs/migrate.md) | Ingress rules against converted Gateway API routes, offline or live, with nginx annotation hints, named ports, ReferenceGrants and IngressClass. |
+| What is happening right now? | [`ui`](docs/ui.md), [`connections`](docs/connections.md) | A read-only live dashboard with a route map, traffic split, findings with fixes, and who connected to what. Loopback by default. |
+
+Across clusters and over time: `--context a,b,c` runs `check`, `snapshot`, `gate` and `lint` on several contexts ([multi-cluster](docs/multi-cluster.md)); `setura history` summarises `watch --history`; `watch` alerts to a webhook or Slack on failure and recovery only ([alerting](docs/alerting.md)).
 
 ## Watch it, graph it
 

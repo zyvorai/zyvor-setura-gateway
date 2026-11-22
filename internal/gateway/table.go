@@ -60,6 +60,8 @@ type Entry struct {
 	Match *CMatch
 	Hosts []string
 	GRPC  bool // entry comes from a GRPCRoute
+	// MatchIdx is the position of the match within its rule.
+	MatchIdx int
 }
 
 // CRule is a compiled rule.
@@ -271,6 +273,9 @@ func BuildTable(cfg *Config) *Table {
 				continue
 			}
 			names[spec.Name] = true
+			if bad := l.invalidKinds(); len(bad) > 0 {
+				l.Resolved = fact{false, "InvalidRouteKinds", "allowedRoutes.kinds names kinds this listener cannot carry: " + strings.Join(bad, ", ")}
+			}
 			if prev, ok := portProto[spec.Port]; ok && prev != proto {
 				l.Conflicted = fact{true, "ProtocolConflict", fmt.Sprintf("port %d already serves %s", spec.Port, prev)}
 				continue
@@ -558,8 +563,8 @@ func (t *Table) attach(r *Route) {
 	}
 	res.Parents = t.attachParents("HTTPRoute", r.NS, r.Parents, r.Hostnames, invalid, func(l *RTListener, hosts []string) {
 		for i := range r.Rules {
-			for _, cm := range cms[i] {
-				l.Entries = append(l.Entries, &Entry{Route: r, Rule: crs[i], Match: cm, Hosts: hosts})
+			for j, cm := range cms[i] {
+				l.Entries = append(l.Entries, &Entry{Route: r, Rule: crs[i], Match: cm, Hosts: hosts, MatchIdx: j})
 			}
 		}
 	})

@@ -23,6 +23,10 @@ type UIInput struct {
 	Health  any // {"targets":[{url,ok,stage,backend,ms,since}]}
 	History any // {"points":[...]} filled by a later release
 	Reload  any // {"generation":n,"ok":bool,"time":"...","error":"..."}
+	// Connections is {"enabled":true,"capacity":N} when the gateway keeps a
+	// connections table; the rows are served separately and never enter the
+	// state document.
+	Connections any
 }
 
 // ruleHelp is the plain-language explanation shown for each lint rule.
@@ -351,6 +355,9 @@ func BuildUIState(snapshot obj, in UIInput) (obj, error) {
 	}
 	if in.Reload != nil {
 		state["reload"] = in.Reload
+	}
+	if in.Connections != nil {
+		state["connections"] = in.Connections
 	}
 	return scrub(state, in.Redact), nil
 }
