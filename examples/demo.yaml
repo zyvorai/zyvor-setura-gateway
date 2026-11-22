@@ -60,18 +60,9 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: orders
-          image: python:3.12-alpine
-          command: ["python3", "-B", "-u", "-c"]
-          args:
-            - |
-              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-              class Orders(BaseHTTPRequestHandler):
-                  def do_GET(self):
-                      self.send_response(200)
-                      self.send_header("X-Setura-Backend", "orders-v1")
-                      self.end_headers()
-                      self.wfile.write(b"orders-v1\n")
-              ThreadingHTTPServer(("", 8080), Orders).serve_forever()
+          image: ghcr.io/zyvorai/zyvor-setura-gateway:latest
+          imagePullPolicy: IfNotPresent
+          args: ["echo", "--name", "orders-v1", "--listen", "0.0.0.0:8080"]
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false

@@ -48,6 +48,7 @@ var helpGroups = []helpGroup{
 		{"capabilities", "", "list GatewayClasses and controller features"},
 		{"exposure", "", "show Service exposure"},
 		{"completion", "bash|zsh|fish", "print a shell completion script"},
+		{"echo", "--name NAME", "run a tiny identity backend that answers with X-Setura-Backend"},
 		{"man", "", "print the manual page (roff)"},
 		{"version", "[--verbose]", "print the version and build info"},
 	}},

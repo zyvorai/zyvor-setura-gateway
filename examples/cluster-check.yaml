@@ -34,7 +34,7 @@ spec:
             seccompProfile: {type: RuntimeDefault}
           containers:
             - name: check
-              image: setura:local
+              image: ghcr.io/zyvorai/zyvor-setura-gateway:latest
               imagePullPolicy: IfNotPresent
               args: ["check", "/checks/checks.json"]
               resources:

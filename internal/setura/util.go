@@ -87,7 +87,7 @@ func label(v string) (string, error) {
 
 func pyRepr(s string) string { return "'" + s + "'" }
 
-// pyDumps renders JSON with Python's default separators and sorted keys so
+// pyDumps renders JSON with ": " and ", " separators and sorted keys so
 // evidence text stays stable and readable.
 func pyDumps(v any) string {
 	var b strings.Builder

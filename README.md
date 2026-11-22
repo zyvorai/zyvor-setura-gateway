@@ -52,25 +52,29 @@ docker run --rm ghcr.io/zyvorai/zyvor-setura-gateway:latest version
 setura version
 ```
 
-**Try the probe** with no Kubernetes at all. In one terminal:
+**Try the probe** with no Kubernetes at all. Setura ships a tiny identity backend for exactly this. In one terminal:
 
 ```sh
-python3 -m http.server 9090 --bind 127.0.0.1
+setura echo --name hello --listen 127.0.0.1:9090
 ```
 
 In another:
 
 ```sh
-setura explain http://localhost:9090/
+setura explain http://localhost:9090/ --backend hello
 ```
 
 ```text
-dns      ok           addresses=['::1', '127.0.0.1']
-tcp      ok           peer=127.0.0.1
-tls      unused
-http     ok           status=200 expected=200
-backend  unused
-assert   unused
+  http://localhost:9090/
+
+  ✓ dns      ok         addresses=['::1', '127.0.0.1']
+  ✓ tcp      ok         peer=127.0.0.1
+  – tls      unused
+  ✓ http     ok         status=200 expected=200
+  ✓ backend  ok         identity=hello
+  – assert   unused
+
+  ✓ Passed in 2.3 ms
 ```
 
 **Publish a real Gateway.** Use an isolated K3s cluster, or a cluster whose kubeconfig your Mac can reach. Check `kubectl config current-context` first, because the demo fixture creates a namespace and a cluster-scoped GatewayClass.

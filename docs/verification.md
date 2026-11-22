@@ -14,7 +14,7 @@ The expanded Linux suite passed 23 tests. New cases cover parent ambiguity, stal
 
 ## Version 0.4.0 (Go)
 
-The CLI was rewritten in Go and `lint`, response assertions and shell completion were added. The Go suite passes under `go test -race` on macOS. It ports every Python case and adds cases for header, body and latency assertions, all nine lint rules, shadowed routes, deterministic evidence order and completion scripts. Socket tests use real loopback HTTP and TLS servers; the TLS test generates its own certificate. Kubernetes responses are fixtures.
+The CLI was rewritten in Go and `lint`, response assertions and shell completion were added. The Go suite passes under `go test -race` on macOS. It ports every case from the original 0.3.0 suite and adds cases for header, body and latency assertions, all nine lint rules, shadowed routes, deterministic evidence order and completion scripts. Socket tests use real loopback HTTP and TLS servers; the TLS test generates its own certificate. Kubernetes responses are fixtures.
 
 GitHub Actions run [44995886688](https://github.com/zyvorai/zyvor-setura-gateway/actions/runs/44995886688) passed all three jobs on commit `980c30a`:
 

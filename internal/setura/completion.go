@@ -28,6 +28,7 @@ var commandNames = []string{
 	"exposure",
 	"completion",
 	"watch",
+	"echo",
 	"man",
 	"version",
 }

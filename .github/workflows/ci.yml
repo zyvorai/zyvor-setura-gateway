@@ -39,11 +39,13 @@ jobs:
           kubectl wait --for=condition=Ready node --all --timeout=180s
       - name: Install Envoy Gateway
         run: helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.8.6 -n envoy-gateway-system --create-namespace --wait --timeout 5m
+      - name: Build the Setura image and load it into K3s
+        run: |
+          docker build -t ghcr.io/zyvorai/zyvor-setura-gateway:latest .
+          docker save ghcr.io/zyvorai/zyvor-setura-gateway:latest | docker exec -i setura-k3s ctr -n k8s.io images import -
       - run: scripts/cluster-smoke.sh bin/setura
       - name: Run a probe from inside K3s
         run: |
-          docker build -t setura:local .
-          docker save setura:local | docker exec -i setura-k3s ctr -n k8s.io images import -
           kubectl apply -f examples/cluster-check.yaml
           kubectl -n setura-demo create job setura-ci-check --from=cronjob/setura-internal-checks
           kubectl -n setura-demo wait job/setura-ci-check --for=condition=complete --timeout=150s
