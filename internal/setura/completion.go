@@ -29,6 +29,7 @@ var commandNames = []string{
 	"gateway",
 	"completion",
 	"watch",
+	"history",
 	"echo",
 	"man",
 	"version",
