@@ -31,3 +31,9 @@ supported-feature list. Until this exists, the README makes no conformance claim
 
 - CI job that runs the upstream conformance suite on K3s.
 - Report committed under `docs/conformance/` per Gateway API version.
+
+### 3. Live dashboard (`setura ui`)
+
+An Apple-style, embedded, dependency-free web dashboard: overview status,
+interactive route map, traffic-split bars, live feed, full keyboard and screen
+reader support. Read-only and loopback-only by default.
