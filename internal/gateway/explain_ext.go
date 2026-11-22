@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // This file models what Gateway API 1.5 features add to a trace: CORS
@@ -71,6 +72,28 @@ func respHeadersFor(r *http.Request, fs []Filter) map[string]string {
 	shapeResponse(h, r, fs)
 	return flatten(h)
 }
+
+// explainL4 explains a TCP or UDP listener: nothing is matched, the oldest
+// route's first rule with a backend takes every connection or client.
+func (tr *Trace) explainL4(t *Table, l *RTListener, now time.Time) {
+	e := l.l4Pick()
+	if e == nil {
+		tr.Verdict = VerdictNoRoute
+		tr.Reason = fmt.Sprintf("listener %s (%s) has no %s attached with a backendRef, so connections are closed", l.Key, l.L.Protocol, protocolKinds(l.L.Protocol)[0])
+		return
+	}
+	kind := protocolKinds(l.L.Protocol)[0]
+	w := &TraceWinner{Route: e.RouteKey, Kind: kind, Rule: e.Index() + 1, Summary: "every " + strings.ToLower(l.L.Protocol) + " connection or client on port " + fmt.Sprint(l.L.Port), RuleName: e.Name}
+	w.Backends = t.distribution(tr.Request, kind, e.RouteKey, e.Refs, e.Total, nil, nil, now, nil)
+	if l.L.Protocol == "UDP" {
+		w.Notes = append(w.Notes, "UDP: the backend is chosen once per client address; the session ends after the idle timeout (--udp-idle-timeout)")
+	}
+	tr.Winner = w
+	tr.finishBackends(w)
+}
+
+// Index is the 0-based rule position of the entry.
+func (e *L4Entry) Index() int { return e.Rule }
 
 // explainPreflight turns the trace of a CORS preflight into the answer the
 // gateway itself gives (no backend is contacted).

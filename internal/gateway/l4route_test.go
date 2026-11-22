@@ -82,6 +82,23 @@ func TestTCPRouteWeightedHalfClose(t *testing.T) {
 	}
 }
 
+func TestExplainL4(t *testing.T) {
+	res := m{gwKeyT + "gw": l4Gateway("TCP", 9000), tcpKeyT + "r": l4Route("", 0, ref("a", 3), ref("b", 1))}
+	tb := tableOf(t, snapRes(res, map[string]any{"a": "127.0.0.1:9", "b": "127.0.0.1:10"}, nil), nil)
+	req, err := ParseExplainRequest("GET", "http://x.test:9000/", nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := Explain(tb, req)
+	if tr.Verdict != VerdictRouted || tr.Winner == nil || tr.Winner.Kind != "TCPRoute" || tr.Winner.RuleName != "main" || len(tr.Winner.Backends) != 2 || tr.Winner.Backends[0].Percent != 75 {
+		t.Fatalf("TCP explanation: %s\n%s", tr.Verdict, dumpTrace(tr))
+	}
+	// An HTTP replay must never treat a TCP port as an HTTP listener.
+	if g := tb.Ports[9000]; g == nil || g.L4 != "TCP" {
+		t.Errorf("port group: %+v", g)
+	}
+}
+
 func TestTCPRouteBackendDownAndInvalid(t *testing.T) {
 	dead, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := dead.Addr().String()

@@ -507,6 +507,8 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 	var l *RTListener
 	switch {
 	case pg == nil:
+	case pg.L4 != "":
+		l = pg.pickListenerT(host, tr)
 	case pg.Passthrough && !passthrough:
 		tr.Verdict, tr.Reason = VerdictNoListener, fmt.Sprintf("port %d is a TLS passthrough port (TLSRoute); give the server name with --sni", q.Port)
 	case !pg.Passthrough && passthrough:
@@ -532,6 +534,10 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 		return tr
 	}
 	tr.fillRoutes(t, l, passthrough)
+	if l.L4Entries != nil || (pg != nil && pg.L4 != "") {
+		tr.explainL4(t, l, now)
+		return tr
+	}
 
 	if passthrough {
 		tr.explainTLS(t, l, host, now)
@@ -633,6 +639,9 @@ func (tr *Trace) fillRoutes(t *Table, l *RTListener, passthrough bool) {
 	}
 	tlsAttached := map[string]bool{}
 	for _, e := range l.TLSEntries {
+		tlsAttached[e.RouteKey] = true
+	}
+	for _, e := range l.L4Entries {
 		tlsAttached[e.RouteKey] = true
 	}
 	gateways := map[string]*Gateway{}

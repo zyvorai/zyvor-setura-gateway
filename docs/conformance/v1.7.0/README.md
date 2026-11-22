@@ -36,10 +36,10 @@ must match; to move to another release, change both and use a new directory here
 * `supportedFeatures` is what Setura claims, from `conformance/conformance_test.go`.
   Tests needing an unclaimed feature are not run and are not failures. `skippedTests` lists
   tests skipped by name; the reasons are in the comments next to `skipTests` in that file.
-* Profiles run: `GATEWAY-HTTP`, `GATEWAY-GRPC` and `GATEWAY-TLS` (passthrough only; the
-  Terminate and Mixed TLSRoute modes are not claimed). TCP, UDP and the mesh profiles are not
-  supported. The GRPC and TLS profiles have not been run yet; expect gaps in extended GRPC
-  features (`GRPCRouteNamedRouteRule`, `GRPCRouteRequestHeaderModifier` are not claimed).
+* Profiles run: `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` (passthrough only; the
+  Terminate and Mixed TLSRoute modes are not claimed), `GATEWAY-TCP` and `GATEWAY-UDP`. The mesh
+  profiles are not supported. Only the HTTP profile has ever been run against an earlier
+  build; expect gaps in the others (`GRPCRouteRequestHeaderModifier` is not claimed).
 * A failed core test is a bug or a gap to fix, not something to hide by adding it to the
   skip list. Do not edit `report.yaml` by hand.
 
@@ -54,10 +54,22 @@ entries. These are covered by unit tests against a fake API server, not yet by a
 it an IP the controller can publish; no status is patched by the script any more. Without it
 the suite cannot reach the gateway from outside the cluster.
 
+## Features claimed for Gateway API 1.5
+
+`conformance/conformance_test.go` now claims `HTTPRouteCORS`, `HTTPRouteBackendTimeout`,
+`HTTPRouteDestinationPortMatching`, `HTTPRouteNamedRouteRule`, `GRPCRouteNamedRouteRule`,
+`BackendTLSPolicy`, `BackendTLSPolicySANValidation`, `ListenerSet`, `GatewayStaticAddresses`,
+`TCPRoute` and `UDPRoute`, and their tests are no longer on the skip list. They are
+implemented and covered by unit and in-process integration tests (see
+[gateway-api-1-5](../../gateway-api-1-5.md)), but no upstream run has verified them: the first
+real run decides which of them pass. The harness was only checked with `go vet` and
+`go test -c`; the suite itself was not run.
+
 ## What is still unknown
 
 * No upstream result has been produced; the first real run decides which of the claimed
   features pass. Tests that fail go in the report, not into the skip list.
-* `GatewayStaticAddresses`, `GatewayAddressEmpty`, `GatewayHTTPListenerIsolation`,
-  `GatewayInfrastructure`, `BackendTLSPolicy*`, CORS, `HTTPRouteBackendTimeout`, H2C and
-  WebSocket backend protocols are not implemented and stay skipped or unclaimed.
+* `GatewayAddressEmpty` (the gateway cannot assign an address on request),
+  `GatewayHTTPListenerIsolation`, `GatewayInfrastructure`, H2C and WebSocket backend protocols
+  are not implemented and stay skipped or unclaimed. v1.7.0 has no feature name for
+  ExternalAuth, so the suite cannot exercise it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the upstream Gateway API conformance suite (GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS profiles) against
+# Runs the upstream Gateway API conformance suite (GATEWAY-HTTP, GATEWAY-GRPC, GATEWAY-TLS, GATEWAY-TCP and GATEWAY-UDP profiles) against
 # `setura gateway run --kubernetes` on a disposable cluster such as K3s.
 #
 # It installs CRDs, a GatewayClass and a Deployment into the cluster behind the
@@ -32,10 +32,10 @@ BUILD=1
 PATCH_ADDR=0
 VERSION_LABEL=""
 
-# Profiles. TCP, UDP and mesh are not supported. The authoritative
+# Profiles. The mesh profiles are not supported. The authoritative
 # supported-features and skip lists live in conformance/conformance_test.go.
-PROFILES="GATEWAY-HTTP GATEWAY-GRPC GATEWAY-TLS"
-UNSUPPORTED_PROFILES="GATEWAY-TCP GATEWAY-UDP MESH"
+PROFILES="GATEWAY-HTTP GATEWAY-GRPC GATEWAY-TLS GATEWAY-TCP GATEWAY-UDP"
+UNSUPPORTED_PROFILES="MESH"
 
 while [ $# -gt 0 ]; do
   case $1 in

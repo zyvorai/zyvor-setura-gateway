@@ -51,7 +51,7 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 // gatewayFlags are offered after "setura gateway".
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
-	"--shadow-diff", "--shadow-state"}
+	"--shadow-diff", "--shadow-state", "--udp-idle-timeout"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

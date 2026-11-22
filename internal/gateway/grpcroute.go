@@ -28,6 +28,8 @@ type GRPCRoute struct {
 
 // GRPCRule is one GRPCRoute rule.
 type GRPCRule struct {
+	// Name is the optional rule name (shown by explain, no effect on routing).
+	Name        string       `json:"name,omitempty"`
 	Matches     []GRPCMatch  `json:"matches,omitempty"`
 	Filters     []Filter     `json:"filters,omitempty"`
 	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
@@ -167,7 +169,7 @@ rules:
 			fail(err)
 			break
 		}
-		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Filters: rule.Filters}}
+		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Name: rule.Name, Filters: rule.Filters}}
 		if rule.Retry != nil {
 			var err error
 			if cr.GRPCRetry, err = compileGRPCRetry(rule.Retry); err != nil {
