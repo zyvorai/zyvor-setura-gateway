@@ -29,6 +29,7 @@ type Options struct {
 	Admin       string      // admin address; "off" disables, empty means DefaultAdmin
 	Pprof       string      // loopback address for net/http/pprof and /debug/runtime, empty disables
 	Force       bool        // apply configs that have lint errors
+	ConfigPath  string      // the config file being served, when there is one; the dashboard's Changes page reads its .setura-history
 	AccessLog   io.Writer   // JSON-lines access log, nil to disable
 	Diag        io.Writer   // human diagnostics, nil to discard
 	Rand        func(n int) int

@@ -32,6 +32,9 @@ func runGateway(args []string, stdout, stderr io.Writer) int {
 }
 
 func init() {
+	builtin.UIChangesBuilder = func(path string) (func() any, func(string) (any, bool)) {
+		return newChangesSource(path).attach()
+	}
 	builtin.UIStateBuilder = func(in builtin.UIInput) (any, error) {
 		var snap obj
 		if err := json.Unmarshal(in.Snapshot, &snap); err != nil {

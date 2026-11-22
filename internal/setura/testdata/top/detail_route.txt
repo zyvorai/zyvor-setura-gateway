@@ -1,0 +1,15 @@
+  setura top  127.0.0.1:19000 · generation 3 · every 1s · LIVE
+
+  ✗ Errors rising on route HTTPRoute/demo/orders (33% of requests); 1 endpoint ejected or down
+
+  Route  HTTPRoute/demo/orders
+
+  Requests      110
+  Rate          15.0 req/s
+  Error rate    33%
+  Latency       p50 44ms   p95 92ms
+  Status        2xx 100   5xx 10
+
+  RECENT ERRORS
+  03:04:05 502 GET /checkout  HTTPRoute/demo/orders -> orders-v1:80  connection refused
+  q quit  esc back  p pause

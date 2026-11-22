@@ -21,6 +21,7 @@ var commandNames = []string{
 	"map",
 	"ui",
 	"connections",
+	"top",
 	"impact",
 	"lint",
 	"ai",
@@ -30,6 +31,7 @@ var commandNames = []string{
 	"load",
 	"why",
 	"doctor",
+	"init",
 	"capabilities",
 	"exposure",
 	"gateway",
@@ -60,12 +62,24 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
 
 // licenceFlags are offered after "setura licence".
+// topFlags are offered after "setura top".
+var topFlags = []string{"--admin", "--interval", "--once", "--format"}
+
 var licenceFlags = []string{"verify", "show", "--file", "--format"}
+
+// uiFlags are offered after "setura ui".
+var uiFlags = []string{"--listen", "--snapshot", "--kube", "--token", "--redact", "--config", "--interval", "--namespace"}
 
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
 var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff"}
+
+// initFlags are offered after "setura init".
+var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}
+
+// doctorFlags are offered after "setura doctor" (gateway checks).
+var doctorFlags = []string{"--config", "--admin", "--format", "--warn-cert-days", "--timeout", "--namespace", "--proxy-namespace"}
 
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.
@@ -79,7 +93,11 @@ var flagSets = []struct {
 	{"shadow", shadowFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
+	{"top", topFlags},
 	{"licence", licenceFlags},
+	{"ui", uiFlags},
+	{"init", initFlags},
+	{"doctor", doctorFlags},
 }
 
 // Completion writes a shell completion script for command names and for the

@@ -305,6 +305,9 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		} else {
 			src = FileSource{*cfgPath}
 		}
+		if *cfgPath != "" {
+			rf.opts.ConfigPath = *cfgPath
+		}
 		s := New(rf.opts)
 		if err := s.startUIFlag(ctx, &rf, stderr); err != nil {
 			return fail(err)
@@ -383,6 +386,7 @@ func (s *Server) startUIFlag(ctx context.Context, rf *runFlags, stderr io.Writer
 }
 
 func up(ctx context.Context, path string, opts Options, interval time.Duration, stdout, stderr io.Writer, rf *runFlags) error {
+	opts.ConfigPath = path
 	src := FileSource{path}
 	ld, err := src.Load(ctx)
 	if err != nil {

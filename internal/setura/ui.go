@@ -109,6 +109,7 @@ func uiCommand(cluster *Cluster, rest []string, stdout, stderr io.Writer) (int, 
 	kube := fs.Bool("kube", false, "read the cluster (default when no --snapshot is given)")
 	token := fs.String("token", os.Getenv("SETURA_UI_TOKEN"), "bearer token, required for non-loopback --listen (or SETURA_UI_TOKEN)")
 	redact := fs.Bool("redact", false, "mask hostnames, IPs and namespaces in the dashboard")
+	config := fs.String("config", "", "live gateway config file: the Changes page diffs it against the backups in its .setura-history")
 	interval := fs.Duration("interval", 5*time.Second, "how often to re-read the source")
 	var ns string
 	fs.StringVar(&ns, "n", "default", "namespace")
@@ -143,7 +144,11 @@ func uiCommand(cluster *Cluster, rest []string, stdout, stderr io.Writer) (int, 
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	handler := webui.New(webui.Options{State: p.State, Hub: p.hub, Token: *token})
+	opts := webui.Options{State: p.State, Hub: p.hub, Token: *token}
+	if *config != "" {
+		opts.Changes, opts.ChangeDetail = newChangesSource(*config).attach()
+	}
+	handler := webui.New(opts)
 	addr, closeUI, err := webui.Serve(ctx, *listen, *token, handler)
 	if err != nil {
 		return 0, err

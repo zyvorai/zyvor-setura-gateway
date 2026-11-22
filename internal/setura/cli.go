@@ -23,7 +23,7 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
-		if err := fs.Parse(args); err != nil {
+		if err := parseOnce(fs, args); err != nil {
 			return nil, err
 		}
 		args = fs.Args()
@@ -57,6 +57,12 @@ func runWith(cluster *Cluster, args []string, stdout, stderr io.Writer) (code in
 		var ue usageError
 		if !errors.As(err, &ue) {
 			fmt.Fprintf(stderr, "setura: %s\n", err)
+			var ue userError
+			if errors.As(err, &ue) {
+				if cmd := firstCommand(args); cmd != "" {
+					fmt.Fprintf(stderr, "  Next: setura %s -h shows the flags and an example.\n", cmd)
+				}
+			}
 		}
 		return 2
 	}
@@ -153,6 +159,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "connections":
 		return runConnections(fs, rest, stdout, stderr, u, stdoutTTY)
+
+	case "top":
+		return runTop(fs, rest, stdout, stderr, u, stdoutTTY)
 
 	case "ui":
 		return uiCommand(cluster, rest, stdout, stderr)
@@ -334,7 +343,14 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		}
 		return boolExit(failed), nil
 
+	case "init":
+		code, err := runInit(fs, rest, os.Stdin, isTTY(os.Stdin), stdout, stderr, u, stdoutTTY)
+		return code, err
+
 	case "doctor":
+		if len(rest) > 0 && rest[0] == "gateway" {
+			return runDoctorGateway(rest[1:], stdout, stderr, u, stdoutTTY)
+		}
 		proxyNS := fs.String("proxy-namespace", "envoy-gateway-system", "namespace of the Envoy proxy Services")
 		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")
 		nsFlag()

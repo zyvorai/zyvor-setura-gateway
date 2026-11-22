@@ -61,6 +61,9 @@ live read\-only web dashboard: route map, lint, traffic, feed
 .B connections [\-\-admin ADDR] [\-\-follow]
 who connected to which listener, over what protocol, and where the gateway sent it
 .TP
+.B top [\-\-admin ADDR] [\-\-once]
+live terminal view of requests/s, errors, p50/p95, ejected endpoints and connections
+.TP
 .B impact TARGET
 query what a resource change would affect
 .TP
@@ -85,11 +88,14 @@ built\-in Gateway API data plane, no Envoy needed; guarded config rollout
 .B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
 compare mirrored HTTP and gRPC responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
 .TP
+.B init [\-\-route host=upstream | \-\-openapi FILE]
+scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI JSON file
+.TP
 .B publish GATEWAY \-\-listener NAME
 forward an Envoy Gateway listener to IPv4 loopback
 .TP
-.B doctor
-check permissions needed by setura
+.B doctor [gateway]
+check permissions needed by setura; `doctor gateway` checks a gateway config, ports, certificates and backends
 .TP
 .B capabilities
 list GatewayClasses and controller features

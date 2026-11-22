@@ -1,0 +1,5 @@
+  setura top  127.0.0.1:19000 · LIVE
+
+  ✗ Cannot reach the gateway admin endpoint at 127.0.0.1:19000
+  Next: start the gateway.
+  q quit  j/k select  enter details  p pause

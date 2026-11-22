@@ -26,6 +26,17 @@ type UIInput struct {
 // setura package installs it (this package cannot import setura).
 var UIStateBuilder func(UIInput) (any, error)
 
+// UIChangesBuilder, installed by the setura package, serves the dashboard's
+// Changes page from the live config file and its .setura-history backups.
+var UIChangesBuilder func(configPath string) (changes func() any, detail func(id string) (any, bool))
+
+func (s *Server) uiChanges() (func() any, func(string) (any, bool)) {
+	if UIChangesBuilder == nil || s.opts.ConfigPath == "" {
+		return nil, nil
+	}
+	return UIChangesBuilder(s.opts.ConfigPath)
+}
+
 // specSnapshot renders the live configuration as a route-specs snapshot so
 // the dashboard can lint and draw it like any other source.
 func specSnapshot(c *Config) []byte {
@@ -159,7 +170,8 @@ func plural(n int64, one, many string) string {
 // StartUI serves the read-only dashboard for s on addr until ctx ends.
 func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer) error {
 	hub := webui.NewHub(200)
-	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token, Connections: s.uiConnections()})
+	ch, cd := s.uiChanges()
+	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd})
 	bound, stop, err := webui.Serve(ctx, addr, token, h)
 	if err != nil {
 		return err
@@ -173,7 +185,8 @@ func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer
 
 // UIHandler returns the dashboard as an http.Handler for embedding.
 func (s *Server) UIHandler(token string) http.Handler {
-	return webui.New(webui.Options{State: s.UIState, Token: token, Connections: s.uiConnections()})
+	ch, cd := s.uiChanges()
+	return webui.New(webui.Options{State: s.UIState, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd})
 }
 
 const maxConnBatch = 200

@@ -137,6 +137,13 @@ type Options struct {
 	// /api/connections?limit=&since=. It must not contain header values or
 	// query strings. Nil hides the Connections section.
 	Connections func(limit int, since int64) any
+	// Changes returns the document served at /api/changes: the diff between the
+	// live configuration and its previous backups, plus the rollout timeline.
+	// ChangeDetail answers /api/changes/ID with the read-only "what would this
+	// do" view of one timeline entry. Both are nil when no history is known;
+	// the page then shows how to connect one.
+	Changes      func() any
+	ChangeDetail func(id string) (any, bool)
 	// Token, when set, is required as a Bearer token or session cookie.
 	Token string
 	// Interval is how often an SSE client checks for a changed state.
@@ -173,6 +180,9 @@ func New(o Options) http.Handler {
 	mux.HandleFunc("/api/state", s.guard(s.state))
 	mux.HandleFunc("/api/events", s.guard(s.events))
 	mux.HandleFunc("/api/connections", s.guard(s.connections))
+	mux.HandleFunc("/api/palette", s.guard(s.palette))
+	mux.HandleFunc("/api/changes", s.guard(s.changes))
+	mux.HandleFunc("/api/changes/", s.guard(s.changeDetail))
 	mux.HandleFunc("/events", s.guard(s.stream))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 	return s.base(mux)
@@ -271,8 +281,7 @@ func (s *srv) index(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, denied)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(page)
+	writePage(w, r, s.renderIndex())
 }
 
 func (s *srv) snapshot() ([]byte, bool) {

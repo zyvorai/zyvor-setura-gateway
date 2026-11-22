@@ -1,0 +1,12 @@
+  setura top  127.0.0.1:19000 · every 1s · LIVE
+
+  ● All quiet
+
+  ROUTES                                       req/s     err%      p50      p95
+  nothing yet: no traffic has been counted
+
+  BACKENDS                                     req/s     err%      p50      p95
+  nothing yet: no traffic has been counted
+
+  Open connections  0
+  q quit  j/k select  enter details  p pause
