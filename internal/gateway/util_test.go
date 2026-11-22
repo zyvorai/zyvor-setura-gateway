@@ -3,6 +3,7 @@ package gateway
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -44,4 +45,8 @@ func httpTestUpgrade(t *testing.T) string {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.Listener.Addr().String()
+}
+
+func tlsDial(addr string, p *pki, sni string) (*tls.Conn, error) {
+	return tls.Dial("tcp", addr, &tls.Config{RootCAs: p.pool, ServerName: sni})
 }
