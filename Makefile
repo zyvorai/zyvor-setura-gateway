@@ -8,6 +8,7 @@ build:
 
 test:
 	go test -race -count=1 ./...
+	sh scripts/test-install.sh
 
 vet:
 	go vet ./... && test -z "$$(gofmt -l .)"

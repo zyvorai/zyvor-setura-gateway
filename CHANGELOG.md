@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- **`watch`**: continuous probing with state-change events, Prometheus `/metrics`, and a JSON-lines history.
+- **`bench`**, **HTTP/2** (`--http2`) and **`grpc-health`**.
+- **mTLS**: client certificates, minimum TLS version, certificate and expiry evidence in the TLS stage, and a `certs` command.
+- **Lint**: rules `SET010` to `SET014` (GRPCRoute, TLSRoute, ReferenceGrant, `allowedRoutes`, weights). `SET004` becomes an error when a snapshot proves no ReferenceGrant matches. SARIF and GitHub annotation output, baselines, `--disable` and `--severity-override`. Snapshots also capture GRPCRoute, TLSRoute and ReferenceGrant (still `setura.route-specs/v1`).
+- **CI integrations**: a reusable GitHub Action, a pre-commit hook, `check --sarif` and `--format github`.
+- **AI**: OpenAI-compatible local providers, `--redact`, an allowlisted `--suggest`, and `--max-evidence`.
+- **Terminal**: new human output with color controls (`--color`, `NO_COLOR`, `--ascii`), grouped help, suggestions for typos. JSON output is unchanged.
+- **Distribution**: `install.sh`, a Homebrew formula template, a man page (`setura man`), a GHCR image workflow and an SBOM script.
+
 ## 0.4.0
 
 - **Rewritten in Go.** One static binary for macOS and Linux (arm64 and amd64), a distroless container image, and no runtime to install. CLI flags, exit codes and JSON output keep the 0.3.0 shape.

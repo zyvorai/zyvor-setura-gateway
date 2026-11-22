@@ -43,10 +43,12 @@ It is one static Go binary for macOS and Linux. It reads through your existing `
 
 ## Quickstart
 
-**Install** a release binary from [Releases](https://github.com/zyvorai/zyvor-setura-gateway/releases) (macOS and Linux, arm64 and amd64), or build from source:
+**Install** a release binary from [Releases](https://github.com/zyvorai/zyvor-setura-gateway/releases) (macOS and Linux, arm64 and amd64), or use any of these ([all options](docs/install.md)):
 
 ```sh
+sh install.sh --dry-run                    # checksum-verified installer, shows its plan first
 go install github.com/zyvorai/zyvor-setura-gateway/cmd/setura@latest
+docker run --rm ghcr.io/zyvorai/zyvor-setura-gateway:latest version
 setura version
 ```
 
@@ -97,18 +99,23 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | Command | What it does |
 | --- | --- |
 | `publish GATEWAY --listener NAME` | Finds the single matching Envoy Service and runs `kubectl port-forward` on `127.0.0.1`. `--dry-run` prints the exact command. |
-| `explain URL` | One HTTP/1.1 GET with per-stage evidence: DNS, TCP, TLS, HTTP, backend, assertions. Flags: `--json`, `--status`, `--backend`, `--address`, `--ca`, `--timeout`, `--header`, `--body-contains`, `--max-ms`. |
-| `check FILE` | Runs a JSON file of route assertions. `--junit FILE` also writes JUnit XML. Expected `404`s can be positive assertions. |
-| `lint` | Static analysis of Gateway and HTTPRoute specs with stable rule IDs. Works offline on a snapshot. |
+| `explain URL` | One HTTP/1.1 or HTTP/2 GET with per-stage evidence: DNS, TCP, TLS, HTTP, backend, assertions. Flags: `--json`, `--status`, `--backend`, `--address`, `--ca`, `--timeout`, `--header`, `--body-contains`, `--max-ms`, `--http2`, and mTLS (`--cert`, `--key`, `--tls-server-name`, `--min-tls`, `--warn-expiry-days`). |
+| `check FILE` | Runs a JSON file of route assertions. `--junit FILE` writes JUnit XML, `--sarif FILE` writes SARIF, `--format github` emits workflow annotations. Expected `404`s can be positive assertions. |
+| `watch URL...` | Re-probes on an interval and prints only state changes. `--listen` serves Prometheus `/metrics`, `--history` appends JSON lines. [Details](docs/watch.md) |
+| `bench URL` | Repeated probes with p50/p90/p99 latency, error rate and status histogram, and budget flags that fail the run. |
+| `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
+| `certs HOST:PORT` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. |
+| `lint` | Static analysis of Gateway, HTTPRoute, GRPCRoute and TLSRoute specs with stable rule IDs. Text, JSON, SARIF and GitHub output, baselines, offline. |
 | `gate ROUTE URL` | Requires current parent status and consecutive passing probes before a rollout proceeds. |
 | `compare URL --target dns --target IP` | Probes one URL through DNS and specific addresses to find the node that answers differently. |
+| `publish GATEWAY --listener NAME` | Finds the single matching Envoy Service and runs `kubectl port-forward` on `127.0.0.1`. `--dry-run` prints the exact command. |
 | `inspect ROUTE` | Per-parent route conditions with observed generation, Service ports and EndpointSlice readiness counts. |
 | `listeners GATEWAY` | Listener attachment, supported kinds and conditions. |
-| `snapshot` / `diff BEFORE AFTER` | Capture Gateway and HTTPRoute specs, then compare. `diff` exits 1 when they differ. |
+| `snapshot` / `diff BEFORE AFTER` | Capture Gateway, route and ReferenceGrant specs, then compare. `diff` exits 1 when they differ. |
 | `map` / `impact TARGET` | Render an interactive route graph, or list the routes that depend on a Service. |
-| `ai REPORT [--model NAME]` | Summarize saved evidence, optionally with a local Ollama model. |
+| `ai REPORT` | Summarize saved evidence. Optionally ask a local model (`--provider ollama\|openai-compatible`), with `--redact`, `--suggest` and `--max-evidence`. |
 | `capabilities` · `exposure` · `doctor` | GatewayClass features, Service exposure and overlapping LoadBalancer ports, and RBAC checks. |
-| `completion bash\|zsh\|fish` | Shell completion script. |
+| `completion bash\|zsh\|fish` · `man` · `version` | Shell completion, the manual page, and build info (`--verbose`). |
 
 The global `--context` goes before the subcommand. Probe and check exit codes are `0` for passed assertions, `1` for an observed failure, and `2` for a usage or setup error.
 
@@ -141,6 +148,8 @@ A header value of `"*"` only requires the header to be present. The body check r
 setura snapshot -n apps > snapshot.json   # one cluster read
 setura lint --snapshot snapshot.json      # then fully offline
 setura lint --snapshot snapshot.json --format json --strict
+setura lint --snapshot snapshot.json --format sarif > lint.sarif   # GitHub code scanning
+setura lint --snapshot snapshot.json --format github              # workflow annotations
 ```
 
 | Rule | Severity | Catches |
@@ -148,14 +157,21 @@ setura lint --snapshot snapshot.json --format json --strict
 | `SET001` | error | HTTPRoute with no `parentRefs`, so no Gateway serves it |
 | `SET002` | error | every `backendRef` in a rule has weight 0, so requests are dropped |
 | `SET003` | warning | a rule with no backends and no redirect, which answers 500 |
-| `SET004` | warning | cross-namespace backend that needs a ReferenceGrant |
+| `SET004` | warning, or error | cross-namespace backend that needs a ReferenceGrant; an error when the snapshot captured ReferenceGrants and none matches |
 | `SET005` | error | `sectionName` names a listener the Gateway does not declare |
 | `SET006` | warning | route hostnames do not intersect the listener hostname |
 | `SET007` | error | HTTPS or TLS listener with no `tls` block |
 | `SET008` | error | duplicate listener name, or two listeners sharing port, protocol and hostname |
 | `SET009` | warning | two routes match the same host and path on one parent |
+| `SET010` | error | GRPCRoute with no `parentRefs` or no rules |
+| `SET011` | warning | GRPCRoute or TLSRoute hostnames do not intersect the listener hostname |
+| `SET012` | warning | ReferenceGrant with an empty `from` or `to` list |
+| `SET013` | error | listener `allowedRoutes` does not admit the attaching route |
+| `SET014` | error | negative or overflowing weights, or mixed Service and non-Service backends in one rule |
 
-`lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see ReferenceGrants, controller status or runtime behavior. List the rules any time with `setura lint --rules`.
+`lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
+
+**Adopt it on an existing cluster** without fixing everything first: `--write-baseline base.json` records today's findings, then `--baseline base.json` reports only new ones. Tune with `--disable SET004,SET009` and `--severity-override SET004=error`.
 
 ## See the dependencies
 
@@ -165,6 +181,38 @@ setura impact Service/apps/orders --snapshot snapshot.json
 ```
 
 [Open the live sample map](https://zyvorai.github.io/zyvor-setura-gateway/route-map.html) or read the [map and AI walkthrough](docs/map-ai.md). Impact walks declared references upstream and ignores zero-weight backends.
+
+## Watch it, graph it
+
+```sh
+setura watch https://orders.mactra.test/checkout --address 127.0.0.1 \
+  --backend orders-v1 --interval 10s --listen 127.0.0.1:9464 --history probes.jsonl
+```
+
+`watch` prints one baseline line per target and then only **changes**: ok to failed, a different failing stage, a new backend identity. `--listen` serves `setura_probe_up`, `setura_probe_duration_seconds`, `setura_probe_stage_ok` and `setura_probe_total` at `/metrics` for Prometheus, bound to loopback unless you pass `--allow-remote`. See [docs/watch.md](docs/watch.md).
+
+## mTLS, HTTP/2 and gRPC
+
+```sh
+setura explain https://api.mactra.test/ --http2 --cert client.pem --key client.key --warn-expiry-days 21
+setura certs api.mactra.test:443 --warn-expiry-days 30
+setura grpc-health api.mactra.test:443 --service orders.v1.Orders
+setura bench https://orders.mactra.test/checkout --requests 500 --concurrency 20 --max-p99-ms 250
+```
+
+The TLS stage records the negotiated version, cipher suite, whether a client certificate was presented, and the server certificate's subject, issuer and days to expiry. A server that demands a client certificate fails with a message that tells you to pass `--cert` and `--key`. There is deliberately no `--insecure-skip-verify`. See [docs/mtls.md](docs/mtls.md) and [docs/protocols.md](docs/protocols.md).
+
+## In your pipeline
+
+A reusable [GitHub Action](docs/ci.md) downloads the release for the runner, verifies its checksum and runs any command; a [pre-commit hook](.pre-commit-hooks.yaml) lints snapshots before they land. SARIF and annotation output, baselines and exit codes are covered in [docs/ci.md](docs/ci.md).
+
+## Local AI, with guardrails
+
+`setura ai` turns saved evidence into numbered facts and, if you pass `--model`, asks a model on your own machine. Endpoints must be loopback or private-network unless you pass `--allow-remote`. `--redact` replaces IPs, hostnames, namespaces and header values with placeholders before anything is sent and restores them in the answer. `--suggest` prints next-step commands only if they pass a read-only allowlist (`setura ...`, `kubectl get|describe|logs`). See [docs/ai.md](docs/ai.md).
+
+## A calm terminal
+
+Human output is typographic and quiet: aligned stages, a one-line verdict with a `Next:` hint on failure, grouped help, and a "did you mean" for typos. Color follows `NO_COLOR`, `--color` and whether stdout is a terminal, and **JSON output never changes**: `check`, `doctor`, `gate` and `compare` print JSON when piped. See [docs/terminal.md](docs/terminal.md).
 
 ## How it fits with other tools
 
