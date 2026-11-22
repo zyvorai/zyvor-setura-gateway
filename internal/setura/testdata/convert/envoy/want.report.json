@@ -1,0 +1,149 @@
+{
+  "source": "envoy-gateway",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 6,
+    "ignored": 0,
+    "resources": 3,
+    "todo": 11
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "eg"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "orders",
+      "todos": 10
+    },
+    {
+      "kind": "GRPCRoute",
+      "namespace": "demo",
+      "name": "rpc",
+      "todos": 2
+    }
+  ],
+  "items": [
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "circuitBreaker",
+      "status": "todo",
+      "reason": "configured with gateway flags, not per route; see docs/resilience.md"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "loadBalancer",
+      "status": "todo",
+      "reason": "the Setura gateway balances weighted backendRefs itself; consistent hash, least request and similar have no field"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "rateLimit",
+      "status": "todo",
+      "reason": "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s|m|h), not per route; this policy allows 100/m (--rate-limit 100/m)"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "retry",
+      "value": "numRetries=3",
+      "status": "converted",
+      "target": "rule retry (attempts, codes, backoff, perTryTimeout)"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "retry.retryOn.triggers",
+      "value": "reset",
+      "status": "todo",
+      "reason": "the gateway retries connection failures and the listed status codes only; this trigger has no equivalent"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "timeout.http.connectionIdleTimeout",
+      "value": "5m",
+      "status": "todo",
+      "reason": "HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "timeout.http.requestTimeout",
+      "value": "30s",
+      "status": "converted",
+      "target": "rule timeouts.request"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "timeout.tcp.connectTimeout",
+      "value": "2s",
+      "status": "todo",
+      "reason": "HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "apiKeyAuth",
+      "status": "todo",
+      "reason": "no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and similar are not converted)"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "cors",
+      "status": "converted",
+      "target": "CORS filter on every targeted rule"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "extAuth",
+      "value": "HTTP",
+      "status": "converted",
+      "target": "ExternalAuth filter"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "jwt.providers[idp]",
+      "value": "https://idp.example.test",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth jwt"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "jwt.providers[1]",
+      "value": "other",
+      "status": "todo",
+      "reason": "an auth block accepts one JWT issuer; add this provider by splitting the rules or merging issuers by hand"
+    },
+    {
+      "source": "SecurityPolicy demo/admin-only",
+      "key": "authorization",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth ipAllow / ipDeny"
+    },
+    {
+      "source": "ClientTrafficPolicy demo/client",
+      "key": "clientIPDetection",
+      "status": "todo",
+      "reason": "client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted"
+    },
+    {
+      "source": "ClientTrafficPolicy demo/client",
+      "key": "timeout",
+      "status": "todo",
+      "reason": "client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts"
+    },
+    {
+      "source": "SecurityPolicy demo/ghost",
+      "key": "targetRefs",
+      "value": "HTTPRoute nosuch",
+      "status": "todo",
+      "reason": "the target is not among the converted routes or their Gateways; nothing was changed for it"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "equivalent": 3
+    }
+  }
+}

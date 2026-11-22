@@ -73,8 +73,8 @@ statically analyze specs (offline)
 .B diff BEFORE AFTER
 compare two snapshots
 .TP
-.B migrate check [\-\-ingress F] [\-\-routes F] [\-\-services F] [\-\-objects F] [\-\-ingress\-class C]
-compare Ingress rules with their converted HTTPRoute, GRPCRoute and TLSRoute rules
+.B migrate check [\-\-ingress F] [\-\-routes F] ... | convert [\-\-from SRC] [PATH...] [\-\-out DIR]
+compare Ingress rules with their converted routes (check); turn Ingress, Envoy Gateway, Traefik or nginx.conf into Gateway API YAML (convert)
 .TP
 .B replay \-\-log F \-\-before OLD \-\-after NEW
 replay an access log through two gateway configs and report the routing impact

@@ -1,0 +1,132 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: eg
+  namespace: demo
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) BackendTrafficPolicy demo/slow circuitBreaker -- configured with gateway flags, not per route; see docs/resilience.md
+# TODO(setura) BackendTrafficPolicy demo/slow loadBalancer -- the Setura gateway balances weighted backendRefs itself; consistent hash, least request and similar have no field
+# TODO(setura) BackendTrafficPolicy demo/slow rateLimit -- the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s|m|h), not per route; this policy allows 100/m (--rate-limit 100/m)
+# TODO(setura) BackendTrafficPolicy demo/slow retry.retryOn.triggers: reset -- the gateway retries connection failures and the listed status codes only; this trigger has no equivalent
+# TODO(setura) BackendTrafficPolicy demo/slow timeout.http.connectionIdleTimeout: 5m -- HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings
+# TODO(setura) BackendTrafficPolicy demo/slow timeout.tcp.connectTimeout: 2s -- HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings
+# TODO(setura) SecurityPolicy demo/web apiKeyAuth -- no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and similar are not converted)
+# TODO(setura) SecurityPolicy demo/web jwt.providers[1]: other -- an auth block accepts one JWT issuer; add this provider by splitting the rules or merging issuers by hand
+# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted
+# TODO(setura) ClientTrafficPolicy demo/client timeout -- client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders
+  namespace: demo
+  annotations:
+    setura.zyvor.dev/auth.rule-1: "{\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+    setura.zyvor.dev/auth.rule-2: "{\"ipAllow\":[\"10.1.0.0/16\"],\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+spec:
+  hostnames:
+    - orders.example.test
+  parentRefs:
+    - name: eg
+  rules:
+    - name: read
+      backendRefs:
+        - name: orders
+          port: 80
+      filters:
+        - cors:
+            allowCredentials: true
+            allowHeaders:
+              - X-Token
+            allowMethods:
+              - GET
+              - POST
+            allowOrigins:
+              - https://app.example.test
+            maxAge: 86400
+          type: CORS
+        - externalAuth:
+            backendRef:
+              name: authz
+              port: 9000
+            http:
+              allowedResponseHeaders:
+                - X-User
+              path: /verify
+            protocol: HTTP
+          type: ExternalAuth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /orders
+      retry:
+        attempts: 3
+        backoff: 100ms
+        codes:
+          - 502
+          - 503
+        perTryTimeout: 2s
+      timeouts:
+        request: 30s
+    - name: admin
+      backendRefs:
+        - name: admin
+          port: 80
+      filters:
+        - cors:
+            allowCredentials: true
+            allowHeaders:
+              - X-Token
+            allowMethods:
+              - GET
+              - POST
+            allowOrigins:
+              - https://app.example.test
+            maxAge: 86400
+          type: CORS
+        - externalAuth:
+            backendRef:
+              name: authz
+              port: 9000
+            http:
+              allowedResponseHeaders:
+                - X-User
+              path: /verify
+            protocol: HTTP
+          type: ExternalAuth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /admin
+      retry:
+        attempts: 3
+        backoff: 100ms
+        codes:
+          - 502
+          - 503
+        perTryTimeout: 2s
+      timeouts:
+        request: 30s
+---
+# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted
+# TODO(setura) ClientTrafficPolicy demo/client timeout -- client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: rpc
+  namespace: demo
+spec:
+  parentRefs:
+    - name: eg
+  rules:
+    - backendRefs:
+        - name: rpc
+          port: 9000
+      matches:
+        - method:
+            service: pkg.Svc

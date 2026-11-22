@@ -39,7 +39,7 @@
 - [Replay](replay.md): the impact of a config change on real traffic.
 - [Rollout](rollout.md): guarded rollout, history and rollback.
 - [Shadow diff](shadow.md): compare a new backend against the live one.
-- [Migrate](migrate.md): Ingress to Gateway API.
+- [Migrate](migrate.md): Ingress to Gateway API. [Convert](migrate-convert.md): turn Ingress, Envoy Gateway, Traefik or nginx.conf into Gateway API YAML.
 
 ## Maps and AI
 

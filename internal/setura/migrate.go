@@ -1219,6 +1219,9 @@ func MigrateAnnotations(rep *migrateReport, file string) string {
 // ---- command -------------------------------------------------------------
 
 func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stderr io.Writer, u *ui, tty bool) (int, error) {
+	if len(args) > 0 && args[0] == "convert" {
+		return runMigrateConvert(cluster, fs, args, stdout, stderr, u, tty)
+	}
 	var ns string
 	fs.StringVar(&ns, "n", "default", "namespace to read from the cluster")
 	fs.StringVar(&ns, "namespace", "default", "namespace to read from the cluster")
@@ -1243,7 +1246,7 @@ func runMigrate(cluster *Cluster, fs *flag.FlagSet, args []string, stdout, stder
 	if len(args) > 0 && args[0] == "check" {
 		args = args[1:]
 	} else if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "setura migrate: unknown subcommand %q (expected check)\n", args[0])
+		fmt.Fprintf(stderr, "setura migrate: unknown subcommand %q (expected check or convert)\n", args[0])
 		exampleHint(stderr, "migrate")
 		return 2, usageError{"subcommand"}
 	}

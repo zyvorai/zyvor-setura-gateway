@@ -1,0 +1,51 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "equivalent",
+  "ok": true,
+  "summary": {
+    "converted": 0,
+    "ignored": 0,
+    "resources": 2,
+    "todo": 0
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "mine-mine-example-test"
+    }
+  ],
+  "items": [],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 0,
+      "different": 0,
+      "equivalent": 1,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "mine",
+        "route": "mine-mine-example-test",
+        "expected_route": "mine-mine-example-test",
+        "host": "mine.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "a:80",
+        "ingress_class": "nginx",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      }
+    ]
+  }
+}

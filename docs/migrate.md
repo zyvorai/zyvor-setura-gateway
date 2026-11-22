@@ -1,5 +1,7 @@
 # setura migrate check
 
+(`setura migrate convert` writes the Gateway API objects from Ingress, Envoy Gateway, Traefik or nginx.conf input: see [migrate-convert.md](migrate-convert.md).)
+
 Verify an Ingress to Gateway API migration. Compares each Ingress rule with the converted HTTPRoute, GRPCRoute or TLSRoute rule, optionally probes both data planes, and lists `nginx.ingress.kubernetes.io/*` annotations that need attention.
 
     setura migrate check [flags]
@@ -128,7 +130,7 @@ Every `nginx.ingress.kubernetes.io/*` annotation is classified:
 - `unsupported`: nothing replaces it, such as `configuration-snippet` and `server-snippet`.
 - `unknown`: not in the table.
 
-Each finding includes a replacement hint. `ssl-redirect: "false"` is ignored. The table lives in `internal/setura/migrate_annotations.go`; it is advice, not a converter.
+Each finding includes a replacement hint. `ssl-redirect: "false"` is ignored. The table lives in `internal/setura/migrate_annotations.go`; the check only advises. To produce the converted objects, use [`setura migrate convert`](migrate-convert.md), which translates every annotation that has a mechanical equivalent and leaves a `# TODO(setura)` for the rest.
 
 ## Output and exit codes
 

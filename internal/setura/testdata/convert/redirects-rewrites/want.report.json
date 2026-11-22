@@ -1,0 +1,230 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 7,
+    "ignored": 0,
+    "resources": 8,
+    "todo": 2
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "capture-re-example-test",
+      "todos": 1
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "force-force-example-test",
+      "todos": 1
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "moved-old-example-test"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "nossl-plain-example-test"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "r-a-example-test"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "r-a-example-test-redirect"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "temp-tmp-example-test"
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/r",
+      "key": "nginx.ingress.kubernetes.io/rewrite-target",
+      "value": "/v2",
+      "status": "converted",
+      "target": "URLRewrite ReplacePrefixMatch"
+    },
+    {
+      "source": "Ingress demo/r",
+      "key": "nginx.ingress.kubernetes.io/ssl-redirect",
+      "value": "true",
+      "status": "converted",
+      "target": "RequestRedirect scheme https (301) on a route attached to the HTTP listener"
+    },
+    {
+      "source": "Ingress demo/moved",
+      "key": "nginx.ingress.kubernetes.io/permanent-redirect",
+      "value": "https://new.example.test/landing",
+      "status": "converted",
+      "target": "RequestRedirect 301"
+    },
+    {
+      "source": "Ingress demo/temp",
+      "key": "nginx.ingress.kubernetes.io/temporal-redirect",
+      "value": "https://tmp.example.test",
+      "status": "converted",
+      "target": "RequestRedirect 302"
+    },
+    {
+      "source": "Ingress demo/nossl",
+      "key": "nginx.ingress.kubernetes.io/ssl-redirect",
+      "value": "false",
+      "status": "converted",
+      "target": "no redirect route: redirect disabled"
+    },
+    {
+      "source": "Ingress demo/force",
+      "key": "nginx.ingress.kubernetes.io/force-ssl-redirect",
+      "value": "true",
+      "status": "todo",
+      "reason": "the host has no entry under spec.tls, so there is no HTTPS listener to redirect to; add a tls block with a secretName (ingress-nginx would serve its default certificate)"
+    },
+    {
+      "source": "Ingress demo/capture",
+      "key": "nginx.ingress.kubernetes.io/use-regex",
+      "value": "true",
+      "status": "converted",
+      "target": "path match type RegularExpression"
+    },
+    {
+      "source": "Ingress demo/capture",
+      "key": "nginx.ingress.kubernetes.io/rewrite-target",
+      "value": "/$2",
+      "status": "todo",
+      "reason": "the target uses regex capture groups ($1, $2); URLRewrite has no capture groups, so rewrite by hand or restructure the path"
+    },
+    {
+      "source": "Ingress demo/r",
+      "key": "nginx.ingress.kubernetes.io/app-root",
+      "value": "/home",
+      "status": "converted",
+      "target": "extra rule: Exact / with RequestRedirect 302"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 3,
+      "different": 0,
+      "equivalent": 7,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "r",
+        "route": "r-a-example-test",
+        "expected_route": "r-a-example-test",
+        "host": "a.example.test",
+        "path": "/api",
+        "path_type": "Prefix",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "r",
+        "route": "r-a-example-test",
+        "expected_route": "r-a-example-test",
+        "host": "a.example.test",
+        "path": "/exact",
+        "path_type": "Exact",
+        "backend": "ex:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "moved",
+        "route": "moved-old-example-test",
+        "expected_route": "moved-old-example-test",
+        "host": "old.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "old:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "HTTPRoute rule does redirect to https 301 instead of forwarding to old:80"
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "temp",
+        "route": "temp-tmp-example-test",
+        "expected_route": "temp-tmp-example-test",
+        "host": "tmp.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "old:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "HTTPRoute rule does redirect to https 302 instead of forwarding to old:80"
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "nossl",
+        "route": "nossl-plain-example-test",
+        "expected_route": "nossl-plain-example-test",
+        "host": "plain.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "plain:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "tls": true
+      },
+      {
+        "status": "equivalent",
+        "ingress": "force",
+        "route": "force-force-example-test",
+        "expected_route": "force-force-example-test",
+        "host": "force.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "plain:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "capture",
+        "route": "capture-re-example-test",
+        "expected_route": "capture-re-example-test",
+        "host": "re.example.test",
+        "path": "/svc(/|$)(.*)",
+        "path_type": "ImplementationSpecific",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "pathType ImplementationSpecific is compared as a prefix match"
+        ]
+      }
+    ]
+  }
+}

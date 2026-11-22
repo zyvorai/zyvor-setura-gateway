@@ -1,0 +1,39 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Converted
+    ✓  Ingress demo/t    ssl-redirect (default for hosts under spec.tls)  RequestRedirect scheme https (301) on a route attached to the HTTP listener
+    ✓  Ingress demo/t    server-alias                                     extra route hostnames and listeners
+
+  Needs a human
+    ▲  Ingress demo/t    spec.rules backend port web                      named port "web" unresolved: no Service objects available (pass --services FIL...
+    ▲  Ingress demo/t    auth-tls-secret                                  client certificate verification belongs on the Gateway listener (tls.frontend ...
+    ▲  Ingress demo/t    configuration-snippet                            arbitrary nginx configuration has no Gateway API equivalent; re-express each d...
+    ▲  Ingress demo/t    enable-modsecurity                               no mechanical equivalent: WAF needs a controller or external WAF
+    ▲  Ingress demo/t    limit-connections                                no per-route connection limit in Gateway API or the Setura gateway
+    ▲  Ingress demo/t    limit-rpm                                        the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit...
+    ▲  Ingress demo/t    limit-rps                                        the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit...
+    ▲  Ingress demo/t    load-balance                                     no mechanical equivalent: controller policy (for example BackendTrafficPolicy ...
+    ▲  Ingress demo/t    server-snippet                                   arbitrary nginx configuration has no Gateway API equivalent; re-express each d...
+    ▲  Ingress demo/t    service-upstream                                 no mechanical equivalent: Gateway API always routes to Service endpoints; veri...
+    ▲  Ingress demo/t    totally-unknown                                  not recognised by Setura's annotation table; check the ingress-nginx documenta...
+    ▲  Ingress demo/res  spec.rules backend.resource                      the backend is a resource reference, not a Service; Gateway API routes only to...
+    ▲  Ingress demo/t    spec.tls                                         the tls block has no secretName (ingress-nginx serves its default certificate)...
+
+  1 setting ignored on purpose (see the report)
+
+  Generated
+    Gateway    demo/nginx                      
+    HTTPRoute  demo/t-t-example-test             12 TODO
+    HTTPRoute  demo/t-t-example-test-redirect  
+
+  Check  ✗ differences from the original
+    ✗  unresolved t.example.test /named
+         Ingress tls has no secretName (controller default certificate); listener certificate not compared
+         named port "web" unresolved: no Service objects available (pass --services FILE or read from the cluster)
+    ✗  missing-in-gateway res.example.test /
+         no HTTPRoute rule matches this host and path
+
+  needs review  2 converted, 13 need a human, 3 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

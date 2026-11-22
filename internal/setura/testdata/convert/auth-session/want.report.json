@@ -1,0 +1,166 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 7,
+    "ignored": 0,
+    "resources": 4,
+    "todo": 6
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "a-a-example-test",
+      "todos": 3
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "ext-e-example-test",
+      "todos": 3
+    },
+    {
+      "kind": "ReferenceGrant",
+      "namespace": "infra",
+      "name": "allow-demo-httproutes"
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/whitelist-source-range",
+      "value": "10.0.0.0/8, 192.168.1.0/24",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth ipAllow"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/denylist-source-range",
+      "value": "203.0.113.0/24",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth ipDeny"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/auth-type",
+      "value": "basic",
+      "status": "todo",
+      "reason": "the basic auth block was generated without users: the htpasswd entries in Secret htpasswd use bcrypt or apr1 hashes, while Setura stores pbkdf2-sha256; create each user with `setura gateway hash --kind password` and add it under basic.users"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/auth-response-headers",
+      "value": "X-User, X-Email",
+      "status": "converted",
+      "target": "ExternalAuth http.allowedResponseHeaders"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/auth-url",
+      "value": "http://authz.infra.svc.cluster.local:9000/verify",
+      "status": "converted",
+      "target": "ExternalAuth filter and a ReferenceGrant in infra"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/auth-signin",
+      "value": "https://login.example.test/start",
+      "status": "todo",
+      "reason": "ExternalAuth answers 401/403 itself; redirecting unauthenticated users to a sign-in page needs a controller policy or an auth proxy"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/session-cookie-name",
+      "value": "route",
+      "status": "converted",
+      "target": "sessionPersistence.sessionName"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/session-cookie-max-age",
+      "value": "3600",
+      "status": "converted",
+      "target": "sessionPersistence.absoluteTimeout, cookieConfig.lifetimeType Permanent"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/session-cookie-samesite",
+      "value": "Lax",
+      "status": "todo",
+      "reason": "sessionPersistence cookies have no attribute for this; the gateway issues a signed session cookie with its own settings"
+    },
+    {
+      "source": "Ingress demo/a",
+      "key": "nginx.ingress.kubernetes.io/affinity",
+      "value": "cookie",
+      "status": "converted",
+      "target": "sessionPersistence type Cookie"
+    },
+    {
+      "source": "Ingress demo/ext",
+      "key": "nginx.ingress.kubernetes.io/auth-type",
+      "value": "digest",
+      "status": "todo",
+      "reason": "only basic authentication on an HTTPRoute converts; digest has no equivalent"
+    },
+    {
+      "source": "Ingress demo/ext",
+      "key": "nginx.ingress.kubernetes.io/auth-url",
+      "value": "https://auth.example.com/check",
+      "status": "todo",
+      "reason": "the auth URL is not a Service of this cluster (name[.namespace][.svc]:port/path); ExternalAuth needs a backendRef"
+    },
+    {
+      "source": "Ingress demo/ext",
+      "key": "nginx.ingress.kubernetes.io/affinity",
+      "value": "ip",
+      "status": "todo",
+      "reason": "only cookie affinity converts to sessionPersistence"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 8,
+      "different": 0,
+      "equivalent": 2,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "a",
+        "route": "a-a-example-test",
+        "expected_route": "a-a-example-test",
+        "host": "a.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "app:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "ext",
+        "route": "ext-e-example-test",
+        "expected_route": "ext-e-example-test",
+        "host": "e.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "app:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      }
+    ]
+  }
+}

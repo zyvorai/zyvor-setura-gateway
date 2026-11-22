@@ -1,0 +1,220 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 13,
+    "ignored": 1,
+    "resources": 4,
+    "todo": 5
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "c-c-example-test",
+      "todos": 4
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "cors-off-off-example-test"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "cors-regex-rx-example-test",
+      "todos": 1
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/upstream-vhost",
+      "value": "internal.example.test",
+      "status": "converted",
+      "target": "URLRewrite hostname"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/x-forwarded-prefix",
+      "value": "/shop",
+      "status": "converted",
+      "target": "RequestHeaderModifier set X-Forwarded-Prefix"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/proxy-set-headers",
+      "value": "missing-map",
+      "status": "todo",
+      "reason": "the headers live in ConfigMap demo/missing-map, which is not in the inputs; pass it as an input file or add the headers by hand"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/custom-headers",
+      "value": "demo/resp-headers",
+      "status": "converted",
+      "target": "ResponseHeaderModifier from ConfigMap demo/resp-headers"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/mirror-target",
+      "value": "http://shadow.demo.svc.cluster.local:8080/",
+      "status": "converted",
+      "target": "RequestMirror"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/mirror-host",
+      "value": "shadow.example.test",
+      "status": "todo",
+      "reason": "RequestMirror cannot set the Host header of the mirrored request"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/proxy-read-timeout",
+      "value": "120",
+      "status": "converted",
+      "target": "timeouts.backendRequest"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/proxy-send-timeout",
+      "value": "30",
+      "status": "converted",
+      "target": "timeouts.backendRequest (covers the whole backend request, not only sending; the larger of read and send is used)"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/enable-cors",
+      "value": "true",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-origin",
+      "value": "https://app.example.test, https://*.dev.example.test",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-methods",
+      "value": "get, post",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-headers",
+      "value": "X-Token",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-credentials",
+      "value": "false",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-expose-headers",
+      "value": "X-Out",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/cors-max-age",
+      "value": "600",
+      "status": "converted",
+      "target": "CORS filter"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/proxy-body-size",
+      "value": "8m",
+      "status": "todo",
+      "reason": "Gateway API has no request body limit and the Setura gateway has none per route; enforce it in the backend or in front of the gateway"
+    },
+    {
+      "source": "Ingress demo/c",
+      "key": "nginx.ingress.kubernetes.io/proxy-connect-timeout",
+      "value": "5",
+      "status": "todo",
+      "reason": "HTTPRoute timeouts cover the request and the backend request only, not the connect phase"
+    },
+    {
+      "source": "Ingress demo/cors-off",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-origin",
+      "value": "https://x.example.test",
+      "status": "ignored",
+      "reason": "ignored by ingress-nginx unless enable-cors is true"
+    },
+    {
+      "source": "Ingress demo/cors-regex",
+      "key": "nginx.ingress.kubernetes.io/cors-allow-origin",
+      "value": "^https://.*\\.example\\.test$",
+      "status": "todo",
+      "reason": "regular expression origins are not part of the CORS filter; list exact origins or *.example.com wildcards"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 5,
+      "different": 0,
+      "equivalent": 3,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "c",
+        "route": "c-c-example-test",
+        "expected_route": "c-c-example-test",
+        "host": "c.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "cors-off",
+        "route": "cors-off-off-example-test",
+        "expected_route": "cors-off-off-example-test",
+        "host": "off.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "cors-regex",
+        "route": "cors-regex-rx-example-test",
+        "expected_route": "cors-regex-rx-example-test",
+        "host": "rx.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "api:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      }
+    ]
+  }
+}

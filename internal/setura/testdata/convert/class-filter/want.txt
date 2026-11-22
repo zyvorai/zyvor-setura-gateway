@@ -1,0 +1,12 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Generated
+    Gateway    demo/nginx                   
+    HTTPRoute  demo/mine-mine-example-test  
+
+  Check  ✓ 1 rule equivalent to the original
+
+  equivalent  0 converted, 0 need a human, 2 resources
+  Next: run again with --out DIR to write one file per resource
+

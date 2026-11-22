@@ -1,0 +1,38 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Converted
+    ✓  Ingress demo/c           upstream-vhost          URLRewrite hostname
+    ✓  Ingress demo/c           x-forwarded-prefix      RequestHeaderModifier set X-Forwarded-Prefix
+    ✓  Ingress demo/c           custom-headers          ResponseHeaderModifier from ConfigMap demo/resp-headers
+    ✓  Ingress demo/c           mirror-target           RequestMirror
+    ✓  Ingress demo/c           proxy-read-timeout      timeouts.backendRequest
+    ✓  Ingress demo/c           proxy-send-timeout      timeouts.backendRequest (covers the whole backend request, not only sending; the larger of read and send is used)
+    ✓  Ingress demo/c           enable-cors             CORS filter
+    ✓  Ingress demo/c           cors-allow-origin       CORS filter
+    ✓  Ingress demo/c           cors-allow-methods      CORS filter
+    ✓  Ingress demo/c           cors-allow-headers      CORS filter
+    ✓  Ingress demo/c           cors-allow-credentials  CORS filter
+    ✓  Ingress demo/c           cors-expose-headers     CORS filter
+    ✓  Ingress demo/c           cors-max-age            CORS filter
+
+  Needs a human
+    ▲  Ingress demo/c           proxy-set-headers       the headers live in ConfigMap demo/missing-map, which is not in the inputs; pa...
+    ▲  Ingress demo/c           mirror-host             RequestMirror cannot set the Host header of the mirrored request
+    ▲  Ingress demo/c           proxy-body-size         Gateway API has no request body limit and the Setura gateway has none per rout...
+    ▲  Ingress demo/c           proxy-connect-timeout   HTTPRoute timeouts cover the request and the backend request only, not the con...
+    ▲  Ingress demo/cors-regex  cors-allow-origin       regular expression origins are not part of the CORS filter; list exact origins...
+
+  1 setting ignored on purpose (see the report)
+
+  Generated
+    Gateway    demo/nginx                       
+    HTTPRoute  demo/c-c-example-test              4 TODO
+    HTTPRoute  demo/cors-off-off-example-test   
+    HTTPRoute  demo/cors-regex-rx-example-test    1 TODO
+
+  Check  ✓ 3 rules equivalent to the original
+
+  needs review  13 converted, 5 need a human, 4 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+

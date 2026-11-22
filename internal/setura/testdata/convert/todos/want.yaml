@@ -1,0 +1,90 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: t-example-test-http
+      hostname: t.example.test
+      port: 80
+      protocol: HTTP
+    - name: t-example-test-https
+      hostname: t.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+    - name: t2-example-test-http
+      hostname: t2.example.test
+      port: 80
+      protocol: HTTP
+    - name: www-t-example-test-http
+      hostname: www.t.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) spec.rules backend port web: nosuch -- named port "web" unresolved: no Service objects available (pass --services FILE or read from the cluster); set the port number on the backendRef by hand
+# TODO(setura) nginx.ingress.kubernetes.io/auth-tls-secret: demo/ca -- client certificate verification belongs on the Gateway listener (tls.frontend validation), not on a route
+# TODO(setura) nginx.ingress.kubernetes.io/configuration-snippet: more_set_headers -- arbitrary nginx configuration has no Gateway API equivalent; re-express each directive as a filter or policy by hand
+# TODO(setura) nginx.ingress.kubernetes.io/enable-modsecurity: true -- no mechanical equivalent: WAF needs a controller or external WAF
+# TODO(setura) nginx.ingress.kubernetes.io/limit-connections: 10 -- no per-route connection limit in Gateway API or the Setura gateway
+# TODO(setura) nginx.ingress.kubernetes.io/limit-rpm: 100 -- the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/m), not per route
+# TODO(setura) nginx.ingress.kubernetes.io/limit-rps: 5 -- the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s), not per route; set it there or leave rate limiting to the backend
+# TODO(setura) nginx.ingress.kubernetes.io/load-balance: ewma -- no mechanical equivalent: controller policy (for example BackendTrafficPolicy loadBalancer)
+# TODO(setura) nginx.ingress.kubernetes.io/server-snippet: return 418; -- arbitrary nginx configuration has no Gateway API equivalent; re-express each directive as a filter or policy by hand
+# TODO(setura) nginx.ingress.kubernetes.io/service-upstream: true -- no mechanical equivalent: Gateway API always routes to Service endpoints; verify the controller's behavior
+# TODO(setura) nginx.ingress.kubernetes.io/totally-unknown: yes -- not recognised by Setura's annotation table; check the ingress-nginx documentation for what it does and re-express it by hand
+# TODO(setura) spec.tls: t.example.test -- the tls block has no secretName (ingress-nginx serves its default certificate); add certificateRefs to listener t-example-test-https
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: t-t-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - t.example.test
+    - www.t.example.test
+    - t2.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: t-example-test-https
+    - name: nginx
+      sectionName: www-t-example-test-http
+    - name: nginx
+      sectionName: t2-example-test-http
+  rules:
+    - backendRefs:
+        - name: api
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+    - backendRefs:
+        - name: nosuch
+      matches:
+        - path:
+            type: PathPrefix
+            value: /named
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: t-t-example-test-redirect
+  namespace: demo
+spec:
+  hostnames:
+    - t.example.test
+    - www.t.example.test
+    - t2.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: t-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect

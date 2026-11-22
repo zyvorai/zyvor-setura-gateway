@@ -1,0 +1,168 @@
+{
+  "source": "ingress-nginx",
+  "verdict": "needs-review",
+  "ok": false,
+  "summary": {
+    "converted": 5,
+    "ignored": 0,
+    "resources": 3,
+    "todo": 3
+  },
+  "resources": [
+    {
+      "kind": "Gateway",
+      "namespace": "demo",
+      "name": "nginx"
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "lonely-x-example-test",
+      "todos": 2
+    },
+    {
+      "kind": "HTTPRoute",
+      "namespace": "demo",
+      "name": "main-c-example-test",
+      "todos": 1
+    }
+  ],
+  "items": [
+    {
+      "source": "Ingress demo/canary-weight",
+      "key": "nginx.ingress.kubernetes.io/canary",
+      "value": "true",
+      "status": "converted",
+      "target": "folded into the rule of the non-canary Ingress"
+    },
+    {
+      "source": "Ingress demo/canary-weight",
+      "key": "nginx.ingress.kubernetes.io/canary-weight",
+      "value": "20",
+      "status": "converted",
+      "target": "weighted backendRefs (80 to 20)"
+    },
+    {
+      "source": "Ingress demo/canary-hdr",
+      "key": "nginx.ingress.kubernetes.io/canary",
+      "value": "true",
+      "status": "converted",
+      "target": "folded into the rule of the non-canary Ingress"
+    },
+    {
+      "source": "Ingress demo/canary-hdr",
+      "key": "nginx.ingress.kubernetes.io/canary-by-header",
+      "value": "X-Canary",
+      "status": "converted",
+      "target": "separate rule with a header match to the canary backend"
+    },
+    {
+      "source": "Ingress demo/canary-hdr",
+      "key": "nginx.ingress.kubernetes.io/canary-by-header-value",
+      "value": "beta",
+      "status": "converted",
+      "target": "header match value"
+    },
+    {
+      "source": "Ingress demo/canary-hdr",
+      "key": "nginx.ingress.kubernetes.io/canary-by-cookie",
+      "value": "beta_user",
+      "status": "todo",
+      "reason": "HTTPRoute cannot match on cookies; route canary users by a header instead or use a controller policy"
+    },
+    {
+      "source": "Ingress demo/lonely",
+      "key": "nginx.ingress.kubernetes.io/canary",
+      "value": "true",
+      "status": "todo",
+      "reason": "no non-canary Ingress serves the same host and path in the inputs, so it was converted as a regular route"
+    },
+    {
+      "source": "Ingress demo/lonely",
+      "key": "nginx.ingress.kubernetes.io/canary-weight",
+      "value": "5",
+      "status": "todo",
+      "reason": "there is no main route to split traffic with; decide which route this canary should join"
+    }
+  ],
+  "check": {
+    "ok": true,
+    "summary": {
+      "annotations_flagged": 3,
+      "different": 0,
+      "equivalent": 5,
+      "extra-in-gateway": 0,
+      "grants_missing": 0,
+      "missing-in-gateway": 0,
+      "unresolved": 0
+    },
+    "rules": [
+      {
+        "status": "equivalent",
+        "ingress": "main",
+        "route": "main-c-example-test",
+        "expected_route": "main-c-example-test",
+        "host": "c.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "stable:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "main",
+        "route": "main-c-example-test",
+        "expected_route": "main-c-example-test",
+        "host": "c.example.test",
+        "path": "/hdr",
+        "path_type": "Prefix",
+        "backend": "stable:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      },
+      {
+        "status": "equivalent",
+        "ingress": "canary-weight",
+        "route": "main-c-example-test",
+        "expected_route": "canary-weight-c-example-test",
+        "host": "c.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "beta:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "route name \"main-c-example-test\" differs from the ingress2gateway convention \"canary-weight-c-example-test\""
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "canary-hdr",
+        "route": "main-c-example-test",
+        "expected_route": "canary-hdr-c-example-test",
+        "host": "c.example.test",
+        "path": "/hdr",
+        "path_type": "Prefix",
+        "backend": "beta:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute",
+        "details": [
+          "route name \"main-c-example-test\" differs from the ingress2gateway convention \"canary-hdr-c-example-test\""
+        ]
+      },
+      {
+        "status": "equivalent",
+        "ingress": "lonely",
+        "route": "lonely-x-example-test",
+        "expected_route": "lonely-x-example-test",
+        "host": "x.example.test",
+        "path": "/",
+        "path_type": "Prefix",
+        "backend": "beta:80",
+        "kind": "HTTPRoute",
+        "route_kind": "HTTPRoute"
+      }
+    ]
+  }
+}

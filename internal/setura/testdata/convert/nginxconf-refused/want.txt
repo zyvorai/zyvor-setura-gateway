@@ -1,0 +1,9 @@
+setura migrate convert: the nginx configuration uses constructs outside the supported subset (see docs/migrate-convert.md):
+  testdata/convert/nginxconf-refused/nginx.conf:2: limit_req_zone is outside the supported subset
+  testdata/convert/nginxconf-refused/nginx.conf:4: listen port 8080 is not supported (only 80 and 443)
+  testdata/convert/nginxconf-refused/nginx.conf:5: server_name ~^(?<sub>.+)\.example\.test$ is a regular expression
+  testdata/convert/nginxconf-refused/nginx.conf:7: if in a location block is outside the supported subset
+  testdata/convert/nginxconf-refused/nginx.conf:11: root in a location block is outside the supported subset
+  testdata/convert/nginxconf-refused/nginx.conf:12: try_files in a location block is outside the supported subset
+  testdata/convert/nginxconf-refused/nginx.conf:14: location modifier ~* is outside the supported subset (supported: = ^~ ~)
+  testdata/convert/nginxconf-refused/nginx.conf:18: rewrite in a location block is outside the supported subset

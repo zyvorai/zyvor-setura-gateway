@@ -1,0 +1,105 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: content
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: blog-example-test-http
+      hostname: blog.example.test
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: blog-blog-example-test
+  namespace: content
+spec:
+  hostnames:
+    - blog.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: blog-example-test-http
+  rules:
+    - backendRefs:
+        - name: blog
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: shop-example-test-http
+      hostname: shop.example.test
+      port: 80
+      protocol: HTTP
+    - name: shop-example-test-https
+      hostname: shop.example.test
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: shop-tls
+        mode: Terminate
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop-shop-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - shop.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: shop-example-test-https
+  rules:
+    - backendRefs:
+        - name: api
+          port: 8080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+    - backendRefs:
+        - name: cart
+          port: 8080
+      matches:
+        - path:
+            type: Exact
+            value: /cart
+    - backendRefs:
+        - name: web
+          port: 8080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /web
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop-shop-example-test-redirect
+  namespace: demo
+spec:
+  hostnames:
+    - shop.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: shop-example-test-http
+  rules:
+    - filters:
+        - requestRedirect:
+            scheme: https
+            statusCode: 301
+          type: RequestRedirect

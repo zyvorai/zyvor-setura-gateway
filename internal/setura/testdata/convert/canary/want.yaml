@@ -1,0 +1,81 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  gatewayClassName: setura
+  listeners:
+    - name: c-example-test-http
+      hostname: c.example.test
+      port: 80
+      protocol: HTTP
+    - name: x-example-test-http
+      hostname: x.example.test
+      port: 80
+      protocol: HTTP
+---
+# TODO(setura) nginx.ingress.kubernetes.io/canary: true -- no non-canary Ingress serves the same host and path in the inputs, so it was converted as a regular route
+# TODO(setura) nginx.ingress.kubernetes.io/canary-weight: 5 -- there is no main route to split traffic with; decide which route this canary should join
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: lonely-x-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - x.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: x-example-test-http
+  rules:
+    - backendRefs:
+        - name: beta
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+# TODO(setura) nginx.ingress.kubernetes.io/canary-by-cookie: beta_user -- HTTPRoute cannot match on cookies; route canary users by a header instead or use a controller policy
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: main-c-example-test
+  namespace: demo
+spec:
+  hostnames:
+    - c.example.test
+  parentRefs:
+    - name: nginx
+      sectionName: c-example-test-http
+  rules:
+    - backendRefs:
+        - name: stable
+          port: 80
+          weight: 80
+        - name: beta
+          port: 80
+          weight: 20
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+    - backendRefs:
+        - name: beta
+          port: 80
+      matches:
+        - headers:
+            - name: X-Canary
+              type: Exact
+              value: beta
+          path:
+            type: PathPrefix
+            value: /hdr
+    - backendRefs:
+        - name: stable
+          port: 80
+      matches:
+        - path:
+            type: PathPrefix
+            value: /hdr

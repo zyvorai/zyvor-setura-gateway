@@ -1,0 +1,31 @@
+
+  setura migrate convert  ingress-nginx → Gateway API
+
+  Converted
+    ✓  Ingress demo/a    whitelist-source-range   setura.zyvor.dev/auth ipAllow
+    ✓  Ingress demo/a    denylist-source-range    setura.zyvor.dev/auth ipDeny
+    ✓  Ingress demo/a    auth-response-headers    ExternalAuth http.allowedResponseHeaders
+    ✓  Ingress demo/a    auth-url                 ExternalAuth filter and a ReferenceGrant in infra
+    ✓  Ingress demo/a    session-cookie-name      sessionPersistence.sessionName
+    ✓  Ingress demo/a    session-cookie-max-age   sessionPersistence.absoluteTimeout, cookieConfig.lifetimeType Permanent
+    ✓  Ingress demo/a    affinity                 sessionPersistence type Cookie
+
+  Needs a human
+    ▲  Ingress demo/a    auth-type                the basic auth block was generated without users: the htpasswd entries in Secr...
+    ▲  Ingress demo/a    auth-signin              ExternalAuth answers 401/403 itself; redirecting unauthenticated users to a si...
+    ▲  Ingress demo/a    session-cookie-samesite  sessionPersistence cookies have no attribute for this; the gateway issues a si...
+    ▲  Ingress demo/ext  auth-type                only basic authentication on an HTTPRoute converts; digest has no equivalent
+    ▲  Ingress demo/ext  auth-url                 the auth URL is not a Service of this cluster (name[.namespace][.svc]:port/pat...
+    ▲  Ingress demo/ext  affinity                 only cookie affinity converts to sessionPersistence
+
+  Generated
+    Gateway         demo/nginx                   
+    HTTPRoute       demo/a-a-example-test          3 TODO
+    HTTPRoute       demo/ext-e-example-test        3 TODO
+    ReferenceGrant  infra/allow-demo-httproutes  
+
+  Check  ✓ 2 rules equivalent to the original
+
+  needs review  7 converted, 6 need a human, 4 resources
+  Next: resolve the TODO(setura) comments, then run again with --out DIR
+
