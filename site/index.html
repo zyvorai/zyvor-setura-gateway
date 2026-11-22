@@ -211,10 +211,13 @@ assert   unused</pre>
       <div class="card reveal"><span class="tag">Lint</span><h3>Catch it before traffic</h3><p><code>lint</code> reads a saved snapshot offline and flags dropped traffic, missing listeners, shadowed routes and absent ReferenceGrants, with stable rule IDs.</p></div>
       <div class="card reveal"><span class="tag">Publish</span><h3>Local access in one line</h3><p><code>publish</code> finds the Envoy Service for a listener and forwards it to loopback on your Mac or Linux box. Preview with <code>--dry-run</code>.</p></div>
       <div class="card reveal"><span class="tag">Map</span><h3>See the dependencies</h3><p><code>map</code> renders an interactive route graph. <code>impact</code> lists every route that depends on a Service, ignoring zero-weight paths.</p></div>
-      <div class="card reveal"><span class="tag">Explain</span><h3>Local AI, if you want it</h3><p><code>ai</code> turns saved evidence into cited findings, and can ask a local Ollama model. Nothing leaves your machine.</p></div>
+      <div class="card reveal"><span class="tag">Explain</span><h3>Local AI, if you want it</h3><p><code>ai</code> turns saved evidence into cited findings and can ask a local model. Redact hostnames and IPs first, and suggestions pass a read-only allowlist.</p></div>
       <div class="card reveal"><span class="tag">Inspect</span><h3>Read the real status</h3><p><code>inspect</code>, <code>listeners</code> and <code>doctor</code> show per-parent conditions with observed generation, endpoint readiness and the RBAC you are missing.</p></div>
       <div class="card reveal"><span class="tag">Diff</span><h3>Know what changed</h3><p><code>snapshot</code> and <code>diff</code> capture Gateway and HTTPRoute specs and exit 1 when they differ.</p></div>
-      <div class="card reveal"><span class="tag">Ship</span><h3>One static binary</h3><p>Written in Go with no runtime dependencies. macOS and Linux, arm64 and amd64, plus a distroless container image.</p></div>
+      <div class="card reveal"><span class="tag">Watch</span><h3>Alert on change, not noise</h3><p><code>watch</code> re-probes on an interval and prints only state changes. Serve Prometheus <code>/metrics</code> and keep a JSON-lines history.</p></div>
+      <div class="card reveal"><span class="tag">Secure</span><h3>mTLS and certificates</h3><p>Probe with client certificates, see cipher suite and expiry in the TLS stage, and run <code>certs</code> to verify a chain. No skip-verify flag, on purpose.</p></div>
+      <div class="card reveal"><span class="tag">Protocols</span><h3>HTTP/2, gRPC and latency</h3><p><code>--http2</code>, <code>grpc-health</code> and <code>bench</code> with p50, p90 and p99 and budgets that fail the run.</p></div>
+      <div class="card reveal"><span class="tag">Ship</span><h3>One static binary</h3><p>Written in Go with no runtime dependencies. macOS and Linux, arm64 and amd64, a checksum-verified installer, a Homebrew formula and a distroless container image.</p></div>
     </div>
   </div>
 </section>
@@ -223,11 +226,11 @@ assert   unused</pre>
   <div class="wrap">
     <p class="kicker">Lint</p>
     <h2>Mistakes, with receipts.</h2>
-    <p class="sub">Nine rules today, each with a stable ID you can reference from CI. Lint reads declared specs only, so it works on a laptop with no cluster.</p>
+    <p class="sub">Fourteen rules, each with a stable ID you can reference from CI, across HTTPRoute, GRPCRoute, TLSRoute and ReferenceGrant. Lint reads declared specs only, so it works on a laptop with no cluster.</p>
     <div class="split reveal">
       <div>
         <h3>Fail the build on a blackholed route.</h3>
-        <p><span class="inline" style="background:#1c1c1e;color:#f5f5f7">setura lint</span> exits 1 on errors, or on warnings too with <span class="inline" style="background:#1c1c1e;color:#f5f5f7">--strict</span>. Output is plain text for people and JSON for pipelines.</p>
+        <p><span class="inline" style="background:#1c1c1e;color:#f5f5f7">setura lint</span> exits 1 on errors, or on warnings too with <span class="inline" style="background:#1c1c1e;color:#f5f5f7">--strict</span>. Output is calm text for people, JSON for pipelines, and SARIF for GitHub code scanning. Adopt it on a messy cluster with a baseline and only new findings fail.</p>
       </div>
       <img src="lint.png" alt="setura lint output listing two errors and two warnings with rule IDs" loading="lazy">
     </div>
