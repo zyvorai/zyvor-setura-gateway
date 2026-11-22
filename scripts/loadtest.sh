@@ -86,6 +86,12 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 curl -sf "http://127.0.0.1:$ADMIN/ready" >/dev/null || { cat "$tmp/gateway.log" >&2; echo "gateway not ready" >&2; exit 1; }
+# Ready only says the config loaded; wait until the data port really accepts connections.
+for _ in $(seq 1 50); do
+  (exec 3<>"/dev/tcp/127.0.0.1/$GWPORT") 2>/dev/null && break
+  sleep 0.2
+done
+(exec 3<>"/dev/tcp/127.0.0.1/$GWPORT") 2>/dev/null || { cat "$tmp/gateway.log" >&2; echo "gateway port $GWPORT not accepting connections" >&2; exit 1; }
 
 # RSS of the gateway process once a second (ps works on Linux and macOS).
 ( while kill -0 "$GW" 2>/dev/null; do echo "$(date +%s) $(ps -o rss= -p "$GW" | tr -d ' ')" >>"$OUT/rss.txt"; sleep 1; done ) &
@@ -106,6 +112,7 @@ set +e
   --sample-url "http://127.0.0.1:$PPROF/debug/runtime" --sample-interval 5s --json-out "$OUT/load.json"
 rc=$?
 set -e
+[ "$rc" = 0 ] || { echo "--- gateway log" >&2; cat "$tmp/gateway.log" >&2; }
 if [ "$PROFILE" = 1 ]; then
   curl -sf "http://127.0.0.1:$PPROF/debug/pprof/heap" -o "$OUT/heap.pprof" || true
   wait "${pids[${#pids[@]}-1]}" 2>/dev/null || true
