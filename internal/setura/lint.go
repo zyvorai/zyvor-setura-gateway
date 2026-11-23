@@ -62,7 +62,7 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET080", SeverityWarning, "Envoy Gateway policy sets fields Setura ignores (see docs/envoy-gateway-compat.md)"},
 	{"SET081", SeverityWarning, "Envoy Gateway policy targets a Gateway or route that is not in the snapshot"},
 	{"SET082", SeverityWarning, "two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins and the others are Conflicted"},
-	{"SET083", SeverityWarning, "Envoy Gateway security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules): the controller refuses the targeted traffic"},
+	{"SET083", SeverityWarning, "Envoy Gateway security policy has a field Setura cannot enforce (basicAuth, an oidc policy that cannot be translated, an authorization rule beyond methods): the controller refuses the targeted traffic"},
 	{"SET070", SeverityError, "compress, grpc-web or bandwidth block (rule extension or annotation) is invalid or targets no rule: unknown field, unsupported encoding (brotli, zstd), bad size or rate"},
 	{"SET071", SeverityWarning, "shared rate limit fails closed (failOpen false) or has no fallback, so a Redis outage refuses all traffic or lifts the limit"},
 	{"SET072", SeverityWarning, "shared rate limit counts per a request header the client sets itself, on a rule without an auth policy"},

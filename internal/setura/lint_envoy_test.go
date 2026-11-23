@@ -34,7 +34,7 @@ func TestLintEnvoyPolicies(t *testing.T) {
 	sp := "securitypolicies." + builtin.EnvoyGroup
 	ref := func(kind, name string) any { return obj{"kind": kind, "name": name} }
 	got := lintEnvoy(t, obj{
-		bt + "/slow":    obj{"targetRefs": []any{ref("HTTPRoute", "orders")}, "retry": obj{"numRetries": 1}, "loadBalancer": obj{"type": "Random"}},
+		bt + "/slow":    obj{"targetRefs": []any{ref("HTTPRoute", "orders")}, "retry": obj{"numRetries": 1}, "dns": obj{"lookupFamily": "IPv4"}},
 		bt + "/also":    obj{"targetRefs": []any{ref("HTTPRoute", "orders")}, "retry": obj{"numRetries": 2}},
 		bt + "/ghost":   obj{"targetRefs": []any{ref("HTTPRoute", "nosuch")}, "retry": obj{"numRetries": 2}},
 		sp + "/basic":   obj{"targetRefs": []any{ref("Gateway", "edge")}, "basicAuth": obj{"users": obj{"name": "u"}}},
@@ -49,7 +49,7 @@ func TestLintEnvoyPolicies(t *testing.T) {
 		}
 		t.Errorf("%s: no finding with %q in %v", id, sub, got[id])
 	}
-	has("SET080", "BackendTrafficPolicy/shop/slow: Setura ignores these fields: loadBalancer")
+	has("SET080", "BackendTrafficPolicy/shop/slow: Setura ignores these fields: dns")
 	has("SET081", "BackendTrafficPolicy/shop/ghost: target HTTPRoute nosuch")
 	has("SET082", "BackendTrafficPolicy/shop/also")
 	has("SET082", "BackendTrafficPolicy/shop/slow")

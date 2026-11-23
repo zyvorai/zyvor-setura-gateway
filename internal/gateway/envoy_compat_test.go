@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"os"
 	"sort"
 	"strings"
@@ -17,14 +18,15 @@ var kitchenSinks = map[string][]m{
 			"perRetry": m{"timeout": "2s", "backOff": m{"baseInterval": "100ms", "maxInterval": "1s"}}},
 			"timeout":        m{"http": m{"requestTimeout": "30s", "connectionIdleTimeout": "5m", "maxConnectionDuration": "1h"}, "tcp": m{"connectTimeout": "2s"}},
 			"circuitBreaker": m{"maxConnections": 10, "maxPendingRequests": 5, "maxParallelRequests": 20, "maxParallelRetries": 3, "maxRequestsPerConnection": 2, "perEndpoint": m{"maxConnections": 1}},
-			"loadBalancer":   m{"type": "LeastRequest"},
 			"rateLimit":      m{"type": "Local", "local": m{"rules": l{m{"limit": m{"requests": 100, "unit": "Minute"}}}}},
 			"faultInjection": m{"delay": m{"fixedDelay": "2s", "percentage": 10}, "abort": m{"httpStatus": 503, "percentage": 5, "grpcStatus": 14}},
 			"mirrors":        l{m{"backendRef": m{"name": "shadow", "port": 80}, "percentage": 20}},
 			"proxyProtocol":  m{"version": "V2"},
-			"compression":    l{m{"type": "Gzip"}}, "tcpKeepalive": m{}, "connection": m{"bufferLimit": "1Mi"}, "dns": m{}, "http2": m{},
-			"useClientProtocol": true, "telemetry": m{}, "httpUpgrade": l{}, "requestBuffer": m{}, "decompression": l{}, "responseOverride": l{}, "routingType": "Service"},
-		{"rateLimit": m{"type": "Global", "global": m{}}},
+			"compression":    l{m{"type": "Gzip"}, m{"type": "Brotli"}, m{"type": "Zstd"}}, "tcpKeepalive": m{}, "connection": m{"bufferLimit": "1Mi"}, "dns": m{}, "http2": m{},
+			"useClientProtocol": true, "telemetry": m{}, "httpUpgrade": l{}, "requestBuffer": m{"limit": "1Mi"}, "decompression": l{}, "responseOverride": l{}, "routingType": "Service"},
+		{"loadBalancer": m{"type": "LeastRequest", "slowStart": m{"window": "30s"}, "zoneAware": m{"preferLocal": m{"force": m{"minEndpointsInZoneThreshold": 1}}}, "endpointOverride": m{}}},
+		{"loadBalancer": m{"type": "ConsistentHash", "consistentHash": m{"type": "Header", "header": m{"name": "x-user"}, "tableSize": 65537}}},
+		{"rateLimit": m{"type": "Global", "global": m{"rules": l{m{"limit": m{"requests": 100, "unit": "Minute"}, "clientSelectors": l{m{"headers": l{m{"name": "x-user", "type": "Distinct"}}}}}}}}},
 		{"healthCheck": m{
 			"active": m{"type": "HTTP", "interval": "5s", "timeout": "1s", "unhealthyThreshold": 3, "healthyThreshold": 2,
 				"http": m{"path": "/ready", "method": "GET", "expectedStatuses": l{200}, "expectedResponse": m{}}},
@@ -34,13 +36,15 @@ var kitchenSinks = map[string][]m{
 		{"healthCheck": m{"active": m{"type": "TCP", "tcp": m{}}}},
 	},
 	kCT: {
-		{"tls": m{"minVersion": "1.0", "maxVersion": "1.3", "ciphers": l{"x"}, "ecdhCurves": l{}, "signatureAlgorithms": l{}, "alpnProtocols": l{"h2"}, "session": m{},
-			"clientValidation": m{"optional": true, "caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}}},
+		{"tls": m{"minVersion": "1.0", "maxVersion": "1.3", "ciphers": l{"ECDHE-RSA-AES128-GCM-SHA256", "TLS_AES_128_GCM_SHA256", "bogus"}, "ecdhCurves": l{}, "signatureAlgorithms": l{}, "alpnProtocols": l{"h2"},
+			"session":          m{"resumption": m{"stateless": m{}, "stateful": m{}}},
+			"clientValidation": m{"optional": true, "caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}, "subjectAltNames": l{"*.example.com", m{"type": "URI", "value": "spiffe://x/y"}}}},
 			"enableProxyProtocol": true, "clientIPDetection": m{"xForwardedFor": m{"numTrustedHops": 1}},
 			"path":         m{"escapedSlashesAction": "RejectRequest", "disableMergeSlashes": true},
 			"timeout":      m{"http": m{"requestReceivedTimeout": "5s", "idleTimeout": "1m"}, "tcp": m{"idleTimeout": "1m"}},
-			"connection":   m{"connectionLimit": m{}, "bufferLimit": "1Mi", "socketBufferLimit": "1Mi"},
-			"tcpKeepalive": m{}, "headers": m{}, "http1": m{}, "http2": m{}, "http3": m{}, "healthCheck": m{}},
+			"connection":   m{"connectionLimit": m{"value": 100, "closeDelay": "1s"}, "bufferLimit": "1Mi", "socketBufferLimit": "1Mi"},
+			"tcpKeepalive": m{}, "headers": m{"xForwardedClientCert": m{}}, "http1": m{}, "http2": m{}, "http3": m{}, "healthCheck": m{}},
+		{"headers": m{"enableEnvoyHeaders": true}},
 		{"tls": m{"minVersion": "1.2", "maxVersion": "1.0"}},
 	},
 	kSP: {
@@ -51,21 +55,31 @@ var kitchenSinks = map[string][]m{
 				m{"name": "b", "issuer": "https://j", "localJWKS": m{"type": "Inline", "inline": `{"keys":[]}`}}}},
 			"apiKeyAuth": m{"credentialRefs": l{m{"name": "keys"}}, "extractFrom": l{m{"headers": l{"X-Key"}}}, "sanitize": true, "forwardClientIDHeader": "X-Client"},
 			"basicAuth":  m{"users": m{"name": "u"}},
-			"oidc":       m{"provider": m{}},
+			"oidc": m{"provider": m{"issuer": "https://idp", "authorizationEndpoint": "https://idp/a", "tokenEndpoint": "https://idp/t", "endSessionEndpoint": "https://idp/e", "backendRefs": l{}},
+				"clientID": "id", "clientSecret": m{"name": "oidc"}, "scopes": l{"email"}, "redirectURL": "https://app/oauth2/callback", "logoutPath": "/out", "forwardAccessToken": true,
+				"cookieDomain": "app", "cookieConfig": m{"sameSite": "Strict"}, "cookieNames": m{}, "refreshToken": true, "disableTokenEncryption": true,
+				"defaultTokenTTL": "1h", "defaultRefreshTokenTTL": "1h", "denyRedirect": m{}, "resources": l{"r"}},
 			"extAuth": m{"http": m{"backendRefs": l{m{"name": "authz", "port": 9000}}, "path": "/v", "headersToBackend": l{"X"}},
 				"headersToExtAuth": l{"Y"}, "bodyToExtAuth": m{}, "failOpen": true, "recomputeRoute": true},
 			"authorization": m{"defaultAction": "Deny", "rules": l{m{"action": "Allow", "principal": m{"clientCIDRs": l{"10.0.0.0/8"}}}}}},
 		{"jwt": m{"providers": l{m{"name": "c", "issuer": "https://k", "localJWKS": m{"type": "Inline", "inline": `{"keys":[]}`}}}}},
 		{"extAuth": m{"grpc": m{"backendRefs": l{m{"name": "authz", "port": 9000}}}}},
 		{"authorization": m{"rules": l{m{"action": "Deny", "principal": m{"jwt": m{}, "headers": l{}}, "operation": m{}}}}},
+		{"authorization": m{"defaultAction": "Deny", "rules": l{m{"action": "Allow",
+			"principal": m{"clientCIDRs": l{"10.0.0.0/8"}, "jwt": m{"claims": l{m{"name": "role", "valueType": "String", "values": l{"admin"}}}, "scopes": l{"read"}}, "headers": l{m{"name": "x-env", "values": l{"a", "b"}}}},
+			"operation": m{"methods": l{"GET"}}}}}},
+		{"oidc": m{"provider": m{"issuer": "https://idp"}, "clientIDRef": m{"name": "id"}}},
 	},
 }
+
+// sinkOpts name a Redis server and an OIDC cookie key, so the fields that need them are translated.
+var sinkOpts = EnvoyOptions{Namespace: "ns", Redis: "default", OIDCCookieKey: "env:SETURA_COOKIE_KEY"}
 
 func TestEnvoyCompatTableMatchesTranslator(t *testing.T) {
 	for kind, specs := range kitchenSinks {
 		notes := map[string][]FieldNote{}
 		for _, spec := range specs {
-			for _, n := range TranslateEnvoyPolicy(kind, spec, EnvoyOptions{}).Notes {
+			for _, n := range TranslateEnvoyPolicy(kind, spec, sinkOpts).Notes {
 				notes[n.Field] = append(notes[n.Field], n)
 			}
 		}
@@ -76,9 +90,10 @@ func TestEnvoyCompatTableMatchesTranslator(t *testing.T) {
 	for _, spec := range []m{
 		{"directResponse": m{"statusCode": 404, "contentType": "text/plain", "body": m{"type": "Inline", "inline": "gone"}}},
 		{"directResponse": m{"body": m{"type": "ValueRef"}}},
+		{"credentialInjection": m{"header": "Authorization", "overwrite": false, "credential": m{"valueRef": m{"name": "tok"}}}},
 		{"urlRewrite": m{"path": m{"replaceRegexMatch": m{"pattern": "a", "substitution": "b"}}, "hostname": m{"type": "Header"}}, "credentialInjection": m{}},
 	} {
-		for _, n := range TranslateHTTPRouteFilter(spec).Notes {
+		for _, n := range TranslateHTTPRouteFilter(spec, "ns").Notes {
 			notes[n.Field] = append(notes[n.Field], n)
 		}
 	}
@@ -155,9 +170,9 @@ func TestEnvoyTranslateValues(t *testing.T) {
 		t.Errorf("GRPCRoute translation: rule %v backend %v", g.Rule, g.Backend)
 	}
 	// Security fields that cannot be translated fail closed.
-	s := TranslateEnvoyPolicy(kSP, kitchenSinks[kSP][0], EnvoyOptions{})
+	s := TranslateEnvoyPolicy(kSP, kitchenSinks[kSP][0], sinkOpts)
 	sort.Strings(s.FailClosed)
-	if strings.Join(s.FailClosed, ",") != "basicAuth,oidc" {
+	if strings.Join(s.FailClosed, ",") != "basicAuth" {
 		t.Errorf("fail closed: %v", s.FailClosed)
 	}
 	if s.Auth["jwt"].(map[string]any)["issuer"] != "https://i" || s.Auth["ipAllow"] == nil {
@@ -374,5 +389,151 @@ func TestEnvoyMergeModes(t *testing.T) {
 	j := envoyMerge(base, over, "JSONMerge")
 	if len(j["list"].([]any)) != 2 {
 		t.Errorf("json merge replaces lists: %v", j["list"])
+	}
+}
+
+// ---- the edge and shaping features ----
+
+func TestEnvoyLoadBalancerAndShapingFields(t *testing.T) {
+	cfg := envoyCfg()
+	res := ApplyEnvoyCompat(cfg, EnvoyInput{Policies: []*EnvoyObject{
+		envoyObj(kBT, "infra", "shape", 0, m{"targetRefs": l{target("HTTPRoute", "orders")},
+			"loadBalancer":  m{"type": "ConsistentHash", "consistentHash": m{"type": "Cookie", "cookie": m{"name": "sid", "ttl": "1h"}}},
+			"compression":   l{m{"type": "Gzip"}, m{"type": "Brotli"}},
+			"requestBuffer": m{"limit": "2Mi"}}),
+	}})
+	lb := cfg.Backends["infra/orders:80"].LoadBalancer
+	if lb == nil || lb.Algorithm != AlgoConsistentHash || lb.ConsistentHash == nil || lb.ConsistentHash.On != "cookie" || lb.ConsistentHash.Name != "sid" || lb.ConsistentHash.TTL != "1h" {
+		t.Errorf("load balancer: %+v", lb)
+	}
+	r := cfg.Routes[0].Rules[0]
+	if r.Compress == nil || r.Compress.Enabled == nil || !*r.Compress.Enabled || len(r.Compress.Encodings) != 1 || r.Compress.Encodings[0] != "gzip" {
+		t.Errorf("compress: %+v", r.Compress)
+	}
+	if r.Limits == nil || r.Limits.MaxRequestBody != "2097152" {
+		t.Errorf("limits: %+v", r.Limits)
+	}
+	if ig := outcome(res, kBT+"/infra/shape").Ignored; len(ig) != 1 || ig[0] != "compression.brotli" {
+		t.Errorf("ignored: %v", ig)
+	}
+	// zone aware and slow start on a least request balancer; a hash table size picks Maglev
+	tr := TranslateEnvoyPolicy(kBT, m{"loadBalancer": m{"type": "LeastRequest", "slowStart": m{"window": "20s"}, "zoneAware": m{"preferLocal": m{}}}}, EnvoyOptions{})
+	b, _ := json.Marshal(tr.Backend["loadBalancer"])
+	if string(b) != `{"algorithm":"leastRequest","locality":{"preferLocalZone":true},"slowStart":{"window":"20s"}}` {
+		t.Errorf("least request: %s", b)
+	}
+	tr = TranslateEnvoyPolicy(kBT, m{"loadBalancer": m{"type": "ConsistentHash", "consistentHash": m{"type": "SourceIP", "tableSize": 65537}}}, EnvoyOptions{})
+	if h := tr.Backend["loadBalancer"].(map[string]any)["consistentHash"].(map[string]any); h["type"] != "maglev" || h["on"] != "sourceIP" {
+		t.Errorf("maglev: %v", h)
+	}
+	// a GRPCRoute takes the backend setting but no rule field
+	g := TranslateEnvoyPolicy(kBT, m{"loadBalancer": m{"type": "Random"}, "compression": l{m{"type": "Gzip"}}}, EnvoyOptions{TargetKind: "GRPCRoute"})
+	if g.Backend["loadBalancer"] == nil || g.Rule != nil {
+		t.Errorf("GRPCRoute: backend %v rule %v", g.Backend, g.Rule)
+	}
+}
+
+func TestEnvoyGlobalRateLimitNeedsRedis(t *testing.T) {
+	spec := m{"rateLimit": m{"type": "Global", "global": m{"rules": l{m{"limit": m{"requests": 10, "unit": "Second"}}}}}}
+	none := TranslateEnvoyPolicy(kBT, spec, EnvoyOptions{})
+	if none.Rule != nil || len(none.Ignored()) == 0 {
+		t.Errorf("without a Redis name nothing is translated: %v %v", none.Rule, none.Ignored())
+	}
+	found := false
+	for _, n := range none.Notes {
+		found = found || (n.Field == "rateLimit.global" && strings.Contains(n.Reason, EnvoyRedisAnnotation))
+	}
+	if !found {
+		t.Errorf("the note must name the annotation: %+v", none.Notes)
+	}
+	cfg := envoyCfg()
+	obj := envoyObj(kBT, "infra", "global", 0, spec)
+	obj.Spec["targetRefs"] = l{target("HTTPRoute", "orders")}
+	obj.Annotations[EnvoyRedisAnnotation] = "limits"
+	ApplyEnvoyCompat(cfg, EnvoyInput{Policies: []*EnvoyObject{obj}})
+	rl := cfg.Routes[0].Rules[0].RateLimit
+	if rl == nil || rl.Shared == nil || rl.Shared.Redis != "limits" || rl.Key != "route" || string(rl.Rate) != "10/s" {
+		t.Errorf("rate limit: %+v", rl)
+	}
+}
+
+func TestEnvoyOIDCAndAuthorization(t *testing.T) {
+	cfg := envoyCfg()
+	login := envoyObj(kSP, "infra", "login", 0, m{"targetRefs": l{target("HTTPRoute", "orders", "read")},
+		"oidc": m{"provider": m{"issuer": "https://idp.test"}, "clientID": "web", "clientSecret": m{"name": "oidc"}, "redirectURL": "https://app.test/oauth2/callback"}})
+	login.Annotations[EnvoyOIDCCookieKeyAnnotation] = "secret:keys#cookie"
+	nokey := envoyObj(kSP, "infra", "nokey", 0, m{"targetRefs": l{target("HTTPRoute", "orders", "admin")},
+		"oidc": m{"provider": m{"issuer": "https://idp.test"}, "clientID": "web", "redirectURL": "https://app.test/oauth2/callback"}})
+	authz := envoyObj(kSP, "infra", "authz", 0, m{"targetRefs": l{target("HTTPRoute", "billing")},
+		"authorization": m{"defaultAction": "Deny", "rules": l{m{"action": "Allow",
+			"principal": m{"jwt": m{"claims": l{m{"name": "role", "values": l{"admin", "ops"}}}, "scopes": l{"orders.read"}}, "headers": l{m{"name": "x-env", "values": l{"a", "b"}}}},
+			"operation": m{"methods": l{"GET"}}}}}})
+	res := ApplyEnvoyCompat(cfg, EnvoyInput{Policies: []*EnvoyObject{login, nokey, authz}})
+	o := cfg.Routes[0].Rules[0].Auth
+	if o == nil || o.OIDC == nil || o.OIDC.Issuer != "https://idp.test" || o.OIDC.ClientSecret == nil || o.OIDC.ClientSecret.Secret.Key != "client-secret" || o.OIDC.ClientSecret.Secret.Namespace != "infra" ||
+		len(o.OIDC.CookieKeys) != 1 || o.OIDC.CookieKeys[0].Secret.Name != "keys" || !o.OIDC.DisableRefresh {
+		t.Errorf("oidc: %+v", o)
+	}
+	if got := outcome(res, kSP+"/infra/login"); len(got.FailClosed) != 0 || len(got.Invalid) != 0 {
+		t.Errorf("a translated oidc policy must not fail closed: %+v", got)
+	}
+	// without the cookie key the policy cannot be enforced: refuse
+	if a := cfg.Routes[0].Rules[1].Auth; a == nil || len(a.IPDeny) != 2 {
+		t.Errorf("oidc without a cookie key must deny: %+v", a)
+	}
+	if got := outcome(res, kSP+"/infra/nokey").FailClosed; len(got) != 1 || got[0] != "oidc" {
+		t.Errorf("fail closed: %v", got)
+	}
+	az := cfg.Routes[1].Rules[0].Auth
+	if az == nil || az.Authorization == nil || az.Authorization.DefaultAction != "deny" || len(az.Authorization.Rules) != 2 {
+		t.Fatalf("authorization: %+v", az)
+	}
+	r0 := az.Authorization.Rules[0]
+	if r0.Action != "allow" || len(r0.Principals[0].Claims) != 1 || r0.Principals[0].Claims[0].In[1] != "ops" || r0.Principals[0].Scopes[0] != "orders.read" ||
+		r0.Operations[0].Methods[0] != "GET" || r0.Operations[0].Headers[0].Name != "x-env" || r0.Operations[0].Headers[0].Exact != "a" || az.Authorization.Rules[1].Operations[0].Headers[0].Exact != "b" {
+		t.Errorf("rule: %+v", r0)
+	}
+	if got := outcome(res, kSP+"/infra/authz").FailClosed; len(got) != 0 {
+		t.Errorf("authorization is enforced now: %v", got)
+	}
+	// an operation member Setura cannot express still fails closed
+	bad := TranslateEnvoyPolicy(kSP, m{"authorization": m{"rules": l{m{"action": "Allow", "principal": m{"clientCIDRs": l{"10.0.0.0/8"}}, "operation": m{"paths": l{"/x"}}}}}}, EnvoyOptions{})
+	if len(bad.FailClosed) != 1 || bad.FailClosed[0] != "authorization" {
+		t.Errorf("unsupported operation: %v", bad.FailClosed)
+	}
+}
+
+func TestEnvoyCredentialInjectionAndListener(t *testing.T) {
+	cfg := envoyCfg()
+	cfg.Routes[0].Rules[0].Filters = []Filter{{Type: "ExtensionRef", ExtensionRef: &ObjRef{Group: EnvoyGroup, Kind: "HTTPRouteFilter", Name: "token"}}}
+	ApplyEnvoyCompat(cfg, EnvoyInput{
+		Filters: []*EnvoyObject{envoyObj(kHRF, "infra", "token", 0, m{"credentialInjection": m{"header": "X-Api-Token", "credential": m{"valueRef": m{"name": "up"}}}})},
+		Policies: []*EnvoyObject{envoyObj(kCT, "infra", "client", 0, m{"targetRefs": l{target("Gateway", "edge", "tls")},
+			"tls": m{"ciphers": l{"ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-CHACHA20-POLY1305"}, "session": m{"resumption": m{"stateless": m{}}},
+				"clientValidation": m{"caCertificateRefs": l{m{"kind": "ConfigMap", "name": "ca"}}, "subjectAltNames": l{"*.clients.test"}}},
+			"connection": m{"connectionLimit": m{"value": 50}}})},
+	})
+	a := cfg.Routes[0].Rules[0].Auth
+	if a == nil || len(a.Inject) != 1 || a.Inject[0].Header != "X-Api-Token" || a.Inject[0].Secret.Secret.Key != "credential" || a.Inject[0].Secret.Secret.Namespace != "infra" {
+		t.Errorf("inject: %+v", a)
+	}
+	if len(cfg.Routes[0].Rules[0].Filters) != 0 {
+		t.Errorf("the ExtensionRef must be consumed: %+v", cfg.Routes[0].Rules[0].Filters)
+	}
+	lis := cfg.Gateways[0].Listeners[1]
+	if o := lis.TLS.Options[TLSCipherSuitesOption]; o != "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256" {
+		t.Errorf("ciphers %q", o)
+	}
+	if lis.TLS.Options[TLSSessionResumptionOption] != "on" || lis.Limits == nil || lis.Limits.MaxConnections != 50 {
+		t.Errorf("listener: %+v %+v", lis.TLS.Options, lis.Limits)
+	}
+	pp := cfg.Gateways[0].TLS.Frontend.PerPort
+	if len(pp) != 1 || pp[0].TLS.Validation.Allow == nil || pp[0].TLS.Validation.Allow.SAN[0] != "*.clients.test" {
+		t.Errorf("frontend: %+v", pp)
+	}
+	// Go's insecure and TLS 1.3 suites are dropped with a note
+	tr := TranslateEnvoyPolicy(kCT, m{"tls": m{"ciphers": l{"TLS_AES_128_GCM_SHA256", "ECDHE-RSA-DES-CBC3-SHA"}}}, EnvoyOptions{})
+	if tr.Listener != nil || len(tr.Ignored()) != 1 {
+		t.Errorf("no usable suite: %v %v", tr.Listener, tr.Ignored())
 	}
 }

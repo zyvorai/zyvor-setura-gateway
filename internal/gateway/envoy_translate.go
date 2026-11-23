@@ -47,17 +47,33 @@ type EnvoyOptions struct {
 	FaultTTL string
 	// Name labels a translated fault.
 	Name string
+	// Namespace is the namespace of the policy, where the Secrets it names live.
+	Namespace string
+	// Redis is the NAME of the --redis server a global rate limit counts in; empty ignores the field.
+	Redis string
+	// OIDCCookieKey is where the OIDC session cookie key comes from (env:NAME, file:PATH, secret:[NS/]NAME#KEY).
+	OIDCCookieKey string
+}
+
+// EnvoyOptionsFor reads the translation options of a policy: its annotations and namespace.
+func EnvoyOptionsFor(annotations map[string]string, ns, name, targetKind string) EnvoyOptions {
+	return EnvoyOptions{
+		TargetKind: targetKind, Name: "envoy-" + name, Namespace: ns,
+		FaultTTL:      annotations[EnvoyFaultTTLAnnotation],
+		Redis:         strings.TrimSpace(annotations[EnvoyRedisAnnotation]),
+		OIDCCookieKey: strings.TrimSpace(annotations[EnvoyOIDCCookieKeyAnnotation]),
+	}
 }
 
 // EnvoyTranslation is what one policy spec becomes.
 type EnvoyTranslation struct {
-	Rule     map[string]any   // rule fields: retry, timeouts, setura.zyvor.dev/rate-limit, /fault, /direct-response
+	Rule     map[string]any   // rule fields: retry, timeouts, setura.zyvor.dev/rate-limit, /fault, /compress, /limits
 	Auth     map[string]any   // the rule's setura.zyvor.dev/auth block, without secrets
 	APIKey   map[string]any   // apiKey block (header, query, forward) waiting for the keys of SecretRefs
 	Filters  []map[string]any // filters to add to every targeted rule
-	Backend  map[string]any   // BackendDef fields of the Services the rules send to
-	Listener map[string]any   // tlsMinVersion, tlsMaxVersion
-	Frontend map[string]any   // caCertificateRefs and mode of client certificate validation
+	Backend  map[string]any   // BackendDef fields of the Services the rules send to (circuitBreaker, healthCheck, proxyProtocol, loadBalancer)
+	Listener map[string]any   // tlsMinVersion, tlsMaxVersion, tlsCipherSuites, tlsSessionResumption, limits
+	Frontend map[string]any   // caCertificateRefs, mode and setura.zyvor.dev/client-allow of client certificate validation
 	// SecretRefs name the Secrets APIKey needs; FailClosed lists the fields that guard traffic and could
 	// not be translated.
 	SecretRefs []EnvoySecretRef
@@ -286,6 +302,12 @@ func (t *translator) backendTraffic(k string, v any) {
 			t.out.Filters = append(t.out.Filters, map[string]any{"type": "RequestMirror", "requestMirror": rm})
 		}
 		t.ok("rule", "mirrors", nil)
+	case "loadBalancer":
+		t.loadBalancer(ecMap(v))
+	case "compression":
+		t.compression(ecList(v))
+	case "requestBuffer":
+		t.requestBuffer(ecMap(v))
 	case "proxyProtocol":
 		ver := strings.ToLower(ecStr(ecMap(v)["version"]))
 		if ver == "v1" || ver == "v2" {
@@ -386,44 +408,73 @@ func (t *translator) rateLimit(rl map[string]any) {
 		return
 	}
 	typ := ecStr(rl["type"])
-	if typ != "" && typ != "Local" {
-		t.no("rateLimit.type", typ, "")
-		if rl["global"] != nil {
-			t.no("rateLimit.global", nil, "")
+	switch typ {
+	case "", "Local":
+		t.ok("rule", "rateLimit.type", typ)
+		for i, r := range ecList(ecDig(rl, "local", "rules")) {
+			t.rateRule("rateLimit.local.rules", i, r, false)
 		}
+		if rl["global"] != nil {
+			t.no("rateLimit.global", nil, "the policy type is Local")
+		}
+	case "Global":
+		if rl["local"] != nil {
+			t.no("rateLimit.local.rules", nil, "the policy type is Global")
+		}
+		if t.opts.Redis == "" {
+			t.no("rateLimit.type", typ, "a global limit needs a Redis server: set the annotation "+EnvoyRedisAnnotation+" on the policy to the NAME of a --redis server")
+			if rl["global"] != nil {
+				t.no("rateLimit.global", nil, "no Redis server is named (annotation "+EnvoyRedisAnnotation+"), so nothing is counted across replicas and the route is not rate limited")
+			}
+			return
+		}
+		t.ok("rule", "rateLimit.type", typ)
+		for i, r := range ecList(ecDig(rl, "global", "rules")) {
+			t.rateRule("rateLimit.global", i, r, true)
+		}
+	default:
+		t.no("rateLimit.type", typ, "")
+	}
+}
+
+// rateRule translates one rate limit rule of a local or global policy: the
+// first becomes the rule's bucket, the others cannot (one bucket per rule).
+func (t *translator) rateRule(field string, i int, r any, global bool) {
+	limit := ecMap(r)
+	sel := ecList(limit["clientSelectors"])
+	if i > 0 {
+		t.no(field, nil, "Setura keeps one rate limit bucket per rule; only the first policy rule is translated")
 		return
 	}
-	t.ok("rule", "rateLimit.type", typ)
-	rules := ecList(ecDig(rl, "local", "rules"))
-	for i, r := range rules {
-		limit := ecMap(r)
-		sel := ecList(limit["clientSelectors"])
-		if i > 0 {
-			t.no("rateLimit.local.rules", nil, "Setura keeps one rate limit bucket per rule; only the first policy rule is translated")
-			continue
-		}
-		n, okN := ecNum(ecDig(limit, "limit", "requests"))
-		unit := rateUnits[ecStr(ecDig(limit, "limit", "unit"))]
-		if !okN || unit == "" {
-			t.no("rateLimit.local.rules", nil, "the limit needs requests and a unit of Second, Minute or Hour")
-			continue
-		}
-		block := map[string]any{"rate": strconv.Itoa(int(n)) + "/" + unit, "key": "route"}
-		switch {
-		case len(sel) == 0:
-			t.ok("rule", "rateLimit.local.rules", nil)
-		case len(sel) == 1 && ecMap(sel[0])["sourceCIDR"] != nil && len(ecMap(sel[0])) == 1 && ecStr(ecDig(sel[0], "sourceCIDR", "type")) == "Distinct":
-			block["key"] = "client-ip"
-			t.part("rule", "rateLimit.local.rules", nil, "limits every client address, the sourceCIDR value is ignored")
-		default:
-			t.no("rateLimit.local.rules", nil, "clientSelectors other than a distinct sourceCIDR cannot be expressed; the rule is not applied")
-			continue
-		}
-		t.rule("setura.zyvor.dev/rate-limit", block)
+	n, okN := ecNum(ecDig(limit, "limit", "requests"))
+	unit := rateUnits[ecStr(ecDig(limit, "limit", "unit"))]
+	if !okN || unit == "" {
+		t.no(field, nil, "the limit needs requests and a unit of Second, Minute or Hour")
+		return
 	}
-	if rl["global"] != nil {
-		t.no("rateLimit.global", nil, "")
+	block := map[string]any{"rate": strconv.Itoa(int(n)) + "/" + unit, "key": "route"}
+	partial := ""
+	switch {
+	case len(sel) == 0:
+	case len(sel) == 1 && ecMap(sel[0])["sourceCIDR"] != nil && len(ecMap(sel[0])) == 1 && ecStr(ecDig(sel[0], "sourceCIDR", "type")) == "Distinct":
+		block["key"] = "client-ip"
+		partial = "limits every client address, the sourceCIDR value is ignored"
+	case len(sel) == 1 && len(ecMap(sel[0])) == 1 && len(ecList(ecMap(sel[0])["headers"])) == 1 && ecMap(ecList(ecMap(sel[0])["headers"])[0])["value"] == nil &&
+		ecStr(ecMap(ecList(ecMap(sel[0])["headers"])[0])["name"]) != "" && ecMap(ecList(ecMap(sel[0])["headers"])[0])["invert"] == nil:
+		block["key"] = "header:" + ecStr(ecMap(ecList(ecMap(sel[0])["headers"])[0])["name"])
+	default:
+		t.no(field, nil, "clientSelectors other than a distinct sourceCIDR or a distinct header cannot be expressed; the rule is not applied")
+		return
 	}
+	if global {
+		block["shared"] = map[string]any{"redis": t.opts.Redis}
+	}
+	if partial != "" {
+		t.part("rule", field, nil, partial)
+	} else {
+		t.ok("rule", field, nil)
+	}
+	t.rule("setura.zyvor.dev/rate-limit", block)
 }
 
 func (t *translator) healthCheck(hc map[string]any) {
@@ -561,10 +612,7 @@ func (t *translator) clientTraffic(k string, v any) {
 				case !ok:
 					t.no(path, ver, "a maximum below TLS 1.2 cannot be met by Setura")
 				default:
-					if t.out.Listener == nil {
-						t.out.Listener = map[string]any{}
-					}
-					t.out.Listener[key] = mapped
+					t.listener(key, mapped)
 					if mapped != ver {
 						t.part("listener", path, ver, "Setura serves TLS 1.2 and 1.3 only: "+ver+" becomes "+mapped)
 					} else {
@@ -594,10 +642,31 @@ func (t *translator) clientTraffic(k string, v any) {
 					fe["mode"] = "AllowInsecureFallback"
 					t.ok("frontend", "tls.clientValidation.optional", true)
 				}
+				if sans := ecList(cv["subjectAltNames"]); len(sans) > 0 {
+					t.clientAllow(fe, sans)
+				}
 				t.out.Frontend = fe
+			case "ciphers":
+				t.tlsCiphers(ecList(tl[f]))
+			case "session":
+				t.tlsSession(ecMap(tl[f]))
 			default:
 				t.no(path, tl[f], "")
 			}
+		}
+	case "connection":
+		t.connection(ecMap(v))
+	case "headers":
+		hd := ecMap(v)
+		for _, f := range sortedKeys(hd) {
+			if f == "xForwardedClientCert" {
+				t.no("headers.xForwardedClientCert", nil, "")
+			} else {
+				t.no("headers", nil, "")
+			}
+		}
+		if len(hd) == 0 {
+			t.no("headers", nil, "")
 		}
 	default:
 		t.noTree(k, v)
@@ -657,8 +726,7 @@ func (t *translator) security(k string, v any) {
 		t.no("basicAuth", ecStr(ecDig(sp, "users", "name")), "")
 		t.out.FailClosed = append(t.out.FailClosed, "basicAuth")
 	case "oidc":
-		t.no("oidc", nil, "")
-		t.out.FailClosed = append(t.out.FailClosed, "oidc")
+		t.oidc(sp)
 	case "authorization":
 		t.authorization(sp)
 	case "extAuth":
@@ -780,7 +848,7 @@ func (t *translator) apiKey(sp map[string]any) {
 	}
 }
 
-func (t *translator) authorization(sp map[string]any) {
+func (t *translator) authorizationCIDRs(sp map[string]any) {
 	allow, deny := []any{}, []any{}
 	bad := false
 	for _, r := range ecList(sp["rules"]) {
@@ -886,13 +954,16 @@ func (t *translator) extAuth(sp map[string]any) {
 // EnvoyDirectResponse is a translated HTTPRouteFilter.
 type EnvoyDirectResponse struct {
 	Block map[string]any // setura.zyvor.dev/direct-response; nil when the filter has none
-	Notes []FieldNote
+	// Inject is the auth inject entry of a credentialInjection: the header and the Secret that fills it.
+	Inject map[string]any
+	Notes  []FieldNote
 }
 
 // TranslateHTTPRouteFilter translates the spec of an HTTPRouteFilter: a
-// direct response becomes the rule's direct-response block; URL regex
-// rewrites and credential injection are reported as unsupported.
-func TranslateHTTPRouteFilter(spec map[string]any) *EnvoyDirectResponse {
+// direct response becomes the rule's direct-response block and a credential
+// injection an auth inject entry (ns is the namespace of the filter, where its
+// Secret lives); URL regex rewrites are reported as unsupported.
+func TranslateHTTPRouteFilter(spec map[string]any, ns string) *EnvoyDirectResponse {
 	out := &EnvoyDirectResponse{}
 	t := &translator{kind: kHRF, out: &EnvoyTranslation{}}
 	for _, k := range sortedKeys(spec) {
@@ -917,6 +988,8 @@ func TranslateHTTPRouteFilter(spec map[string]any) *EnvoyDirectResponse {
 				}
 			}
 			out.Block = block
+		case "credentialInjection":
+			out.Inject = t.credentialInjection(ecMap(spec[k]), ns)
 		default:
 			t.noTree(k, spec[k])
 		}

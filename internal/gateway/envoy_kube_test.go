@@ -59,7 +59,7 @@ func TestKubernetesEnvoyCompat(t *testing.T) {
 	putEnvoy(api, "BackendTrafficPolicy", "backendtrafficpolicies", "shop", "orders", "2026-01-02T00:00:00Z", m{
 		"targetRefs": l{target("HTTPRoute", "orders")}, "timeout": m{"http": m{"requestTimeout": "3s"}},
 		"retry":          m{"numRetries": 2, "retryOn": m{"httpStatusCodes": l{503}}},
-		"circuitBreaker": m{"maxConnections": 4}, "loadBalancer": m{"type": "Random"}})
+		"circuitBreaker": m{"maxConnections": 4}, "loadBalancer": m{"type": "Random"}, "dns": m{"lookupFamily": "IPv4"}})
 	putEnvoy(api, "SecurityPolicy", "securitypolicies", "shop", "admin", "2026-01-02T00:00:00Z", m{
 		"targetRefs":    l{target("HTTPRoute", "orders", "admin")},
 		"authorization": m{"defaultAction": "Deny", "rules": l{m{"action": "Allow", "principal": m{"clientCIDRs": l{"10.99.0.0/16"}}}}}})
@@ -91,7 +91,7 @@ func TestKubernetesEnvoyCompat(t *testing.T) {
 	if rt == nil || rt.Rules[0].Timeouts == nil || rt.Rules[0].Timeouts.Request != "3s" || rt.Rules[0].Retry == nil || *rt.Rules[0].Retry.Attempts != 2 {
 		t.Fatalf("read rule: %+v", rt)
 	}
-	if def := s.Table().Cfg.Backends["shop/orders:80"]; def == nil || def.CircuitBreaker == nil || def.CircuitBreaker.MaxConnections != 4 {
+	if def := s.Table().Cfg.Backends["shop/orders:80"]; def == nil || def.CircuitBreaker == nil || def.CircuitBreaker.MaxConnections != 4 || def.LoadBalancer == nil || def.LoadBalancer.Algorithm != AlgoRandom {
 		t.Fatalf("backend: %+v", s.Table().Cfg.Backends["shop/orders:80"])
 	}
 	if r := req(t, c, "http", "GET", "any.test", "/orders/1", ""); r.Status != 200 || r.Echo.Name != "u1" {
@@ -117,7 +117,7 @@ func TestKubernetesEnvoyCompat(t *testing.T) {
 			conditionsOf(t, api, "backendtrafficpolicies", "infra", "defaults")["Accepted"] != nil
 	})
 	acc := conditionsOf(t, api, "backendtrafficpolicies", "shop", "orders")["Accepted"]
-	if acc["status"] != "True" || acc["reason"] != "Unsupported" || !strings.Contains(acc["message"].(string), "loadBalancer") || acc["observedGeneration"].(float64) != 2 {
+	if acc["status"] != "True" || acc["reason"] != "Unsupported" || !strings.Contains(acc["message"].(string), "dns") || strings.Contains(acc["message"].(string), "loadBalancer") || acc["observedGeneration"].(float64) != 2 {
 		t.Errorf("orders Accepted: %v", acc)
 	}
 	if ov := conditionsOf(t, api, "backendtrafficpolicies", "infra", "defaults")["Overridden"]; ov == nil || ov["status"] != "True" || !strings.Contains(ov["message"].(string), "BackendTrafficPolicy/shop/orders") {
