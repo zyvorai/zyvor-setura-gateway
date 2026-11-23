@@ -117,6 +117,12 @@ Flags for run and up:
   --outlier-failures N  consecutive 5xx/connect failures that eject an endpoint (default 5, 0 = off)
   --outlier-base-ejection DUR  first ejection time, doubling each time (default 30s)
   --outlier-max-ejection DUR   ejection time cap (default 5m)
+  --load-balancer ALGO|JSON   default endpoint selection: roundRobin (default), leastRequest, random, consistentHash, or a JSON block
+                        such as '{"algorithm":"leastRequest"}' or '{"algorithm":"consistentHash","consistentHash":{"on":"header","name":"x-user"}}';
+                        a backend's loadBalancer and a rule's setura.zyvor.dev/load-balancer override it (docs/load-balancing.md)
+  --zone NAME           the zone this gateway runs in (or SETURA_ZONE), for locality aware routing: a load-balancer block with
+                        locality.preferLocalZone prefers endpoints of this zone (EndpointSlice zone, snapshot endpoint zone)
+  --dns-ttl-min DUR, --dns-ttl-max DUR   bounds of the time a resolved name of an external backend is trusted (5s, 5m)
   --health-path PATH    active-check every backend without its own healthCheck (default off)
   --health-interval DUR, --health-timeout DUR   defaults for those checks (5s, 2s)
                         (a backend healthCheck with protocol "grpc" probes grpc.health.v1)
@@ -189,6 +195,7 @@ type runFlags struct {
 	allowSAN   stringList
 	allowCN    stringList
 	xfcc       bool
+	lb         string
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -247,6 +254,10 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.StringVar(&f.opts.ContractEnforce, "contract-enforce", "", "monitor or block requests not in the contract spec (default off)")
 	fs.StringVar(&f.opts.AI.PricesFile, "ai-prices", "", "JSON price table (per million tokens) for AI route cost estimates; re-read when it changes")
 	fs.IntVar(&f.opts.AI.MaxKeyLabels, "ai-max-key-labels", 0, "most identities an AI route reports in /metrics, the rest are _other (default 500)")
+	fs.StringVar(&f.lb, "load-balancer", "", "default endpoint selection: roundRobin, leastRequest, random, consistentHash or a JSON block")
+	fs.StringVar(&f.opts.Zone, "zone", os.Getenv("SETURA_ZONE"), "zone this gateway runs in, for locality aware routing")
+	fs.DurationVar(&f.opts.DNS.TTLMin, "dns-ttl-min", 0, "shortest time a resolved name is trusted (default 5s)")
+	fs.DurationVar(&f.opts.DNS.TTLMax, "dns-ttl-max", 0, "longest time a resolved name is trusted (default 5m)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -280,6 +291,16 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	if j := f.opts.Resilience.RetryJitter; j < 0 || j > 1 {
 		return nil, fmt.Errorf("--retry-jitter %v: want 0-1", j)
+	}
+	if f.lb != "" {
+		lb, err := ParseLBFlag(f.lb)
+		if err != nil {
+			return nil, fmt.Errorf("--load-balancer: %w", err)
+		}
+		f.opts.LoadBalancer = lb
+	}
+	if d := f.opts.DNS; d.TTLMin < 0 || d.TTLMax < 0 || (d.TTLMax > 0 && d.TTLMin > d.TTLMax) {
+		return nil, fmt.Errorf("--dns-ttl-min %s --dns-ttl-max %s: want 0 or positive durations, min not above max", d.TTLMin, d.TTLMax)
 	}
 	if f.rotateSize != "" {
 		n, err := ParseSize(f.rotateSize)

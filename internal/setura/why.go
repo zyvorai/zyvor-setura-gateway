@@ -444,7 +444,38 @@ func (u *ui) backendRow(b *strings.Builder, be builtin.TraceBackend, width int) 
 		case "unknown":
 			sym = u.idleSym()
 		}
-		fmt.Fprintf(b, "        %s %s %s\n", sym, e.URL, u.gray(e.State))
+		extra := ""
+		if e.Weight > 1 {
+			extra += fmt.Sprintf("  weight %d", e.Weight)
+		}
+		if e.Zone != "" {
+			extra += "  zone " + e.Zone
+		}
+		if e.Priority > 0 {
+			extra += fmt.Sprintf("  priority %d", e.Priority)
+		}
+		if e.InFlight > 0 {
+			extra += fmt.Sprintf("  %d in flight", e.InFlight)
+		}
+		fmt.Fprintf(b, "        %s %s %s%s\n", sym, e.URL, u.gray(e.State), u.gray(extra))
+	}
+	if lb := be.LoadBalancer; lb != nil {
+		fmt.Fprintf(b, "        %s load balancing: %s %s\n", u.arrow(), u.bold(lb.Algorithm), u.gray("("+lb.Source+")"))
+		if lb.Hash != "" {
+			key := lb.Ring + " hash of the " + lb.Hash
+			if lb.Endpoint != "" {
+				key += " selects " + lb.Endpoint
+			}
+			fmt.Fprintf(b, "            %s\n", key)
+		}
+		for _, ln := range wrap(lb.Why, "            ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+		if lb.Details != "" {
+			for _, ln := range wrap(lb.Details, "            ", width) {
+				fmt.Fprintln(b, u.gray(ln))
+			}
+		}
 	}
 }
 

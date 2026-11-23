@@ -227,6 +227,7 @@ type grpcTransport struct {
 	tried     map[*Endpoint]bool
 	retries   int
 	st        *reqState // receives upstream details; may be nil
+	lq        *lbReq    // load balancer context (backend or gateway default block)
 }
 
 func trailersOnly(resp *http.Response) (code int, ok bool) {
@@ -249,7 +250,7 @@ func (t *grpcTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		ep := t.first
 		if attempt > 0 || ep == nil {
-			ep = t.b.choose(rs.now(), t.tried)
+			ep = t.b.chooseFor(rs.now(), t.tried, t.lq)
 		}
 		t.tried[ep] = true
 		rctx, health := ctx, ""

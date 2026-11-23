@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
+	"time"
 )
 
 // HTTP/2 with prior knowledge (h2c) to plaintext upstreams, and the per-backend
@@ -63,14 +65,14 @@ func kubeBackendProtocol(def *BackendDef, appProtocol *string, annotations map[s
 // keep-alives off, because the header names one client). grpc selects the
 // gRPC base transports, which are HTTP/2 already.
 func (s *Server) derivedTransport(b *Backend, base http.RoundTripper, grpc bool) http.RoundTripper {
-	if b.ProxyProto == "" && (!b.H2C || grpc) {
+	if b.ProxyProto == "" && (!b.H2C || grpc) && b.sni == "" && len(b.unix) == 0 {
 		return base
 	}
 	bt, ok := base.(*http.Transport)
 	if !ok {
 		return base
 	}
-	key := fmt.Sprintf("%s|%s|%t|%t|%p", b.Key, b.ProxyProto, b.H2C && !grpc, grpc, bt)
+	key := fmt.Sprintf("%s|%s|%t|%t|%p|%s|%d", b.Key, b.ProxyProto, b.H2C && !grpc, grpc, bt, b.sni, len(b.unix))
 	if v, ok := s.dx.Load(key); ok {
 		return v.(*http.Transport)
 	}
@@ -84,6 +86,26 @@ func (s *Server) derivedTransport(b *Backend, base http.RoundTripper, grpc bool)
 	if b.ProxyProto != "" {
 		t.DialContext = proxyDialer(b.ProxyProto)
 		t.DisableKeepAlives = true
+	}
+	if b.sni != "" && t.TLSClientConfig != nil && t.TLSClientConfig.ServerName == "" {
+		cfg := t.TLSClientConfig.Clone()
+		cfg.ServerName = b.sni // endpoints are dialled by address, certificates name the host
+		t.TLSClientConfig = cfg
+	}
+	if len(b.unix) > 0 {
+		inner := t.DialContext
+		if inner == nil {
+			inner = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+		}
+		unix := b.unix
+		t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if host, _, err := net.SplitHostPort(addr); err == nil {
+				if p, ok := unix[host]; ok {
+					return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", p)
+				}
+			}
+			return inner(ctx, network, addr)
+		}
 	}
 	v, _ := s.dx.LoadOrStore(key, t)
 	return v.(*http.Transport)

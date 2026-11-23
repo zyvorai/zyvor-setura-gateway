@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	builtin "github.com/zyvorai/zyvor-setura-gateway/internal/gateway"
 )
 
 // Additional route kinds and ReferenceGrants captured by snapshots.
@@ -286,7 +288,9 @@ func extraRules(snapshot obj, specs obj, ns string) []obj {
 					}
 				}
 				k := str(ref, "kind", "Service")
-				if g := str(ref, "group", ""); g != "" || k != "Service" {
+				if g := str(ref, "group", ""); builtin.IsBackendRef(g, k) {
+					k = "Service" // a Setura Backend is served like a Service
+				} else if g != "" || k != "Service" {
 					k = "other:" + g + ":" + k
 				}
 				kinds[k] = true

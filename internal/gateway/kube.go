@@ -289,7 +289,12 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			annotateFault(spec.Rules, r.Metadata.Annotations)
 			annotateContract(spec.Rules, r.Metadata.Annotations)
 			annotateAI(spec.Rules, r.Metadata.Annotations)
+			annotateLB(spec.Rules, r.Metadata.Annotations)
 		})
+		cfg.annotateBackends(r.Metadata.Namespace, spec.Rules, r.Metadata.Annotations)
+		for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, LoadBalancerKey, len(spec.Rules)) {
+			k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, LoadBalancerKey, len(spec.Rules))
+		}
 		for _, base := range RuleExtKeys {
 			for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, base, len(spec.Rules)) {
 				k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, base, len(spec.Rules))
@@ -320,6 +325,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			Conditions struct {
 				Ready *bool `json:"ready"`
 			} `json:"conditions"`
+			Zone string `json:"zone"` // topology.kubernetes.io/zone, for locality aware load balancing
 		} `json:"endpoints"`
 		Ports []struct {
 			Name *string `json:"name"`
@@ -350,8 +356,16 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		for _, sp := range spec.Ports {
 			def := &BackendDef{PortName: sp.Name}
 			kubeBackendProtocol(def, sp.AppProtocol, s.Metadata.Annotations)
+			if v := s.Metadata.Annotations[LoadBalancerKey]; v != "" {
+				if lb, err := ParseLBBlock([]byte(v)); err != nil {
+					k.warn("Service %s: annotation %s: %v", key, LoadBalancerKey, err)
+				} else {
+					def.LoadBalancer = lb
+				}
+			}
 			if spec.Type == "ExternalName" && spec.ExternalName != "" {
 				def.Endpoints = []string{net.JoinHostPort(spec.ExternalName, fmt.Sprint(sp.Port))}
+				def.DNS = &DNSDef{Enabled: true} // the gateway resolves the external name and honours its TTL
 			}
 			for _, raw := range svcSlices[key] {
 				var sl slice
@@ -372,7 +386,14 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 						continue
 					}
 					for _, a := range e.Addresses {
-						def.Endpoints = append(def.Endpoints, net.JoinHostPort(a, fmt.Sprint(port)))
+						addr := net.JoinHostPort(a, fmt.Sprint(port))
+						def.Endpoints = append(def.Endpoints, addr)
+						if e.Zone != "" {
+							if def.EndpointMeta == nil {
+								def.EndpointMeta = map[string]EndpointDef{}
+							}
+							def.EndpointMeta[addr] = EndpointDef{Address: addr, Zone: e.Zone}
+						}
 					}
 				}
 			}

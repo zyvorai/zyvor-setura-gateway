@@ -76,7 +76,8 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--node-selector", "--admin-token-secret", "--no-admin-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
 	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A",
 	"--plans", "--plans-interval", "--usage-state", "--usage-interval", "--usage-max-series", "--usage-retention-days",
-	"--ai-prices", "--ai-max-key-labels", "ai-usage", "--route", "--key"}
+	"--ai-prices", "--ai-max-key-labels", "ai-usage", "--route", "--key",
+	"--load-balancer", "--zone", "--dns-ttl-min", "--dns-ttl-max"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

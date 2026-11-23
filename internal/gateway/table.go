@@ -114,6 +114,8 @@ type CRule struct {
 	StreamIdle *time.Duration
 	// Fault is the compiled fault of the rule (chaos.go), armed by Apply.
 	Fault *CFault
+	// LB is the rule's load-balancer block (lb.go), nil when it has none.
+	LB *CLB
 	// AI is the compiled AI gateway policy; such a rule serves its providers, not backendRefs.
 	AI *compiledAI
 }
@@ -174,6 +176,20 @@ type Endpoint struct {
 	URL     *url.URL
 	healthy atomic.Bool
 	st      epState // guarded by Backend.hmu
+
+	// Load balancing (lb.go). Zone and Priority come from the snapshot or the
+	// EndpointSlice; Authority is the Host (and TLS name) presented upstream
+	// when the dialled address is not it: the name of a DNS endpoint, localhost
+	// for a unix socket.
+	weight    int
+	Zone      string
+	Priority  int
+	Authority string
+	Unix      string
+	inflight  atomic.Int64
+	added     time.Time    // set when the endpoint joins a running table (slow start)
+	recovered atomic.Int64 // unix nanos of the last unhealthy to healthy flip
+	cur       float64      // smooth weighted round robin state, guarded by Backend.hmu
 }
 
 // Backend is a Service port's upstream pool.
@@ -186,33 +202,29 @@ type Backend struct {
 	PortName  string
 	// TLS is the BackendTLSPolicy applied to this backend; TLSErr is set when a
 	// policy targets it but cannot be satisfied (connections then fail, 5xx).
-	TLS        *BackendTLS
-	TLSErr     string
-	TLSPolicy  string
-	rr         atomic.Uint64
-	hmu        *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
+	TLS       *BackendTLS
+	TLSErr    string
+	TLSPolicy string
+	rr        atomic.Uint64
+	hmu       *sync.Mutex // guards Endpoint.st and ejection decisions; shared across reloads
+	// Load balancing (lb.go) and external backends (dns.go).
+	LB         *CLB // the backend's own block (nil: the gateway default)
+	prios      []int
+	prioCount  map[int]int
+	hasZone    bool
+	tabs       lbTables
+	last       atomic.Pointer[lbRecord]
+	sni        string            // TLS server name for https endpoints resolved from a name
+	unix       map[string]string // endpoint host to socket path
+	dnsHosts   []string
+	Kind       string // "Backend" for a Service-less backend, else ""
 	CB         *CircuitOptions
 	H2C        bool   // HTTP/2 prior knowledge to http:// endpoints
 	ProxyProto string // "v1", "v2" or "": PROXY protocol header on upstream connections
 	noProbe    bool   // never actively health checked (AI providers: probing a paid API would cost money)
 }
 
-// pick returns the next healthy endpoint, or any endpoint when none is.
-func (b *Backend) pick() *Endpoint {
-	n := uint64(len(b.Eps))
-	if n == 0 {
-		return nil
-	}
-	start := b.rr.Add(1) - 1
-	for i := uint64(0); i < n; i++ {
-		if e := b.Eps[(start+i)%n]; e.healthy.Load() {
-			return e
-		}
-	}
-	return b.Eps[start%n]
-}
-
-func newBackend(key, name string, def *BackendDef) (*Backend, error) {
+func newBackend(cfg *Config, key, name string, def *BackendDef) (*Backend, error) {
 	b := &Backend{Key: key, Name: name, Health: def.HealthCheck, Insecure: def.InsecureSkipVerify, PortName: def.PortName, hmu: new(sync.Mutex)}
 	var err error
 	if def.CircuitBreaker != nil {
@@ -225,22 +237,56 @@ func newBackend(key, name string, def *BackendDef) (*Backend, error) {
 	if b.Timeout, err = parseDur(def.Timeout); err != nil {
 		return nil, fmt.Errorf("backend %s: timeout: %w", key, err)
 	}
+	if def.DNS != nil {
+		if err = def.DNS.validate(); err != nil {
+			return nil, fmt.Errorf("backend %s: %w", key, err)
+		}
+	}
+	if def.LoadBalancer != nil {
+		if b.LB, err = def.LoadBalancer.Compile(); err != nil {
+			return nil, fmt.Errorf("backend %s: loadBalancer: %w", key, err)
+		}
+	} else if cfg != nil {
+		b.LB = cfg.lbDefault
+	}
 	for _, e := range def.Endpoints {
-		u, err := parseEndpoint(e)
+		meta, hasMeta := def.EndpointMeta[e]
+		if hasMeta {
+			if err := meta.validate(); err != nil {
+				return nil, fmt.Errorf("backend %s: %w", key, err)
+			}
+		}
+		eps, err := cfg.expandEndpoint(b, def, e)
 		if err != nil {
 			return nil, fmt.Errorf("backend %s: %w", key, err)
 		}
-		ep := &Endpoint{URL: u}
-		ep.healthy.Store(true)
-		b.Eps = append(b.Eps, ep)
+		for _, ep := range eps {
+			ep.weight, ep.Zone, ep.Priority = meta.Weight, meta.Zone, meta.Priority
+			ep.healthy.Store(true)
+			b.Eps = append(b.Eps, ep)
+		}
 	}
 	if len(b.Eps) == 0 {
 		return nil, fmt.Errorf("backend %s: no endpoints", key)
 	}
+	b.indexTiers()
 	if err := b.applyProtocol(def); err != nil {
 		return nil, fmt.Errorf("backend %s: %w", key, err)
 	}
 	return b, nil
+}
+
+// indexTiers records the priority tiers and zones of the endpoints.
+func (b *Backend) indexTiers() {
+	b.prioCount, b.prios, b.hasZone = map[int]int{}, nil, false
+	for _, e := range b.Eps {
+		b.prioCount[e.Priority]++
+		b.hasZone = b.hasZone || e.Zone != ""
+	}
+	for p := range b.prioCount {
+		b.prios = append(b.prios, p)
+	}
+	sort.Ints(b.prios)
 }
 
 // hostRank orders hostname specificity: exact beats wildcard (longer first)
@@ -469,8 +515,11 @@ func (t *Table) backend(r *Route, ref BackendRef) (*Backend, fact) {
 
 // backendFor resolves a backendRef for a route of the given kind and namespace.
 func (t *Table) backendFor(kind, routeNS string, ref BackendRef) (*Backend, fact) {
+	if ref.Kind == BackendKind && ref.Group == BackendGroup {
+		return t.externalBackend(kind, routeNS, ref)
+	}
 	if (ref.Kind != "" && ref.Kind != "Service") || (ref.Group != "" && ref.Group != "core") {
-		return nil, fact{false, "InvalidKind", fmt.Sprintf("backendRef %q must be a Service", ref.Name)}
+		return nil, fact{false, "InvalidKind", fmt.Sprintf("backendRef %q must be a Service or a %s of group %s", ref.Name, BackendKind, BackendGroup)}
 	}
 	ns := ref.Namespace
 	if ns == "" {
@@ -491,7 +540,7 @@ func (t *Table) backendFor(kind, routeNS string, ref BackendRef) (*Backend, fact
 	if def == nil {
 		return nil, fact{false, "BackendNotFound", fmt.Sprintf("no upstream configured for %s", key)}
 	}
-	b, err := newBackend(key, ref.Name, def)
+	b, err := newBackend(t.Cfg, key, ref.Name, def)
 	if err != nil {
 		return nil, fact{false, "BackendNotFound", err.Error()}
 	}
@@ -636,6 +685,12 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		}
 		if cr.Timeout > 0 && cr.BackendTimeout > cr.Timeout {
 			return nil, nil, fmt.Errorf("timeouts.backendRequest %s must not exceed timeouts.request %s", rule.Timeouts.BackendRequest, rule.Timeouts.Request)
+		}
+	}
+	if rule.LoadBalancer != nil {
+		var err error
+		if cr.LB, err = rule.LoadBalancer.Compile(); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", LoadBalancerKey, err)
 		}
 	}
 	var serr error

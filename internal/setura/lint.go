@@ -49,6 +49,10 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET045", SeverityWarning, "AI prompt cache is shared across identities (scope route) on a route that authenticates, so one client's answer can be served to another"},
 	{"SET046", SeverityWarning, "AI monthlyCost budget has no price table on the route (prices); without --ai-prices on the gateway the cost is always 0 and the budget never fires"},
 	{"SET047", SeverityWarning, "AI rule also has backendRefs, which are ignored: an AI rule serves its providers"},
+	{"SET050", SeverityError, "load-balancer block (rule extension, setura.zyvor.dev/load-balancer annotation) is invalid or targets no rule"},
+	{"SET051", SeverityWarning, "consistentHash on a rule that splits traffic across several backendRefs or also has sessionPersistence, so the hash does not pin the client"},
+	{"SET052", SeverityError, "backend declaration (snapshot backends entry or setura.zyvor.dev/backends annotation) is invalid: bad endpoint, unix socket path, weight, zone, priority, dns or loadBalancer block"},
+	{"SET053", SeverityError, "backendRef of kind Backend (group setura.zyvor.dev) names a backend that is not declared"},
 }
 
 func ruleSeverity(id string) string {
@@ -236,6 +240,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, limitsRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)
+	findings = append(findings, lbRules(snapshot, specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

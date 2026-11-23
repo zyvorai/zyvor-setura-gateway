@@ -216,8 +216,12 @@ type TraceFilter struct {
 
 // TraceEndpoint is one upstream address and its known state.
 type TraceEndpoint struct {
-	URL   string `json:"url"`
-	State string `json:"state"` // up, unhealthy, ejected or unknown
+	URL      string `json:"url"`
+	State    string `json:"state"` // up, unhealthy, ejected or unknown
+	Weight   int    `json:"weight,omitempty"`
+	Zone     string `json:"zone,omitempty"`
+	Priority int    `json:"priority,omitempty"`
+	InFlight int64  `json:"in_flight,omitempty"`
 }
 
 // TraceUpstream is the request a backend would receive.
@@ -242,6 +246,8 @@ type TraceBackend struct {
 	// (header modifiers, CORS), whatever the backend sends.
 	ResponseHeaders map[string]string `json:"response_headers,omitempty"`
 	BackendTLS      string            `json:"backend_tls,omitempty"`
+	// LoadBalancer is how a request to this backend picks an endpoint (lb_status.go).
+	LoadBalancer *TraceLB `json:"load_balancer,omitempty"`
 }
 
 // TraceRedirect is the answer of a RequestRedirect rule.
@@ -1000,7 +1006,10 @@ func (b *Backend) endpointStates(now time.Time, live bool) []TraceEndpoint {
 				st = "up"
 			}
 		}
-		out[i] = TraceEndpoint{URL: ep.URL.String(), State: st}
+		out[i] = TraceEndpoint{URL: ep.URL.String(), State: st, Weight: ep.W(), Zone: ep.Zone, Priority: ep.Priority}
+		if live {
+			out[i].InFlight = ep.inflight.Load()
+		}
 	}
 	return out
 }

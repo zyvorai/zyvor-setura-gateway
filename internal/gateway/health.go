@@ -173,36 +173,6 @@ func (b *Backend) available(now time.Time) bool {
 	return false
 }
 
-// choose returns the next endpoint round-robin, skipping unhealthy and ejected
-// ones and, when possible, those in skip. With nothing healthy it still
-// returns an endpoint so the request is attempted.
-func (b *Backend) choose(now time.Time, skip map[*Endpoint]bool) *Endpoint {
-	n := len(b.Eps)
-	if n == 0 {
-		return nil
-	}
-	b.hmu.Lock()
-	defer b.hmu.Unlock()
-	start := int(b.rr.Add(1) - 1)
-	var anyUp *Endpoint
-	for i := 0; i < n; i++ {
-		e := b.Eps[(start+i)%n]
-		if !b.up(e, now) {
-			continue
-		}
-		if !skip[e] {
-			return e
-		}
-		if anyUp == nil {
-			anyUp = e
-		}
-	}
-	if anyUp != nil {
-		return anyUp
-	}
-	return b.Eps[start%n]
-}
-
 // observe feeds one upstream outcome into passive outlier detection.
 func (rs *resilience) observe(b *Backend, ep *Endpoint, bad bool, now time.Time) {
 	if rs.opt().OutlierFailures < 0 {
@@ -369,6 +339,9 @@ func (s *Server) checkEndpoint(ctx context.Context, client *http.Client, c *heal
 	if ok {
 		st.actFail = 0
 		if st.actOK++; st.actOK >= c.healthy {
+			if !ep.healthy.Load() {
+				ep.recovered.Store(s.res.now().UnixNano()) // slow start begins here
+			}
 			ep.healthy.Store(true)
 		}
 		return

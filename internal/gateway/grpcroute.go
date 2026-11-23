@@ -371,7 +371,8 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		fail(grpcUnavailable, "no valid backend for this route", http.StatusInternalServerError)
 		return
 	}
-	ep := ref.B.choose(s.res.now(), nil)
+	lq := s.lbFor(nil, r, pg.TLS)
+	ep := ref.B.chooseFor(s.res.now(), nil, lq)
 	st.backend, st.weight = ref.B.Key, ref.Weight
 	st.markRoute()
 	if s.grpcTr.get(ep.URL.Scheme, ref.B.Insecure) == nil {
@@ -400,7 +401,7 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	if rule.GRPCRetry != nil {
 		replay, canReplay = bufferUnary(r, s.res.opt().RetryBodyLimit)
 	}
-	rt := &grpcTransport{s: s, b: ref.B, first: ep, retry: rule.GRPCRetry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}, st: st}
+	rt := &grpcTransport{s: s, b: ref.B, first: ep, retry: rule.GRPCRetry, replay: replay, canReplay: canReplay, tried: map[*Endpoint]bool{}, st: st, lq: lq}
 	filters := requestFilters(rule, ref)
 	proxy := &httputil.ReverseProxy{
 		Transport:     rt,

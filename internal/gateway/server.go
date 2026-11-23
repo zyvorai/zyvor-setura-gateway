@@ -85,6 +85,12 @@ type Options struct {
 	ContractInterval time.Duration // spec reload and inventory save period (default 5s)
 	// AI holds the gateway wide settings of AI routes (price table, label limits).
 	AI AIOptions
+	// LoadBalancer is the default load-balancer block (--load-balancer), Zone the
+	// zone this gateway runs in (--zone, for locality aware routing) and DNS the
+	// resolver settings of external backends.
+	LoadBalancer *LBConfig
+	Zone         string
+	DNS          DNSOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -162,6 +168,10 @@ type Server struct {
 	meterErr error          // plan or usage state that could not be loaded, reported by the first Apply
 	contract *contractState // endpoint learner and spec enforcement (contract.go)
 	ai       aiRuntime      // AI route budgets, caches and counters (ai_runtime.go)
+	// lbDefault is the compiled --load-balancer block, lbErr its error, dns the name cache.
+	lbDefault *CLB
+	lbErr     error
+	dns       *dnsCache
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -182,6 +192,10 @@ func New(opts Options) *Server {
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 	if opts.ClientAllow != nil {
 		s.defaultAllow, _ = opts.ClientAllow.compile() // validated by the flags
+	}
+	s.dns = newDNSCache(opts.DNS, s.res.now)
+	if opts.LoadBalancer != nil {
+		s.lbDefault, s.lbErr = opts.LoadBalancer.Compile()
 	}
 	s.ai.init(opts.AI)
 	s.shadowP = s.startShadowPersist()
@@ -356,6 +370,10 @@ func (s *Server) Apply(ld *Loaded) error {
 	if s.meterErr != nil {
 		return s.meterErr
 	}
+	if s.lbErr != nil {
+		return fmt.Errorf("--load-balancer: %w", s.lbErr)
+	}
+	ld.Config.lbDefault, ld.Config.dns = s.lbDefault, s.dns
 	ld.Config.ACME, ld.Config.ACMEDNS = s.acme != nil, s.acme != nil && s.opts.Cert.ACME.DNSHook != ""
 	s.seq++
 	cfg := ld.Config
@@ -541,6 +559,7 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 	if err := s.Apply(ld); err != nil {
 		return err
 	}
+	go s.dnsLoop(ctx)
 	for _, l := range s.Listening() {
 		s.diag("serving %s", l)
 	}
@@ -688,6 +707,7 @@ func (s *Server) startAdmin() error {
 		if d := s.Status(); d != nil {
 			cp := *d
 			cp.Chaos = s.chaosForStatus()
+			cp.LoadBalancing = s.lbStatus()
 			return &cp
 		}
 		return nil

@@ -57,6 +57,10 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET045": {"Cache shared across clients", "The prompt cache scope is the route on a route that authenticates, so a cached answer to one client's prompt can be returned to another.", "Use the default scope (identity) unless every client may see every answer."},
 	"SET046": {"Cost budget without prices", "monthlyCost needs a price table. Without prices on the route, only a gateway started with --ai-prices can compute cost.", "Add prices to the AI block, or start the gateway with --ai-prices."},
 	"SET047": {"backendRefs are ignored", "A rule with an AI block serves its providers; its backendRefs are never used.", "Remove the backendRefs."},
+	"SET050": {"Load-balancer block is invalid", "The load-balancer block or annotation cannot be parsed or validated, or it names a rule that does not exist. The route is not served.", "Fix the JSON (see docs/load-balancing.md)."},
+	"SET051": {"Hash does not pin the client", "consistentHash picks the endpoint inside one backend. The rule splits traffic across several backends, or has session persistence that overrides it, so a client is not always sent to the same endpoint.", "Use one backendRef, or drop sessionPersistence."},
+	"SET052": {"Backend declaration is invalid", "A backend has an endpoint that is not an address, a name or a unix socket, a bad weight, zone or priority, or an invalid dns or loadBalancer block.", "Fix the backend (see docs/load-balancing.md)."},
+	"SET053": {"Backend is not declared", "A backendRef of kind Backend names a backend that is not in the snapshot backends section or the setura.zyvor.dev/backends annotation.", "Declare the backend."},
 	"SET019": {"Gateway API 1.5 setting is invalid", "A CORS or ExternalAuth filter, session persistence, a backend timeout or a BackendTLSPolicy is configured in a way the built-in gateway refuses, so the route (or policy) is not accepted.", "Fix the setting named in the message (see docs/gateway-api-1-5.md)."},
 }
 

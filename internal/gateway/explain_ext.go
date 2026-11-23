@@ -53,6 +53,9 @@ func (tr *Trace) explainExtras(w *TraceWinner, e *Entry, r *http.Request) {
 		if ref.B != nil && ref.B.TLS != nil {
 			w.Backends[i].BackendTLS = ref.B.TLS.describe()
 		}
+		if st := w.Backends[i].Status; ref.B != nil && (st == "ok" || st == "unavailable") {
+			w.Backends[i].LoadBalancer = tr.traceLB(ref.B, rule, r)
+		}
 	}
 	for _, f := range requestFilters(rule, firstRef(rule)) {
 		if f.Type == "ExternalAuth" && f.ExternalAuth != nil && f.ExternalAuth.Protocol == "GRPC" {

@@ -14,6 +14,7 @@ func (s *Server) carryState(old, next *Table) {
 	if old == nil || next == nil {
 		return
 	}
+	now := s.res.now()
 	for key, nb := range next.Backends {
 		ob := old.Backends[key]
 		if ob == nil {
@@ -29,8 +30,10 @@ func (s *Server) carryState(old, next *Table) {
 		for i, e := range nb.Eps {
 			prev := byAddr[e.URL.String()]
 			if prev == nil {
+				e.added = now // slow start for an endpoint that joined a running gateway
 				continue
 			}
+			prev.weight, prev.Zone, prev.Priority = e.weight, e.Zone, e.Priority // the new configuration wins
 			if !checked {
 				// No active check to ever flip it back: drop a stale "down".
 				prev.healthy.Store(true)
@@ -40,5 +43,6 @@ func (s *Server) carryState(old, next *Table) {
 		}
 		nb.hmu.Unlock()
 		nb.rr.Store(ob.rr.Load())
+		nb.indexTiers()
 	}
 }

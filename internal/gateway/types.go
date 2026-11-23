@@ -158,6 +158,8 @@ type Rule struct {
 	Contract string `json:"setura.zyvor.dev/contract,omitempty"`
 	// AI turns the rule into an AI gateway route (setura.zyvor.dev/ai, ai_config.go).
 	AI *AIPolicy `json:"setura.zyvor.dev/ai,omitempty"`
+	// LoadBalancer picks how a request chooses an endpoint of its backend (lb.go).
+	LoadBalancer *LBConfig `json:"setura.zyvor.dev/load-balancer,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -264,6 +266,14 @@ type BackendDef struct {
 	Protocol string `json:"protocol,omitempty"`
 	// ProxyProtocol "v1" or "v2" sends a PROXY protocol header on every upstream connection.
 	ProxyProtocol string `json:"proxyProtocol,omitempty"`
+	// LoadBalancer is the backend's own load-balancer block (a rule's wins).
+	LoadBalancer *LBConfig `json:"loadBalancer,omitempty"`
+	// DNS makes the gateway resolve the host names of the endpoints and re-resolve
+	// them on their TTL (true, or {"ttlMin": "5s", "ttlMax": "1m"}).
+	DNS *DNSDef `json:"dns,omitempty"`
+	// EndpointMeta holds the weight, zone and priority of endpoints written as
+	// objects, by address. It is filled when the endpoints are read.
+	EndpointMeta map[string]EndpointDef `json:"endpointMeta,omitempty"`
 }
 
 // HealthCheck is an active HTTP health check.
@@ -282,32 +292,60 @@ type HealthCheck struct {
 	Service  string `json:"service,omitempty"`
 }
 
-// UnmarshalJSON accepts "host:port", ["host:port", ...] or an object.
+// UnmarshalJSON accepts "host:port", a list of them or an object. An endpoint
+// is an address (host:port, an http(s) URL, a host name, unix:///path) or an
+// object {"address": ..., "weight": N, "zone": Z, "priority": P}.
 func (b *BackendDef) UnmarshalJSON(raw []byte) error {
 	var one string
 	if json.Unmarshal(raw, &one) == nil {
 		b.Endpoints = []string{one}
 		return nil
 	}
-	var many []string
-	if json.Unmarshal(raw, &many) == nil {
-		b.Endpoints = many
-		return nil
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) == nil {
+		return b.setEndpoints(list)
 	}
 	type alias BackendDef
 	var a struct {
 		alias
-		URL  string   `json:"url"`
-		URLs []string `json:"urls"`
+		Endpoints []json.RawMessage `json:"endpoints"`
+		URL       string            `json:"url"`
+		URLs      []string          `json:"urls"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return err
 	}
 	*b = BackendDef(a.alias)
+	if err := b.setEndpoints(a.Endpoints); err != nil {
+		return err
+	}
 	if a.URL != "" {
 		b.Endpoints = append(b.Endpoints, a.URL)
 	}
 	b.Endpoints = append(b.Endpoints, a.URLs...)
+	return nil
+}
+
+func (b *BackendDef) setEndpoints(list []json.RawMessage) error {
+	for _, raw := range list {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			b.Endpoints = append(b.Endpoints, s)
+			continue
+		}
+		var e EndpointDef
+		if err := strictDecode("endpoint", raw, &e); err != nil {
+			return err
+		}
+		if err := e.validate(); err != nil {
+			return err
+		}
+		b.Endpoints = append(b.Endpoints, e.Address)
+		if b.EndpointMeta == nil {
+			b.EndpointMeta = map[string]EndpointDef{}
+		}
+		b.EndpointMeta[e.Address] = e
+	}
 	return nil
 }
 
@@ -407,6 +445,11 @@ type Config struct {
 	AIKeys map[string]string
 
 	skipCerts bool // offline replay: do not load listener certificates
+
+	// lbDefault is the gateway wide load-balancer block (--load-balancer) and dns
+	// the resolver of external backends; the server sets both before building.
+	lbDefault *CLB
+	dns       *dnsCache
 }
 
 type fileConfig struct {
@@ -511,6 +554,8 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			annotateFault(spec.Rules, spec.Annotations)
 			annotateContract(spec.Rules, spec.Annotations)
 			annotateAI(spec.Rules, spec.Annotations)
+			annotateLB(spec.Rules, spec.Annotations)
+			cfg.annotateBackends(rns, spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

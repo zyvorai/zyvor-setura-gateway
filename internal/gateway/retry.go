@@ -204,6 +204,7 @@ type resTransport struct {
 	// it was before any filter ran: it applies that ref's filters.
 	rebuild func(ctx context.Context, ref *CRef) *http.Request
 
+	lq        *lbReq // load balancer context of the request (hash key, rule block); may be nil
 	tried     map[*Endpoint]bool
 	triedRefs map[*CRef]bool
 	retries   int
@@ -293,7 +294,7 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		ep := t.first
 		if attempt > 0 || ep == nil {
-			ep = t.b.choose(rs.now(), t.tried)
+			ep = t.b.chooseFor(rs.now(), t.tried, t.lq)
 		}
 		t.tried[ep] = true
 		rctx, health := ctx, ""
@@ -316,6 +317,9 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			out = req.Clone(rctx)
 		}
 		out.URL.Scheme, out.URL.Host = ep.URL.Scheme, ep.URL.Host
+		if ep.Authority != "" && out.Host == "" {
+			out.Host = ep.Authority // a DNS or unix endpoint is dialled by address but addressed by name
+		}
 		if t.retry != nil && t.canReplay && !bodyless {
 			out.Body = io.NopCloser(bytes.NewReader(t.replay))
 		}
@@ -348,7 +352,13 @@ func (t *resTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				cancelTry = func() { cancelBT(); prev() }
 				out = out.WithContext(actx)
 			}
+			ep.inflight.Add(1)
 			resp, err = t.s.transportFor(t.b, lim).RoundTrip(out)
+			if resp == nil || resp.StatusCode == http.StatusSwitchingProtocols {
+				ep.inflight.Add(-1)
+			} else {
+				resp.Body = &inflightBody{rc: resp.Body, ep: ep}
+			}
 			if timer != nil && !timer.Stop() && resp == nil && ctx.Err() == nil {
 				perTryHit = true
 				err = fmt.Errorf("per-try timeout %s exceeded: %w", t.retry.PerTry, context.DeadlineExceeded)

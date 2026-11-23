@@ -279,8 +279,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		plain(rec, http.StatusInternalServerError, "no valid backend for this route")
 		return
 	}
+	lq := s.lbFor(rule, r, pg.TLS)
 	if ep == nil {
-		ep = ref.B.choose(s.res.now(), nil)
+		ep = ref.B.chooseFor(s.res.now(), nil, lq)
 	}
 	st.backend, st.weight = ref.B.Key, ref.Weight
 	st.authed = st.authed || hasExternalAuth(requestFilters(rule, ref))
@@ -322,7 +323,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		replay, canReplay = bufferBody(r, s.res.opt().RetryBodyLimit)
 	}
 	rt := s.newTransport(rule, ref, ep, rule.Retry, replay, canReplay)
-	rt.st = st
+	rt.st, rt.lq = st, lq
 	var pristine, inbound *http.Request
 	keepPristine := rule.Retry != nil && len(rule.Refs) > 1 // only a cross-backend retry rebuilds the request
 
@@ -384,6 +385,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			w.Header().Del(RequestIDHeader)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
+			if lq.cookie != nil {
+				resp.Header.Add("Set-Cookie", lq.cookie.String()) // the hash cookie of a client that had none
+			}
 			if idleCancel != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 				resp.Body = newIdleBody(resp.Body, idle, idleCancel)
 			}

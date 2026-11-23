@@ -37,6 +37,10 @@
 | SET045 | warning | AI prompt cache scope `route` on a rule that authenticates: one client's cached answer can be served to another |
 | SET046 | warning | AI `monthlyCost` budget with no `prices` on the route (only `--ai-prices` on the gateway could price it) |
 | SET047 | warning | AI rule also has `backendRefs`, which are ignored |
+| SET050 | error | `setura.zyvor.dev/load-balancer` block or annotation is invalid, or names a rule that does not exist (see [load-balancing.md](load-balancing.md)) |
+| SET051 | warning | `consistentHash` on a rule that splits traffic across several `backendRefs`, or that also has `sessionPersistence`: the hash does not pin the client |
+| SET052 | error | Backend declaration (snapshot `backends` entry or `setura.zyvor.dev/backends` annotation) is invalid: bad endpoint or unix socket path, weight, zone, priority, `dns` or `loadBalancer` block |
+| SET053 | error | `backendRef` of kind `Backend` (group `setura.zyvor.dev`) names a backend that is not declared |
 
 ## ReferenceGrants (SET004, SET012)
 

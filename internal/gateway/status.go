@@ -78,6 +78,10 @@ type StatusDoc struct {
 	// Chaos lists the faults that are on right now (chaos.go). Served live by
 	// the admin /status; absent when nothing is injected.
 	Chaos *ChaosStatus `json:"chaos,omitempty"`
+	// LoadBalancing is the live state of every backend's endpoint selection:
+	// algorithm, hash key, endpoints and the last choice (lb_status.go). Served by
+	// the admin /status only.
+	LoadBalancing *LBStatus `json:"loadBalancing,omitempty"`
 }
 
 func mkCond(prev []Condition, typ string, f fact, gen int64, now time.Time) Condition {
