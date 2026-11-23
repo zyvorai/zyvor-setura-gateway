@@ -58,6 +58,17 @@ type Options struct {
 	AuthClock func() time.Time
 	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
 	Cert CertOptions
+	// LearnFile enables the endpoint learner and persists its inventory there
+	// (reloaded at start, written every ContractInterval when it changed).
+	// LearnMax bounds the endpoints kept (default 5000).
+	LearnFile string
+	LearnMax  int
+	// ContractSpec is an OpenAPI 3.x document requests are checked against;
+	// ContractEnforce is the default mode (monitor or block, empty = off) that
+	// a rule's setura.zyvor.dev/contract annotation overrides.
+	ContractSpec     string
+	ContractEnforce  string
+	ContractInterval time.Duration // spec reload and inventory save period (default 5s)
 }
 
 // Loaded is one configuration read from a Source.
@@ -128,6 +139,7 @@ type Server struct {
 	proxyOut atomic.Bool              // some backend sends PROXY headers
 	acme     *acmeManager             // nil without --acme-dir
 	acmeErr  error                    // reported by the first Apply
+	contract *contractState           // endpoint learner and spec enforcement (contract.go)
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -147,6 +159,7 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 	s.shadowP = s.startShadowPersist()
+	s.initContract()
 	s.initCert()
 	return s
 }
@@ -499,7 +512,7 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		if s.opts.AdminToken != "" {
 			note = ", token required"
 		}
-		s.diag("admin http://%s (/ready /config /stats /status /shadow%s)", a, note)
+		s.diag("admin http://%s (/ready /config /stats /status /shadow /contract%s)", a, note)
 	}
 	write := func() {
 		if sw, ok := src.(StatusWriter); ok {
@@ -582,6 +595,7 @@ func (s *Server) Close() {
 	s.res.closeTransports()
 	s.closeBackendTLSTransports()
 	s.shadowP.close()
+	s.closeContract()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()
@@ -642,6 +656,9 @@ func (s *Server) startAdmin() error {
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
 	mux.HandleFunc("/acme", jsonOut(func() any { return s.ACMEInfo() }))
+	mux.HandleFunc("/contract", jsonOut(func() any { return s.Inventory() }))
+	mux.HandleFunc("/contract/status", jsonOut(func() any { return s.ContractStatus() }))
+	mux.HandleFunc("/contract/learn", s.handleContractLearn)
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)

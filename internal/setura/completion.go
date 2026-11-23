@@ -36,6 +36,7 @@ var commandNames = []string{
 	"exposure",
 	"gateway",
 	"shadow",
+	"contract",
 	"completion",
 	"watch",
 	"history",
@@ -56,7 +57,7 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 // gatewayFlags are offered after "setura gateway".
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
-	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
+	"--shadow-diff", "--shadow-state", "--learn", "--learn-max", "--contract-spec", "--contract-enforce", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
 	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc"}
 
 // connectionsFlags are offered after "setura connections".
@@ -92,6 +93,7 @@ var flagSets = []struct {
 	{"replay", replayFlags},
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
+	{"contract", contractFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
 	{"top", topFlags},

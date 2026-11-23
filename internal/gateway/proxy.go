@@ -71,6 +71,12 @@ type reqState struct {
 	in          *countReader
 	open        *openConn
 	up          upInfo
+
+	authed          bool     // the serving rule carries an auth filter
+	contract        string   // unknown_endpoint or unknown_method when the spec does not document the request
+	contractMode    string   // monitor or block
+	contractBlocked bool     // the gateway answered 404/405 itself
+	hdrNames        []string // request header names, kept only while the learner is on
 }
 
 // countBody makes the request body count the bytes it delivers.
@@ -122,6 +128,9 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 	d := end.Sub(start)
 	s.hist.observe(st.route, status, d)
 	s.latency.observeTrace(st.route, st.backend, d, st.trace.TraceID)
+	if s.contract.learn.Enabled() && st.matched && !st.contractBlocked && !isGRPC(r) {
+		s.learnRequest(rec, r, st, status, d)
+	}
 	s.observe(rec, r, st, start, end, status)
 }
 
@@ -149,6 +158,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	st := &reqState{}
 	s.beginTrace(rec, r, st)
 	st.countBody(r)
+	if s.contract.learn.Enabled() {
+		st.hdrNames = requestHeaderNames(r)
+	}
 	defer func() { s.logRequest(rec, r, st, start) }()
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		defer s.trackOpen(rec, r, st, "websocket")()
@@ -195,6 +207,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	if s.rateLimited(rec, r, st) {
 		return
 	}
+	st.authed = ruleAuthed(rule)
 	if s.authDenied(rec, r, st, l, rule.Rule) {
 		return
 	}
@@ -207,6 +220,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			code = http.StatusFound
 		}
 		rec.WriteHeader(code)
+		return
+	}
+
+	if s.contractGate(rec, r, st, rule.Rule) {
 		return
 	}
 
@@ -227,6 +244,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		ep = ref.B.choose(s.res.now(), nil)
 	}
 	st.backend, st.weight = ref.B.Key, ref.Weight
+	st.authed = st.authed || hasExternalAuth(requestFilters(rule, ref))
 
 	if hasExternalAuth(requestFilters(rule, ref)) {
 		ar, v := s.runAuthFilters(r, rule, requestFilters(rule, ref), pg.TLS)

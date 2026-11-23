@@ -294,7 +294,8 @@ func (s *Server) buildLine(rec *recorder, r *http.Request, st *reqState, start, 
 	l := &logLine{Time: start.UTC().Format(time.RFC3339Nano), Listener: st.listener, ListenerPort: localPort(r), Host: r.Host, Method: r.Method,
 		Path: s.logPath(r), Status: status, Bytes: rec.bytesOut(), Millis: ms(end.Sub(start)), Route: st.route, Rule: st.rule,
 		Backend: st.backend, BackendWeight: st.weight, Remote: r.RemoteAddr, RequestID: st.reqID, TraceID: st.trace.TraceID,
-		SpanID: st.trace.SpanID, Error: st.errMsg, Protocol: protocolOf(r), HTTPVersion: r.Proto, RateLimited: st.rateLimited}
+		SpanID: st.trace.SpanID, Error: st.errMsg, Protocol: protocolOf(r), HTTPVersion: r.Proto, RateLimited: st.rateLimited,
+		AuthProtected: st.authed, Contract: st.contract, ContractMode: st.contractMode}
 	l.ClientIP, l.ClientPort = splitRemote(r.RemoteAddr)
 	if c := s.trusted.clientIP(r); len(s.trusted) > 0 && c != l.ClientIP {
 		l.ClientIP, l.ClientPort = c, 0 // the real client behind a trusted proxy: its port is unknown

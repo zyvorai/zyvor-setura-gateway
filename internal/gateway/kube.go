@@ -284,6 +284,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() {
 			annotateHTTP(spec.Rules, r.Metadata.Annotations)
 			annotateAuth(spec.Rules, r.Metadata.Annotations)
+			annotateContract(spec.Rules, r.Metadata.Annotations)
 		})
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}

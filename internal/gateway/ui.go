@@ -171,7 +171,7 @@ func plural(n int64, one, many string) string {
 func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer) error {
 	hub := webui.NewHub(200)
 	ch, cd := s.uiChanges()
-	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd})
+	h := webui.New(webui.Options{State: s.UIState, Hub: hub, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd, Inventory: s.uiInventory})
 	bound, stop, err := webui.Serve(ctx, addr, token, h)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (s *Server) StartUI(ctx context.Context, addr, token string, diag io.Writer
 // UIHandler returns the dashboard as an http.Handler for embedding.
 func (s *Server) UIHandler(token string) http.Handler {
 	ch, cd := s.uiChanges()
-	return webui.New(webui.Options{State: s.UIState, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd})
+	return webui.New(webui.Options{State: s.UIState, Token: token, Connections: s.uiConnections(), Changes: ch, ChangeDetail: cd, Inventory: s.uiInventory})
 }
 
 const maxConnBatch = 200

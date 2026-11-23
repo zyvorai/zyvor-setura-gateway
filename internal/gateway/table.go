@@ -578,6 +578,9 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 	if err := compileAuth(rule.Auth); err != nil {
 		return nil, nil, err
 	}
+	if !ValidContractMode(rule.Contract) {
+		return nil, nil, fmt.Errorf("%s: %q is not off, monitor or block", ContractKey, rule.Contract)
+	}
 	if rule.Timeouts != nil {
 		var err error
 		if cr.Timeout, err = parseDur(rule.Timeouts.Request); err != nil {

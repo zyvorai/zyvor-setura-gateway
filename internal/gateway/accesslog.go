@@ -58,6 +58,9 @@ type logLine struct {
 	UpstreamHealth    string       `json:"upstream_health,omitempty"`
 	Retries           int          `json:"retries,omitempty"`
 	Attempts          []attemptRec `json:"attempts,omitempty"`
+	AuthProtected     bool         `json:"auth_protected,omitempty"` // the serving rule carries an auth filter
+	Contract          string       `json:"contract,omitempty"`       // unknown_endpoint or unknown_method
+	ContractMode      string       `json:"contract_mode,omitempty"`  // monitor or block
 	RequestID         string       `json:"request_id,omitempty"`
 	TraceID           string       `json:"trace_id,omitempty"`
 	SpanID            string       `json:"span_id,omitempty"`
@@ -161,6 +164,11 @@ func (l *logLine) text() []byte {
 		}
 		kv("attempts", string(sb))
 	}
+	if l.AuthProtected {
+		b = append(b, "auth_protected=true "...)
+	}
+	kv("contract", l.Contract)
+	kv("contract_mode", l.ContractMode)
 	kv("request_id", l.RequestID)
 	kv("trace_id", l.TraceID)
 	kv("span_id", l.SpanID)

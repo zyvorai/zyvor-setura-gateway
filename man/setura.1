@@ -91,6 +91,9 @@ built\-in Gateway API data plane, no Envoy needed; guarded config rollout
 .B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
 compare mirrored HTTP and gRPC responses with the primary (built\-in gateway /shadow); exit 1 under the threshold
 .TP
+.B contract learn|show|export|diff [\-\-learned F|\-\-admin ADDR] [\-\-spec openapi.json]
+learn which endpoints the gateway serves; export an OpenAPI 3.1 document; find shadow, zombie and drifting APIs and auth gaps against a real spec (\-\-fail\-on for CI)
+.TP
 .B init [\-\-route host=upstream | \-\-openapi FILE]
 scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI JSON file
 .TP
