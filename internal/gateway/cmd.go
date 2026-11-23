@@ -138,7 +138,8 @@ Flags for install (output is plain YAML; docs/install-options.md):
   --resources requests.cpu=100m,requests.memory=64Mi,limits.cpu=500m,limits.memory=256Mi   any subset
   --node-selector K=V[,K=V]   schedule on labelled nodes; repeatable
   --admin-token-secret NAME   Secret holding the admin token (default setura-gateway-admin, key token); not printed
-  --create-admin-secret       also print that Secret with a NEW random token (apply once; re-applying rotates it)
+  --no-admin-secret           do not print the admin Secret (use --admin-token-secret NAME, or create setura-gateway-admin yourself)
+  --create-admin-secret       print the Secret even with --admin-token-secret
   --crds                print the command that installs the Gateway API CRDs; --gateway-api-version vX.Y.Z (default ` + GatewayAPIVersion + `),
                         --gateway-api-channel standard|experimental
   --check               check the cluster's Gateway API CRDs instead of printing manifests (kubectl; global --context applies)
@@ -440,19 +441,31 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 			io.NodeSelector, err = ParseKeyValues("node-selector", v, io.NodeSelector)
 			return err
 		})
-		fs.StringVar(&io.AdminTokenSecret, "admin-token-secret", "", "Secret holding the admin token under key token (default "+DefaultAdminSecret+"); it is not printed unless --create-admin-secret")
-		fs.BoolVar(&io.CreateAdminSecret, "create-admin-secret", false, "also print the admin token Secret with a NEW random token (apply it once; re-applying rotates the token)")
+		fs.StringVar(&io.AdminTokenSecret, "admin-token-secret", "", "use this existing Secret (key token) for the admin token instead of printing one; re-applying then never rotates it")
+		noAdmin := fs.Bool("no-admin-secret", false, "do not print the admin token Secret; create "+DefaultAdminSecret+" yourself (re-applying then never rotates the token)")
+		fs.BoolVar(&io.CreateAdminSecret, "create-admin-secret", false, "print the admin token Secret even with --admin-token-secret (printed by default unless one of the two options above is given)")
 		fs.BoolVar(&io.CRDs, "crds", false, "print the command that installs the Gateway API CRDs first")
 		fs.StringVar(&io.GatewayAPIVersion, "gateway-api-version", "", "Gateway API release for --crds (default "+GatewayAPIVersion+")")
 		fs.StringVar(&io.GatewayAPIChannel, "gateway-api-channel", "", "CRD channel for --crds: standard (default) or experimental (needed for TCPRoute and UDPRoute)")
 		if _, err := parseInterleaved(fs, rest); err != nil {
 			return fail(err)
 		}
+		explicit := false
+		fs.Visit(func(fl *flag.Flag) {
+			if fl.Name == "create-admin-secret" {
+				explicit = true
+			}
+		})
+		// Default: print the Secret as earlier versions did, so `setura gateway install | kubectl apply -f -`
+		// starts the pod. Naming an existing Secret, or --no-admin-secret, opts out of a fresh token.
+		if !explicit {
+			io.CreateAdminSecret = io.AdminTokenSecret == "" && !*noAdmin
+		}
 		if err := io.Validate(); err != nil {
 			return fail(err)
 		}
 		if !io.CreateAdminSecret {
-			fmt.Fprintf(stderr, "setura: the admin token Secret %q is not printed (re-applying must not rotate it); create it once, or add --create-admin-secret\n", orDefault(io.AdminTokenSecret, DefaultAdminSecret))
+			fmt.Fprintf(stderr, "setura: the admin token Secret %q is not printed; create it once (see the header of the output) or add --create-admin-secret\n", orDefault(io.AdminTokenSecret, DefaultAdminSecret))
 		}
 		fmt.Fprint(stdout, Install(io))
 		return 0

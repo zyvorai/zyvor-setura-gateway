@@ -3,7 +3,7 @@
 `setura gateway install` prints plain YAML for the in-cluster controller and never
 applies it. Every option below changes the printed YAML only, so nothing has to be
 patched with `kubectl patch` afterwards. The output is deterministic: the same flags
-print the same text (except `--create-admin-secret`, which prints a random token).
+print the same text (the admin Secret holds a random token unless you opt out with `--no-admin-secret` or `--admin-token-secret`).
 
     setura gateway install \
       --service-type NodePort --node-port HTTP=30080,HTTPS=30443,7443=30743 \
@@ -41,16 +41,14 @@ of a cluster is 30000-32767; Setura only checks 1-65535 because the range is con
 ## The admin token
 
 The controller reads its admin token from the Secret `setura-gateway-admin`, key `token`.
-Earlier versions printed that Secret with a new random token on every run, so
-`setura gateway install | kubectl apply -f -` rotated the token each time. Now:
+`setura gateway install | kubectl apply -f -` prints that Secret with a new random token, so the
+pod starts at once, but re-applying the output rotates the token. To keep it stable:
 
-* By default the Secret is **not printed**. The header of the output shows the one-line
-  command that creates it, and `setura` reminds you on stderr. Re-applying the output
-  never touches the token.
+* `--no-admin-secret` prints no Secret. The header of the output shows the one-line command
+  that creates it, and `setura` reminds you on stderr. Re-applying never touches the token.
 * `--admin-token-secret NAME` makes the Deployment read an existing Secret (key `token`)
   instead; again nothing is printed for it. Use this to bring your own, or to share one.
-* `--create-admin-secret` prints the Secret with a new random token. Apply that document
-  once. Applying it again replaces the token.
+* `--create-admin-secret` prints the Secret even together with `--admin-token-secret`.
 
 First install, step by step:
 

@@ -62,7 +62,7 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version",
 	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample",
 	"install", "status", "--service-type", "--node-port", "--listener-port", "--external-traffic-policy", "--host-network", "--arg", "--resources",
-	"--node-selector", "--admin-token-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
+	"--node-selector", "--admin-token-secret", "--no-admin-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
 	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A"}
 
 // connectionsFlags are offered after "setura connections".

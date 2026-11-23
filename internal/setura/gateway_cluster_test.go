@@ -286,8 +286,15 @@ func TestInstallFlagsAreCompletedAndPrinted(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	if !strings.Contains(errs, "not printed") || strings.Contains(out, "kind: Secret") {
-		t.Errorf("admin Secret handling: %q", errs)
+	// Default (no --admin-token-secret): the Secret is printed, as before, so `install | kubectl apply` starts the pod.
+	if strings.Contains(errs, "not printed") || !strings.Contains(out, "kind: Secret") {
+		t.Errorf("default admin Secret handling: %q", errs)
+	}
+	if code, o2, e2 := gwxRun("gateway", "install", "--no-admin-secret"); code != 0 || strings.Contains(o2, "kind: Secret") || !strings.Contains(e2, "not printed") {
+		t.Errorf("--no-admin-secret: %d %q", code, e2)
+	}
+	if code, o3, _ := gwxRun("gateway", "install", "--admin-token-secret", "mine"); code != 0 || strings.Contains(o3, "kind: Secret") {
+		t.Errorf("--admin-token-secret must not print a Secret: %d", code)
 	}
 	for _, bad := range [][]string{{"--service-type", "Bogus"}, {"--node-port", "HTTP=30080"}, {"--listener-port", "x"}, {"--resources", "cpu=1"}, {"--arg", "nodash"}} {
 		if code, _, e := gwxRun(append([]string{"gateway", "install"}, bad...)...); code != 2 || e == "" {
