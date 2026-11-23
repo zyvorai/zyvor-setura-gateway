@@ -22,6 +22,7 @@ type GRPCRoute struct {
 	Parents    []ParentRef
 	Hostnames  []string
 	Rules      []GRPCRule
+	Labels     map[string]string `json:",omitempty"`
 }
 
 // GRPCRule is one GRPCRoute rule.

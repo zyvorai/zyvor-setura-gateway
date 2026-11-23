@@ -21,6 +21,7 @@ print the same text (the admin Secret holds a random token unless you opt out wi
 | `--node-port HTTP=30080,HTTPS=30443` | Sets `nodePort` on Service ports. Keys are the port names `http` and `https` (any case), or a Service port number such as `7443=30743`. Repeatable. Needs `NodePort` or `LoadBalancer`. Two ports may not share a node port. |
 | `--listener-port N` | Adds a Service port named `listener-N` for a Gateway listener port, and a matching container port. Repeatable. A port below 1024 maps to `N+8000` (the controller runs with `--port-offset=8000`), any other port maps to itself. 80, 443 and 19000 are already used. |
 | `--expose-gateway-ports` | Existing option: the controller adds `gw-N` Service ports itself for every listener port it sees (needs the `services` patch RBAC, which this flag adds). It leaves `listener-N` ports alone. Use `--listener-port` when you want the ports to exist before any Gateway does, or want `--node-port` on them. |
+| `--envoy-compat` | Runs the controller with `--envoy-compat` and adds read and status access to the optional Envoy Gateway CRDs (`gateway.envoyproxy.io`: backendtrafficpolicies, clienttrafficpolicies, securitypolicies, httproutefilters, backends) and to nothing else of that group. See [envoy-compat.md](envoy-compat.md). |
 | `--external-traffic-policy Local\|Cluster` | `spec.externalTrafficPolicy`; `Local` keeps client addresses. Needs `NodePort` or `LoadBalancer`. |
 
 `--node-port` is checked against the ports the Service will have: naming `7443` without

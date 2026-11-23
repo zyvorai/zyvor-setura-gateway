@@ -2,33 +2,37 @@
   setura migrate convert  envoy-gateway → Gateway API
 
   Converted
+    ✓  HTTPRouteFilter demo/gone        directResponse                      rule setura.zyvor.dev/direct-response (route annotation)
+    ✓  BackendTrafficPolicy demo/slow   faultInjection                      rule setura.zyvor.dev/fault (route annotation, ttl 24h)
+    ✓  BackendTrafficPolicy demo/slow   rateLimit                           rule setura.zyvor.dev/rate-limit (route annotation)
     ✓  BackendTrafficPolicy demo/slow   retry                               rule retry (attempts, codes, backoff, perTryTimeout)
-    ✓  BackendTrafficPolicy demo/slow   timeout.http.requestTimeout         rule timeouts.request
+    ✓  BackendTrafficPolicy demo/slow   timeout                             rule timeouts.request
+    ✓  SecurityPolicy demo/web          apiKeyAuth                          auth apiKey.keys
     ✓  SecurityPolicy demo/web          cors                                CORS filter on every targeted rule
     ✓  SecurityPolicy demo/web          extAuth                             ExternalAuth filter
-    ✓  SecurityPolicy demo/web          jwt.providers[idp]                  setura.zyvor.dev/auth jwt
+    ✓  SecurityPolicy demo/web          jwt                                 setura.zyvor.dev/auth jwt
     ✓  SecurityPolicy demo/admin-only   authorization                       setura.zyvor.dev/auth ipAllow / ipDeny
+    ✓  ClientTrafficPolicy demo/client  tls                                 Gateway listener tls.options and spec.tls.frontend
 
   Needs a human
-    ▲  BackendTrafficPolicy demo/slow   circuitBreaker                      configured with gateway flags, not per route; see docs/resilience.md
-    ▲  BackendTrafficPolicy demo/slow   loadBalancer                        the Setura gateway balances weighted backendRefs itself; consistent hash, leas...
-    ▲  BackendTrafficPolicy demo/slow   rateLimit                           the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit...
+    ▲  BackendTrafficPolicy demo/slow   circuitBreaker.maxConnections       has no field in a manifest: the controller (--envoy-compat) translates it to b...
+    ▲  BackendTrafficPolicy demo/slow   loadBalancer                        this Setura gateway balances weighted backendRefs and has no least request, ra...
     ▲  BackendTrafficPolicy demo/slow   retry.retryOn.triggers              the gateway retries connection failures and the listed status codes only; this...
-    ▲  BackendTrafficPolicy demo/slow   timeout.http.connectionIdleTimeout  HTTPRoute timeouts cover the request and the backend request only; connection ...
-    ▲  BackendTrafficPolicy demo/slow   timeout.tcp.connectTimeout          HTTPRoute timeouts cover the request and the backend request only; connection ...
-    ▲  SecurityPolicy demo/web          apiKeyAuth                          no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and...
-    ▲  SecurityPolicy demo/web          jwt.providers[1]                    an auth block accepts one JWT issuer; add this provider by splitting the rules...
-    ▲  ClientTrafficPolicy demo/client  clientIPDetection                   client address detection is a gateway option: setura gateway run --trusted-pro...
-    ▲  ClientTrafficPolicy demo/client  timeout                             client side timeouts (idle, request received) are connection settings of the d...
+    ▲  BackendTrafficPolicy demo/slow   timeout.http.connectionIdleTimeout  Setura has no per-route connection idle timeout
+    ▲  BackendTrafficPolicy demo/slow   timeout.tcp.connectTimeout          the dial timeout of the proxy is fixed
+    ▲  SecurityPolicy demo/web          apiKeyAuth                          the converter cannot read the Secret: store each key as a hash with `setura ga...
+    ▲  SecurityPolicy demo/web          jwt.providers                       an auth block accepts one JWT issuer: tokens of provider other are refused
+    ▲  ClientTrafficPolicy demo/client  clientIPDetection                   gateway wide, not per listener
+    ▲  ClientTrafficPolicy demo/client  timeout.http.idleTimeout            gateway wide, not per listener
     ▲  SecurityPolicy demo/ghost        targetRefs                          the target is not among the converted routes or their Gateways; nothing was ch...
 
   Generated
-    Gateway    demo/eg      
-    HTTPRoute  demo/orders    10 TODO
-    GRPCRoute  demo/rpc       2 TODO
+    Gateway    demo/eg        2 TODO
+    HTTPRoute  demo/orders    7 TODO
+    GRPCRoute  demo/rpc     
 
-  Check  ✓ 3 rules equivalent to the original
+  Check  ✓ 4 rules equivalent to the original
 
-  needs review  6 converted, 11 need a human, 3 resources
+  needs review  11 converted, 10 need a human, 3 resources
   Next: resolve the TODO(setura) comments, then run again with --out DIR
 

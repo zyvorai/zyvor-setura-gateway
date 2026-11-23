@@ -49,6 +49,10 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET045", SeverityWarning, "AI prompt cache is shared across identities (scope route) on a route that authenticates, so one client's answer can be served to another"},
 	{"SET046", SeverityWarning, "AI monthlyCost budget has no price table on the route (prices); without --ai-prices on the gateway the cost is always 0 and the budget never fires"},
 	{"SET047", SeverityWarning, "AI rule also has backendRefs, which are ignored: an AI rule serves its providers"},
+	{"SET080", SeverityWarning, "Envoy Gateway policy sets fields Setura ignores (see docs/envoy-gateway-compat.md)"},
+	{"SET081", SeverityWarning, "Envoy Gateway policy targets a Gateway or route that is not in the snapshot"},
+	{"SET082", SeverityWarning, "two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins and the others are Conflicted"},
+	{"SET083", SeverityWarning, "Envoy Gateway security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules): the controller refuses the targeted traffic"},
 }
 
 func ruleSeverity(id string) string {
@@ -236,6 +240,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, limitsRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)
+	findings = append(findings, envoyRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

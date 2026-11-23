@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	builtin "github.com/zyvorai/zyvor-setura-gateway/internal/gateway"
 )
 
 var convertSources = []string{"ingress-nginx", "envoy-gateway", "traefik", "nginx-conf"}
@@ -77,6 +79,7 @@ func runMigrateConvert(cluster *Cluster, fs *flag.FlagSet, args []string, stdout
 	force := fs.Bool("force", false, "overwrite existing files in --out and --report")
 	report := fs.String("report", "", "write the machine-readable report (JSON) to this file")
 	format := fs.String("format", "pretty", "pretty (YAML on stdout, summary on stderr; summary on stdout with --out), json (report with the manifests) or yaml (manifests only)")
+	compat := fs.Bool("compat-report", false, "with --from envoy-gateway: list every Envoy Gateway policy field with Supported, Partial or Unsupported and its Setura equivalent (--format pretty, json or markdown); converts nothing")
 	noCheck := fs.Bool("no-check", false, "skip the equivalence check of the generated routes against the originals")
 
 	if len(args) > 0 && args[0] == "convert" {
@@ -101,6 +104,24 @@ func runMigrateConvert(cluster *Cluster, fs *flag.FlagSet, args []string, stdout
 	}
 	if !known {
 		return fail(fmt.Sprintf("--from must be one of %s, got %q", strings.Join(convertSources, ", "), *from))
+	}
+	if *compat {
+		if src != "envoy-gateway" {
+			return fail("--compat-report belongs to --from envoy-gateway")
+		}
+		switch *format {
+		case "pretty", "auto":
+			fmt.Fprint(stdout, builtin.EnvoyCompatText())
+		case "markdown":
+			fmt.Fprint(stdout, builtin.EnvoyCompatMarkdown())
+		case "json":
+			if err := writeJSON(stdout, obj{"schema": "setura.envoy-compat/v1", "counts": builtin.EnvoyCompatCounts(), "fields": builtin.EnvoyCompatTable}); err != nil {
+				return 0, err
+			}
+		default:
+			return fail(fmt.Sprintf("--format for --compat-report must be pretty, json or markdown, got %q", *format))
+		}
+		return 0, nil
 	}
 	switch *format {
 	case "pretty", "auto", "json", "yaml":
@@ -285,7 +306,7 @@ func readConvertCluster(cluster *Cluster, src, ns string, all bool, in *convertI
 			res string
 			req bool
 		}{{"httproutes.gateway.networking.k8s.io", true}, {"grpcroutes.gateway.networking.k8s.io", false}, {"gateways.gateway.networking.k8s.io", false},
-			{"securitypolicies.gateway.envoyproxy.io", false}, {"backendtrafficpolicies.gateway.envoyproxy.io", false}, {"clienttrafficpolicies.gateway.envoyproxy.io", false}} {
+			{"httproutefilters.gateway.envoyproxy.io", false}, {"securitypolicies.gateway.envoyproxy.io", false}, {"backendtrafficpolicies.gateway.envoyproxy.io", false}, {"clienttrafficpolicies.gateway.envoyproxy.io", false}} {
 			if err := list(r.res, r.req); err != nil {
 				return err
 			}

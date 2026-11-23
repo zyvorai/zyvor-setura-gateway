@@ -7,7 +7,7 @@ Turn what you run today into Gateway API YAML that the built-in gateway and [`se
 | `--from` | Input | Output |
 | --- | --- | --- |
 | `ingress-nginx` (default) | `networking.k8s.io/v1` Ingress objects and their `nginx.ingress.kubernetes.io/*` annotations | Gateway, HTTPRoute, GRPCRoute, TLSRoute, BackendTLSPolicy, ReferenceGrant |
-| `envoy-gateway` | HTTPRoutes, GRPCRoutes, Gateways plus SecurityPolicy, BackendTrafficPolicy and ClientTrafficPolicy | the same routes with the policies folded into rule fields, filters and Setura auth blocks |
+| `envoy-gateway` | HTTPRoutes, GRPCRoutes, Gateways plus SecurityPolicy, BackendTrafficPolicy, ClientTrafficPolicy and HTTPRouteFilter | the same routes with the policies folded into rule fields, filters and Setura auth blocks |
 | `traefik` | IngressRoute, IngressRouteTCP and Middleware (`traefik.io` and `traefik.containo.us`) | Gateway, HTTPRoute, TLSRoute, BackendTLSPolicy, ReferenceGrant |
 | `nginx-conf` | a `nginx.conf` (or a directory of `*.conf`) in the documented subset | Gateway, HTTPRoute, BackendTLSPolicy, ReferenceGrant |
 
@@ -28,6 +28,7 @@ Nothing is dropped silently. A setting with no equivalent becomes a `# TODO(setu
 | `--report FILE` | machine-readable report (JSON) |
 | `--format pretty\|json\|yaml` | `pretty` (default): YAML on stdout and the summary on stderr, or the summary on stdout with `--out`; `json`: the report including the generated `manifests`; `yaml`: manifests only |
 | `--no-check` | skip the equivalence check |
+| `--compat-report` | with `--from envoy-gateway`: print every Envoy Gateway policy field with Supported, Partial or Unsupported and its Setura equivalent (`--format pretty`, `json` or `markdown`); converts nothing |
 
 ## Naming
 
@@ -65,9 +66,12 @@ The routes and Gateways are copied; each policy is applied to the rules it targe
 
 | Policy | Converted | TODO |
 | --- | --- | --- |
-| BackendTrafficPolicy | `timeout.http.requestTimeout` to `timeouts.request`; `retry` to the rule `retry` (attempts, status codes, backoff, per-try timeout) | other timeouts and retry triggers, `rateLimit` (the gateway's limit is global; the command suggests the `--rate-limit` value), `circuitBreaker`, `healthCheck`, `loadBalancer`, the rest |
-| SecurityPolicy | `cors` to the `CORS` filter; `jwt` (first provider) to the auth `jwt` block; `authorization` on `clientCIDRs` to `ipAllow` / `ipDeny`; `basicAuth` to a `basic` block; `extAuth` to `ExternalAuth` | further JWT providers, `apiKeyAuth`, `oidc`, claim-based authorization |
-| ClientTrafficPolicy | nothing | every field, with the matching gateway option where there is one (`--trusted-proxies` for `clientIPDetection`) |
+| BackendTrafficPolicy | `timeout.http.requestTimeout` to `timeouts.request`; `retry` to the rule `retry` (attempts, status codes, backoff, per-try timeout); `rateLimit` (Local) to the `setura.zyvor.dev/rate-limit` annotation; `faultInjection` to the `setura.zyvor.dev/fault` annotation (ttl 24h); `mirrors` to a `RequestMirror` filter | other timeouts and retry triggers, global rate limits, `loadBalancer`, `compression`; `circuitBreaker`, `healthCheck` and `proxyProtocol` are backend settings with no manifest field (a TODO naming the Setura setting the controller applies) |
+| SecurityPolicy | `cors` to the `CORS` filter; `jwt` (first provider) to the auth `jwt` block; `authorization` on `clientCIDRs` to `ipAllow` / `ipDeny`; `extAuth` to `ExternalAuth` | further JWT providers, `apiKeyAuth` (the Secret is not read: a TODO), `basicAuth` and `oidc` (not enforced, a TODO), claim-based authorization |
+| ClientTrafficPolicy | `tls.minVersion` and `tls.maxVersion` to the Gateway listener `tls.options`; `tls.clientValidation` to the Gateway `spec.tls.frontend` | every other field, with the matching gateway flag where there is one (`--trusted-proxies` for `clientIPDetection`) |
+| HTTPRouteFilter | `directResponse` on a rule that references it becomes the `setura.zyvor.dev/direct-response` annotation | `urlRewrite` with a regular expression: the `ExtensionRef` stays, so Setura refuses the route instead of serving it unrewritten |
+
+The conversion and the controller (`setura gateway run --kubernetes --envoy-compat`, which reads the same policies from the cluster at run time) use one translation. `--compat-report` lists every Envoy Gateway field with Supported, Partial or Unsupported and its Setura equivalent; the table is [envoy-gateway-compat.md](envoy-gateway-compat.md), and [envoy-compat.md](envoy-compat.md) says how to switch.
 
 ## traefik
 

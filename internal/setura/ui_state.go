@@ -57,6 +57,10 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET045": {"Cache shared across clients", "The prompt cache scope is the route on a route that authenticates, so a cached answer to one client's prompt can be returned to another.", "Use the default scope (identity) unless every client may see every answer."},
 	"SET046": {"Cost budget without prices", "monthlyCost needs a price table. Without prices on the route, only a gateway started with --ai-prices can compute cost.", "Add prices to the AI block, or start the gateway with --ai-prices."},
 	"SET047": {"backendRefs are ignored", "A rule with an AI block serves its providers; its backendRefs are never used.", "Remove the backendRefs."},
+	"SET080": {"Envoy Gateway fields are ignored", "The policy sets fields Setura has no equivalent for, so they have no effect.", "See docs/envoy-gateway-compat.md for each field's Setura equivalent."},
+	"SET081": {"Envoy Gateway policy has no target", "The policy targets a Gateway or route that is not in the snapshot, so nothing is changed by it.", "Fix the targetRef, or delete the policy."},
+	"SET082": {"Envoy Gateway policies conflict", "Two policies of one kind target the same object at the same level. The oldest wins and the others are Conflicted.", "Merge them into one policy, or target different objects or sections."},
+	"SET083": {"Envoy Gateway guard is not enforced", "The security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules), so the controller refuses the targeted traffic.", "Replace the field with one Setura supports (see docs/envoy-gateway-compat.md), or opt out with the annotation setura.zyvor.dev/compat-fail-open."},
 	"SET019": {"Gateway API 1.5 setting is invalid", "A CORS or ExternalAuth filter, session persistence, a backend timeout or a BackendTLSPolicy is configured in a way the built-in gateway refuses, so the route (or policy) is not accepted.", "Fix the setting named in the message (see docs/gateway-api-1-5.md)."},
 }
 

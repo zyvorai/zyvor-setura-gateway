@@ -182,3 +182,19 @@ func TestGatewayAPIVersionHelpers(t *testing.T) {
 		t.Error("experimental channel")
 	}
 }
+
+// --envoy-compat adds the arg and read/status access to the Envoy Gateway CRDs, and nothing otherwise.
+func TestInstallGoldenEnvoyCompat(t *testing.T) {
+	out := Install(InstallOptions{Image: "example.test/setura:1", EnvoyCompat: true})
+	goldenCheck(t, "install_envoy_compat.golden.yaml", out)
+	for _, want := range []string{"--envoy-compat", `apiGroups: ["gateway.envoyproxy.io"]`, "securitypolicies/status"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q", want)
+		}
+	}
+	for _, plain := range []string{Install(InstallOptions{}), Install(fullInstall())} {
+		if strings.Contains(plain, "envoyproxy") || strings.Contains(plain, "--envoy-compat") {
+			t.Error("Envoy Gateway permissions printed without --envoy-compat")
+		}
+	}
+}

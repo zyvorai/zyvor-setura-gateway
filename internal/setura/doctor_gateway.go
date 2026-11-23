@@ -177,7 +177,7 @@ func doctorGateway(o dgOptions, env dgEnv) *dgReport {
 	rep.Checks = append(rep.Checks, adm.check)
 	rep.Checks = append(rep.Checks, ejectedCheck(ctx, o, adm, env))
 	if o.Kube {
-		rep.Checks = append(rep.Checks, crdsCheck(o, env), clusterStatusCheck(o, env))
+		rep.Checks = append(rep.Checks, crdsCheck(o, env), clusterStatusCheck(o, env), envoyPoliciesCheck(o, env))
 	}
 
 	fails, warns := 0, 0
@@ -945,6 +945,13 @@ func clusterStatusCheck(o dgOptions, env dgEnv) dgCheck {
 					if len(c.Details) < 8 {
 						c.Details = append(c.Details, it.Kind+" "+it.Namespace+"/"+it.Name+": "+p)
 					}
+				}
+			}
+		}
+		for _, it := range r.Policies {
+			for _, p := range it.Problems {
+				if len(c.Details) < 8 {
+					c.Details = append(c.Details, it.Kind+" "+it.Namespace+"/"+it.Name+": "+p)
 				}
 			}
 		}
