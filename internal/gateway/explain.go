@@ -1129,6 +1129,7 @@ func (s *Server) handleWhy(w http.ResponseWriter, r *http.Request) {
 		plain(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.Port = s.specPortFor(req.Port) // the URL carries the real port; the table is keyed by the spec port
 	req.Live, req.Now = true, s.res.now()
 	req.Remote, req.Server = strings.TrimSpace(q.Get("client")), s.liveServerPolicy()
 	tr := Explain(t, req)

@@ -330,7 +330,8 @@ setura_gateway_endpoint_ejected{backend="api:80",endpoint="10.0.0.2:80"} 0
 	// the gateway holds its own port: not a clash
 	be := dgBackend(t, nil)
 	cfg := writeDGConfig(t, dgCfg{ports: [][2]any{{8084, "HTTP"}}, backends: map[string][]string{"api:80": {be}}})
-	if ck := dgFind(doctorGateway(dgOpts(cfg, addr, true), env), "ports"); ck.State != "ok" || !strings.Contains(strings.Join(ck.Details, " "), "running gateway") {
+	own := dgStatusAdmin(t, `[{"spec":8084,"addr":"127.0.0.1:8084","proto":"tcp"}]`)
+	if ck := dgFind(doctorGateway(dgOpts(cfg, own, true), env), "ports"); ck.State != "ok" || !strings.Contains(strings.Join(ck.Details, " "), "running gateway") {
 		t.Fatalf("own port = %+v", ck)
 	}
 }
@@ -377,5 +378,87 @@ func TestDoctorDispatchesToGateway(t *testing.T) {
 	code := runWith(nil, []string{"doctor", "gateway", "--admin", "127.0.0.1:1", "--format", "json"}, &so, &se)
 	if code != 1 || !strings.Contains(so.String(), "setura.doctor.gateway/v1") {
 		t.Fatalf("code %d out %s err %s", code, so.String(), se.String())
+	}
+}
+
+// dgStatusAdmin is a fake admin API whose /status lists the given listeners.
+func dgStatusAdmin(t *testing.T, listening string) string {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/status" && listening != "" {
+			io.WriteString(w, `{"listening":`+listening+`}`)
+			return
+		}
+		io.WriteString(w, "{}")
+	}))
+	t.Cleanup(s.Close)
+	return strings.TrimPrefix(s.URL, "http://")
+}
+
+func dgPortsCheck(t *testing.T, port int, admin string, mod func(*dgOptions)) dgCheck {
+	t.Helper()
+	be := dgBackend(t, nil)
+	cfg := writeDGConfig(t, dgCfg{ports: [][2]any{{port, "HTTP"}}, backends: map[string][]string{"api:80": {be}}})
+	env := dgTestEnv()
+	env.listen = net.Listen
+	env.portOwner = func(p int) string { return fmt.Sprintf("test-holder, pid 42 on %d", p) }
+	o := dgOpts(cfg, admin, true)
+	if mod != nil {
+		mod(&o)
+	}
+	return dgFind(doctorGateway(o, env), "ports")
+}
+
+func TestDoctorGatewayPortAttribution(t *testing.T) {
+	// A foreign process holds the spec port; the gateway serves it on another port (--port-map).
+	foreign, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer foreign.Close()
+	spec := foreign.Addr().(*net.TCPAddr).Port
+	gw, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer gw.Close()
+	gwAddr := gw.Addr().String()
+	admin := dgStatusAdmin(t, fmt.Sprintf(`[{"spec":%d,"addr":%q,"proto":"tcp"}]`, spec, gwAddr))
+	ck := dgPortsCheck(t, spec, admin, nil)
+	joined := strings.Join(ck.Details, " ")
+	if strings.Contains(joined, "by the running gateway") || !strings.Contains(joined, "another process (test-holder, pid 42") || !strings.Contains(joined, "not affected") {
+		t.Fatalf("a foreign holder must not be called the gateway: %+v", ck)
+	}
+
+	// Same port really held by the gateway: attributed to it.
+	admin = dgStatusAdmin(t, fmt.Sprintf(`[{"spec":%d,"addr":%q,"proto":"tcp"}]`, spec, foreign.Addr().String()))
+	ck = dgPortsCheck(t, spec, admin, nil)
+	if ck.State != "ok" || !strings.Contains(strings.Join(ck.Details, " "), "by the running gateway") {
+		t.Fatalf("the gateway's own port: %+v", ck)
+	}
+
+	// The gateway does not list the port at all: a real conflict.
+	admin = dgStatusAdmin(t, `[{"spec":1,"addr":"127.0.0.1:1","proto":"tcp"}]`)
+	ck = dgPortsCheck(t, spec, admin, nil)
+	if ck.State != "fail" || !strings.Contains(strings.Join(ck.Details, " "), "not listening on it") {
+		t.Fatalf("unrelated holder: %+v", ck)
+	}
+
+	// An admin API that does not list listeners: do not guess.
+	ck = dgPortsCheck(t, spec, dgStatusAdmin(t, ""), nil)
+	if ck.State != "warn" || strings.Contains(strings.Join(ck.Details, " "), "by the running gateway") {
+		t.Fatalf("unattributable holder: %+v", ck)
+	}
+
+	// --port-map: the doctor checks the port the gateway binds, not the spec port.
+	free, _ := net.Listen("tcp", "127.0.0.1:0")
+	freePort := free.Addr().(*net.TCPAddr).Port
+	free.Close()
+	ck = dgPortsCheck(t, spec, "127.0.0.1:1", func(o *dgOptions) { o.PortMap = map[int]int{spec: freePort} })
+	if ck.State != "ok" || !strings.Contains(strings.Join(ck.Details, " "), fmt.Sprintf("port %d (the gateway serves spec port %d there) is free", freePort, spec)) {
+		t.Fatalf("port map: %+v", ck)
+	}
+	ck = dgPortsCheck(t, spec, "127.0.0.1:1", func(o *dgOptions) { o.PortMap = map[int]int{spec: spec} })
+	if ck.State != "fail" {
+		t.Fatalf("port map onto a held port must fail: %+v", ck)
+	}
+	// --port-offset moves only spec ports below 1024; a high port is unchanged.
+	ck = dgPortsCheck(t, spec, "127.0.0.1:1", func(o *dgOptions) { o.PortOffset = 5 })
+	if ck.State != "fail" {
+		t.Fatalf("offset leaves high ports alone: %+v", ck)
 	}
 }

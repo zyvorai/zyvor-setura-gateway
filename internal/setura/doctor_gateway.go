@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -54,18 +55,23 @@ type dgOptions struct {
 	Kube              bool
 	KubeNS            string
 	GatewayAPIVersion string
+	// PortMap and PortOffset are the gateway's --port-map and --port-offset: the
+	// port a listener really binds is not always the one the config names.
+	PortMap    map[int]int
+	PortOffset int
 }
 
 // dgEnv holds everything the checks touch outside the process, so tests can
 // replace it.
 type dgEnv struct {
-	now      func() time.Time
-	dial     func(ctx context.Context, network, addr string) (net.Conn, error)
-	listen   func(network, addr string) (net.Listener, error)
-	client   *http.Client
-	readFile func(string) ([]byte, error)
-	token    func() string // SETURA_ADMIN_TOKEN
-	cluster  *Cluster      // kubectl access for --kube
+	now       func() time.Time
+	dial      func(ctx context.Context, network, addr string) (net.Conn, error)
+	listen    func(network, addr string) (net.Listener, error)
+	client    *http.Client
+	readFile  func(string) ([]byte, error)
+	token     func() string         // SETURA_ADMIN_TOKEN
+	cluster   *Cluster              // kubectl access for --kube
+	portOwner func(port int) string // best effort: the process holding a TCP port, or ""
 }
 
 func defaultDGEnv(timeout time.Duration) dgEnv {
@@ -79,8 +85,9 @@ func defaultDGEnv(timeout time.Duration) dgEnv {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			DialContext:     d.DialContext,
 		}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		readFile: os.ReadFile,
-		token:    func() string { return os.Getenv("SETURA_ADMIN_TOKEN") },
+		readFile:  os.ReadFile,
+		token:     func() string { return os.Getenv("SETURA_ADMIN_TOKEN") },
+		portOwner: lookupPortOwner,
 	}
 }
 
@@ -270,7 +277,7 @@ func portsCheck(o dgOptions, cfg *builtin.Config, cfgOK bool, adm adminProbe, en
 		names []string
 	}
 	tcp, udp := map[int]*use{}, map[int]*use{}
-	var problems, details []string
+	var problems, details, warnings []string
 	if cfgOK {
 		for _, g := range cfg.Gateways {
 			for _, l := range g.Listeners {
@@ -305,17 +312,43 @@ func portsCheck(o dgOptions, cfg *builtin.Config, cfgOK bool, adm adminProbe, en
 		if p <= 0 {
 			continue
 		}
-		ln, err := env.listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+		target := p // the port the gateway really binds
+		if v, ok := o.PortMap[p]; ok {
+			target = v
+		} else if p < 1024 {
+			target = p + o.PortOffset
+		}
+		if target == 0 {
+			details = append(details, fmt.Sprintf("port %d is served on any free port (--port-map), nothing to check", p))
+			continue
+		}
+		label := fmt.Sprintf("port %d", target)
+		if target != p {
+			label = fmt.Sprintf("port %d (the gateway serves spec port %d there)", target, p)
+		}
+		ln, err := env.listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(target)))
 		switch {
 		case err == nil:
 			ln.Close()
-			details = append(details, fmt.Sprintf("port %d is free", p))
+			details = append(details, label+" is free")
 		case errors.Is(err, syscall.EADDRINUSE):
-			if adm.reachable {
-				details = append(details, fmt.Sprintf("port %d is in use, by the running gateway", p))
-			} else {
+			who := portHolder(env, target)
+			switch {
+			case adm.reachable && adm.listed:
+				if lp, ok := listenerOnPort(adm.listening, target); ok {
+					details = append(details, fmt.Sprintf("%s is in use, by the running gateway (spec port %d on %s)", label, lp.Spec, lp.Addr))
+				} else if lp, ok := listenerForSpec(adm.listening, p); ok {
+					// The gateway serves this spec port elsewhere: whoever holds target is not the gateway.
+					details = append(details, fmt.Sprintf("%s is in use by another process%s; the running gateway serves spec port %d on %s, so it is not affected", label, who, p, lp.Addr))
+				} else {
+					busy++
+					problems = append(problems, fmt.Sprintf("%s is already in use by another process%s, and the running gateway is not listening on it", label, who))
+				}
+			case adm.reachable:
+				warnings = append(warnings, fmt.Sprintf("%s is in use%s, but the admin /status does not list the gateway's listeners, so it cannot be confirmed to be the gateway", label, who))
+			default:
 				busy++
-				problems = append(problems, fmt.Sprintf("port %d is already in use by another process", p))
+				problems = append(problems, fmt.Sprintf("%s is already in use by another process%s", label, who))
 			}
 		case errors.Is(err, syscall.EACCES):
 			details = append(details, fmt.Sprintf("port %d needs privileges (the gateway can shift low ports with --port-offset)", p))
@@ -344,7 +377,11 @@ func portsCheck(o dgOptions, cfg *builtin.Config, cfgOK bool, adm adminProbe, en
 	default:
 		c.State = "ok"
 		c.Message = fmt.Sprintf("%s checked, no clashes", plural(len(ports), "listener port", "listener ports"))
-		c.Details = details
+		c.Details = append(warnings, details...)
+		if len(warnings) > 0 {
+			c.State, c.Message = "warn", plural(len(warnings), "port could not be attributed", "ports could not be attributed")
+			c.Fix = "Upgrade the gateway so its admin /status lists its listeners, or check who holds the port: lsof -nP -iTCP:PORT -sTCP:LISTEN"
+		}
 	}
 	_ = busy
 	return c
@@ -644,6 +681,10 @@ func clockCheck(ctx context.Context, cfgOK bool, eps []dgEndpoint, env dgEnv) dg
 
 type adminProbe struct {
 	reachable bool
+	// listening is what the gateway says it bound (admin /status); listed is false
+	// when it did not say (an older gateway, or the status was not readable).
+	listening []builtin.ListenPort
+	listed    bool
 	check     dgCheck
 	base      string
 }
@@ -710,6 +751,9 @@ func probeAdmin(ctx context.Context, o dgOptions, env dgEnv) adminProbe {
 		default:
 			p.check.State, p.check.Message = "ok", "reachable at "+o.Admin+", protected, and SETURA_ADMIN_TOKEN is accepted"
 		}
+	}
+	if p.check.State != "fail" {
+		p.listening, p.listed = fetchListening(ctx, p.base, tok, env)
 	}
 	return p
 }
@@ -850,6 +894,9 @@ func runDoctorGatewayWith(cluster *Cluster, rest []string, stdout, stderr io.Wri
 	var o dgOptions
 	fs.StringVar(&o.Config, "config", "", "the gateway config file (setura.route-specs/v1 JSON) to check")
 	fs.StringVar(&o.Admin, "admin", "", "gateway admin address (default "+builtin.DefaultAdmin+"; honours SETURA_ADMIN_TOKEN)")
+	var portMaps stringList
+	fs.Var(&portMaps, "port-map", "the gateway's --port-map A=B[,..]: check B instead of spec port A (repeatable)")
+	fs.IntVar(&o.PortOffset, "port-offset", 0, "the gateway's --port-offset: added to spec ports below 1024")
 	fs.IntVar(&o.WarnCertDays, "warn-cert-days", 14, "warn when a certificate expires within this many days")
 	fs.DurationVar(&o.Timeout, "timeout", 3*time.Second, "timeout for each network check")
 	fs.BoolVar(&o.Kube, "kube", false, "also check the cluster through kubectl: Gateway API CRDs (missing or too old) and Gateway and route status")
@@ -871,6 +918,9 @@ func runDoctorGatewayWith(cluster *Cluster, rest []string, stdout, stderr io.Wri
 	}
 	if o.Timeout <= 0 || o.WarnCertDays < 0 {
 		return 0, userError("--timeout must be positive and --warn-cert-days must not be negative")
+	}
+	if o.PortMap, err = parseDGPortMap(portMaps); err != nil {
+		return 0, userError(err.Error())
 	}
 	o.AdminExplicit = o.Admin != ""
 	if o.Admin == "" {
@@ -961,4 +1011,104 @@ func clusterStatusCheck(o dgOptions, env dgEnv) dgCheck {
 		c.State = "ok"
 	}
 	return c
+}
+
+// fetchListening reads the listeners the gateway says it bound from its admin
+// /status. listed is false when the gateway did not say.
+func fetchListening(ctx context.Context, base, token string, env dgEnv) ([]builtin.ListenPort, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/status", nil)
+	if err != nil {
+		return nil, false
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := env.client.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var doc struct {
+		Listening []builtin.ListenPort `json:"listening"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&doc) != nil || doc.Listening == nil {
+		return nil, false
+	}
+	return doc.Listening, true
+}
+
+func listenerOnPort(l []builtin.ListenPort, port int) (builtin.ListenPort, bool) {
+	for _, p := range l {
+		if p.Proto == "tcp" && p.Port() == port {
+			return p, true
+		}
+	}
+	return builtin.ListenPort{}, false
+}
+
+func listenerForSpec(l []builtin.ListenPort, spec int) (builtin.ListenPort, bool) {
+	for _, p := range l {
+		if p.Proto == "tcp" && p.Spec == spec {
+			return p, true
+		}
+	}
+	return builtin.ListenPort{}, false
+}
+
+// portHolder names the process holding a port as " (name, pid N)", or "" when it cannot be found.
+func portHolder(env dgEnv, port int) string {
+	if env.portOwner == nil {
+		return ""
+	}
+	if s := env.portOwner(port); s != "" {
+		return " (" + s + ")"
+	}
+	return ""
+}
+
+// lookupPortOwner asks lsof (when installed) who listens on a TCP port.
+func lookupPortOwner(port int) string {
+	path, err := exec.LookPath("lsof")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-Fpc").Output()
+	if err != nil {
+		return ""
+	}
+	var pid, cmd string
+	for _, ln := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(ln, "p") && pid == "":
+			pid = ln[1:]
+		case strings.HasPrefix(ln, "c") && cmd == "":
+			cmd = ln[1:]
+		}
+	}
+	if pid == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s, pid %s", cmd, pid)
+}
+
+// parseDGPortMap reads --port-map values (A=B, comma separated) like the gateway does.
+func parseDGPortMap(groups []string) (map[int]int, error) {
+	out := map[int]int{}
+	for _, g := range groups {
+		for _, kv := range strings.Split(g, ",") {
+			a, b, ok := strings.Cut(strings.TrimSpace(kv), "=")
+			from, e1 := strconv.Atoi(a)
+			to, e2 := strconv.Atoi(b)
+			if !ok || e1 != nil || e2 != nil || from < 1 || to < 0 || to > 65535 {
+				return nil, fmt.Errorf("--port-map %q: want SPEC=ACTUAL, for example 80=8080", kv)
+			}
+			out[from] = to
+		}
+	}
+	return out, nil
 }

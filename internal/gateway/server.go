@@ -735,6 +735,7 @@ func (s *Server) startAdmin() error {
 			cp := *d
 			cp.Chaos = s.chaosForStatus()
 			cp.LoadBalancing = s.lbStatus()
+			cp.Listening = s.listenPorts()
 			return &cp
 		}
 		return nil

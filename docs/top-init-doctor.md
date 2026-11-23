@@ -82,13 +82,13 @@ One-verdict health check for a built-in gateway and its config.
 setura doctor gateway --config setura.json --admin 127.0.0.1:19000
 ```
 
-Flags: `--config FILE`, `--admin ADDR` (default `127.0.0.1:19000`; `SETURA_ADMIN_TOKEN` is honoured), `--warn-cert-days N` (14), `--timeout D` (3s), `--format auto|pretty|json`. JSON is `{schema:"setura.doctor.gateway/v1", ok, verdict, checks:[{id,title,state,message,fix,details}], next}`.
+Flags: `--config FILE`, `--admin ADDR` (default `127.0.0.1:19000`; `SETURA_ADMIN_TOKEN` is honoured), `--port-map A=B[,..]` and `--port-offset N` (the gateway's own flags: the port check then looks at the port the gateway really binds), `--warn-cert-days N` (14), `--timeout D` (3s), `--format auto|pretty|json`. JSON is `{schema:"setura.doctor.gateway/v1", ok, verdict, checks:[{id,title,state,message,fix,details}], next}`.
 
 | Check | What it looks at | warn | fail |
 |---|---|---|---|
 | config | file is readable and the gateway parser accepts it | | unreadable or invalid |
 | lint | `setura lint` rules on the config | warnings | errors |
-| ports | listeners that share a port with different protocols; ports already bound by another process; the admin port | | clash or busy (a port held by the running gateway, seen through the admin API, is fine) |
+| ports | listeners that share a port with different protocols; ports already bound by another process; the admin port | a busy port the admin `/status` cannot attribute (older gateway) | clash or busy. The running gateway lists its real listeners in `/status`: a port is called "the running gateway" only when it is one of them; a port held by a foreign process is reported as such (with the process name and pid when `lsof` finds it), even while the gateway runs elsewhere through `--port-map` |
 | certs | certificate expiry and listener hostname vs certificate names | expires within `--warn-cert-days`, name not covered | expired, unreadable, not PEM |
 | backends | TCP dial of every endpoint | some endpoint down | a backend with no reachable endpoint |
 | clock | `Date` header of each backend vs this host | skew over 5s | skew over 60s |

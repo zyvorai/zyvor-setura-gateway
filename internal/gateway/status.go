@@ -82,6 +82,9 @@ type StatusDoc struct {
 	// algorithm, hash key, endpoints and the last choice (lb_status.go). Served by
 	// the admin /status only.
 	LoadBalancing *LBStatus `json:"loadBalancing,omitempty"`
+	// Listening is every bound listener with its spec port and real address
+	// (portinfo.go). Served by the admin /status only.
+	Listening []ListenPort `json:"listening,omitempty"`
 }
 
 func mkCond(prev []Condition, typ string, f fact, gen int64, now time.Time) Condition {

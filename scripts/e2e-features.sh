@@ -1047,7 +1047,7 @@ check_doctor() {
   hasnt "no failures reported" "$(printf '%s' "$o" | tr -d ' \n')" '"status":"fail"'
   local p; p=$("$SETURA" doctor gateway --config "$W/s.json" --admin "127.0.0.1:$ADM" --format pretty 2>&1); has "pretty output: backends reachable" "$p" "all 1 endpoint reachable"
   # unhealthy: kill the backend and expect doctor to notice
-  local ep; ep=$(echo_up gone); kill $LASTPID 2>/dev/null; sleep 0.3
+  local ep; ep=$(echo_up gone); kill "$(tail -1 "$W/pids")" 2>/dev/null; sleep 0.3  # echo_up runs in a subshell, so LASTPID is not set here
   mksnap "$W/bad.json" "[{$(pfx /),\"backendRefs\":[$(ref a)]}]" "$(be a "$ep")"
   "$SETURA" doctor gateway --config "$W/bad.json" --format json >"$W/bad.out" 2>&1; rc=$?
   [ $rc -ne 0 ] && pass "doctor exits non-zero for a dead backend (rc=$rc)" || fail "doctor reported a dead backend as healthy: $(short "$(cat "$W/bad.out")")"
