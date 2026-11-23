@@ -4,11 +4,11 @@
 
 Every Envoy Gateway policy field Setura knows about, the Setura setting it becomes and whether it is applied. The controller (`setura gateway run --kubernetes --envoy-compat`) and `setura migrate convert --from envoy-gateway` translate from this one table; how to switch is in [envoy-compat.md](envoy-compat.md).
 
-133 fields: 46 Supported, 16 Partial, 71 Unsupported.
+165 fields: 66 Supported, 27 Partial, 72 Unsupported.
 
 - **Supported**: translated and enforced.
 - **Partial**: translated with the limits named in the notes.
-- **Unsupported**: ignored; the policy status lists it with reason `Unsupported`, and a field that guards traffic (`basicAuth`, `oidc`, JWT and header authorization rules) makes the controller refuse the targeted traffic instead of serving it open.
+- **Unsupported**: ignored; the policy status lists it with reason `Unsupported`, and a field that guards traffic and cannot be enforced (`basicAuth`, an `oidc` policy without the cookie key annotation, an authorization rule Setura cannot express) makes the controller refuse the targeted traffic instead of serving it open.
 
 ## All policies
 
@@ -39,7 +39,11 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `circuitBreaker.maxParallelRetries` | Unsupported | gateway flag --retry-budget (a percentage of recent requests) |  |
 | `circuitBreaker.maxRequestsPerConnection` | Unsupported | none |  |
 | `circuitBreaker.perEndpoint` | Unsupported | none | Setura limits per backend, not per endpoint |
-| `loadBalancer` | Unsupported | none | this Setura gateway balances weighted backendRefs and has no least request, random, consistent hash or slow start policy |
+| `loadBalancer.type` | Supported | backend loadBalancer algorithm roundRobin, leastRequest, random or consistentHash | applies to the Service the targeted rules send to, so every route using it shares the policy |
+| `loadBalancer.consistentHash` | Partial | loadBalancer consistentHash on header, cookie, sourceIP or query | type Header, Cookie, SourceIP and QueryParams; tableSize selects Maglev (ring hash otherwise); with Headers or QueryParams only the first name is hashed |
+| `loadBalancer.slowStart` | Supported | loadBalancer slowStart window | the weight of a new endpoint ramps up linearly over the window |
+| `loadBalancer.zoneAware` | Partial | loadBalancer locality preferLocalZone | needs the gateway zone (--zone or SETURA_ZONE); force and minEndpointsThreshold are ignored, Setura spills to every zone when the local zone is under 70 percent healthy |
+| `loadBalancer.endpointOverride` | Unsupported | none | Setura picks the endpoint from its algorithm, a request cannot name one |
 | `healthCheck.active.type` | Partial | backend healthCheck.protocol (http or grpc) | TCP checks are ignored |
 | `healthCheck.active.interval` | Supported | backend healthCheck.interval |  |
 | `healthCheck.active.timeout` | Supported | backend healthCheck.timeout |  |
@@ -58,9 +62,9 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `healthCheck.passive.splitExternalLocalOriginErrors` | Unsupported | none |  |
 | `healthCheck.passive.consecutiveLocalOriginFailures` | Unsupported | none |  |
 | `healthCheck.passive.consecutiveGatewayErrors` | Unsupported | none |  |
-| `rateLimit.type` | Partial | Local is translated, Global is not | Global needs a shared rate limit service |
-| `rateLimit.local.rules` | Partial | rule setura.zyvor.dev/rate-limit (rate, key) | one bucket per rule: the first rule is used; a rule with no clientSelectors limits the route (key route), one on sourceCIDR with type Distinct limits per client address (key client-ip) and ignores the CIDR |
-| `rateLimit.global` | Unsupported | none | Setura has no shared rate limit service |
+| `rateLimit.type` | Partial | Local and Global are translated | Global needs a Redis name, see rateLimit.global |
+| `rateLimit.local.rules` | Partial | rule setura.zyvor.dev/rate-limit (rate, key) | one bucket per rule: the first rule is used; a rule with no clientSelectors limits the route (key route), one on sourceCIDR with type Distinct limits per client address (key client-ip) and ignores the CIDR, one on a single header with type Distinct limits per header value (key header:NAME) |
+| `rateLimit.global` | Partial | rule setura.zyvor.dev/rate-limit with a shared Redis block (docs/shared-rate-limits.md) | counted in Redis only when the policy names a --redis server with the annotation setura.zyvor.dev/compat-redis; without it the field is ignored (there is no shared counter to use) and the route is not rate limited; same selectors and first-rule limit as the local rules |
 | `faultInjection.delay.fixedDelay` | Partial | rule setura.zyvor.dev/fault latency.delay | Setura faults always end: the fault gets ttl 24h, change it with the setura.zyvor.dev/fault-ttl annotation on the policy |
 | `faultInjection.delay.percentage` | Partial | fault latency.percent | rounded up to a whole percent |
 | `faultInjection.abort.httpStatus` | Partial | fault abort.status | same ttl rule as the delay |
@@ -68,15 +72,17 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `faultInjection.abort.grpcStatus` | Unsupported | none | aborts answer with an HTTP status |
 | `mirrors` | Supported | RequestMirror filter on the targeted rules | the percentage becomes the mirror percent |
 | `proxyProtocol.version` | Supported | backend proxyProtocol (v1 or v2) |  |
-| `compression` | Unsupported | none | this Setura gateway does not compress responses |
-| `tcpKeepalive` | Unsupported | none |  |
-| `connection.bufferLimit` | Unsupported | gateway flags --max-request-body and --max-header-bytes (different meaning) | Envoy sizes connection buffers, Setura limits request bodies and headers |
+| `compression` | Supported | rule setura.zyvor.dev/compress with encoding gzip | type Gzip compresses responses by Accept-Encoding with Setura's default types and minimum size |
+| `compression.brotli` | Unsupported | none | brotli is not in the Go standard library |
+| `compression.zstd` | Unsupported | none | zstd is not in the Go standard library |
+| `tcpKeepalive` | Unsupported | gateway flags --tcp-keepalive-idle, --tcp-keepalive-interval and --tcp-keepalive-count | Setura sets keepalive on client connections, gateway wide; the upstream keepalive of this field is not configurable |
+| `connection.bufferLimit` | Unsupported | none | Envoy sizes connection buffers and streams larger bodies; limit bodies with requestBuffer.limit or --max-request-body |
 | `dns` | Unsupported | none |  |
-| `http2` | Unsupported | none |  |
+| `http2` | Unsupported | gateway flags --h2-max-streams, --h2-initial-window, --h2-max-frame-size and --h2-max-conn-window | Setura's HTTP/2 settings apply to client connections, gateway wide |
 | `useClientProtocol` | Unsupported | none |  |
 | `telemetry` | Unsupported | gateway flags --otlp-endpoint and --access-log-* |  |
 | `httpUpgrade` | Unsupported | none | WebSocket and other upgrades are proxied as they come |
-| `requestBuffer` | Unsupported | none |  |
+| `requestBuffer.limit` | Partial | rule setura.zyvor.dev/limits maxRequestBody | Setura streams the body instead of buffering it and answers 413 above the limit |
 | `decompression` | Unsupported | none |  |
 | `responseOverride` | Unsupported | none |  |
 | `routingType` | Unsupported | none |  |
@@ -89,25 +95,29 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `tls.maxVersion` | Partial | listener tls.options setura.zyvor.dev/tls-max-version | 1.2 and 1.3; a maximum below 1.2 cannot be met and is ignored |
 | `tls.clientValidation.caCertificateRefs` | Supported | Gateway spec.tls.frontend validation.caCertificateRefs (the port of the listener) |  |
 | `tls.clientValidation.optional` | Supported | frontend validation mode AllowInsecureFallback |  |
-| `tls.ciphers` | Unsupported | none | Go picks the cipher suites |
+| `tls.clientValidation.subjectAltNames` | Supported | frontend validation setura.zyvor.dev/client-allow san | a certificate of the CA must also carry one of the names (DNS, URI or email, exact or *.suffix); entries are strings or {type, value} |
+| `tls.ciphers` | Partial | listener tls.options setura.zyvor.dev/tls-cipher-suites | OpenSSL or Go names of TLS 1.2 suites; suites Go considers insecure and TLS 1.3 suites are dropped (TLS 1.3 suites are always on) |
 | `tls.ecdhCurves` | Unsupported | none |  |
 | `tls.signatureAlgorithms` | Unsupported | none |  |
 | `tls.alpnProtocols` | Unsupported | none | h2 and http/1.1 are always offered |
-| `tls.session` | Unsupported | none |  |
+| `tls.session` | Partial | listener tls.options setura.zyvor.dev/tls-session-resumption on | session.resumption.stateless turns session tickets on; the other members are ignored |
+| `tls.session.resumption.stateful` | Unsupported | none | Setura resumes sessions with stateless tickets only |
 | `enableProxyProtocol` | Unsupported | gateway flag --proxy-protocol PORT=CIDR[,..] | Setura accepts PROXY headers only from named source networks, so it cannot be switched on by a bare boolean |
-| `clientIPDetection` | Unsupported | gateway flag --trusted-proxies CIDR[,..] | gateway wide, not per listener |
+| `clientIPDetection` | Unsupported | gateway flag --trusted-proxies CIDR[,..] | gateway wide, not per listener, and it names networks where Envoy counts hops (numTrustedHops) |
 | `path.escapedSlashesAction` | Unsupported | gateway flag --reject-escaped-slashes | gateway wide, not per listener |
 | `path.disableMergeSlashes` | Unsupported | gateway flag --merge-slashes (off by default) | gateway wide, not per listener |
 | `timeout.http.requestReceivedTimeout` | Unsupported | gateway flag --header-read-timeout | gateway wide, not per listener |
 | `timeout.http.idleTimeout` | Unsupported | gateway flag --idle-timeout | gateway wide, not per listener |
 | `timeout.tcp.idleTimeout` | Unsupported | gateway flag --idle-timeout | gateway wide, not per listener |
-| `connection.connectionLimit` | Unsupported | none |  |
-| `connection.bufferLimit` | Unsupported | gateway flag --max-request-body (different meaning) |  |
+| `connection.connectionLimit` | Partial | listener limits maxConnections (the port of the listener) | value is the most client connections of the listener's port; closeDelay is ignored |
+| `connection.connectionLimit.closeDelay` | Unsupported | none | extra connections are closed at once |
+| `connection.bufferLimit` | Unsupported | none | Envoy sizes connection buffers and streams larger bodies; limit bodies with --max-request-body or a listener limits block |
 | `connection.socketBufferLimit` | Unsupported | none |  |
-| `tcpKeepalive` | Unsupported | none |  |
+| `tcpKeepalive` | Unsupported | gateway flags --tcp-keepalive-idle, --tcp-keepalive-interval, --tcp-keepalive-count and --tcp-keepalive-off | gateway wide, not per listener |
 | `headers` | Unsupported | none |  |
-| `http1` | Unsupported | none |  |
-| `http2` | Unsupported | none |  |
+| `headers.xForwardedClientCert` | Unsupported | gateway flag --client-cert-xfcc | gateway wide: Setura forwards the verified client certificate in X-Forwarded-Client-Cert when the flag is set |
+| `http1` | Unsupported | none | Setura accepts what Go's HTTP/1 server accepts |
+| `http2` | Unsupported | gateway flags --h2-max-streams, --h2-initial-window, --h2-max-frame-size and --h2-max-conn-window | gateway wide, not per listener |
 | `http3` | Unsupported | none | put an HTTP/3 edge in front and set --alt-svc (see docs/http3.md) |
 | `healthCheck` | Unsupported | none |  |
 
@@ -126,7 +136,7 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `jwt.providers.audiences` | Supported | auth jwt.audience | always set one (lint rule SET016) |
 | `jwt.providers.remoteJWKS` | Supported | auth jwt.jwksUri |  |
 | `jwt.providers.localJWKS` | Supported | auth jwt.jwks | inline key sets only |
-| `jwt.providers.claimToHeaders` | Supported | auth jwt.claimHeaders |  |
+| `jwt.providers.claimToHeaders` | Supported | auth jwt.claimHeaders | the verified claims are also available as {claim:NAME} in header modifier values |
 | `jwt.providers.forwardAccessToken` | Supported | auth jwt.stripToken (the inverse) |  |
 | `jwt.providers.extractFrom` | Unsupported | none | the token is read from Authorization: Bearer |
 | `jwt.providers.recomputeRoute` | Unsupported | none |  |
@@ -136,7 +146,28 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `apiKeyAuth.sanitize` | Supported | auth apiKey.forward (the inverse) |  |
 | `apiKeyAuth.forwardClientIDHeader` | Unsupported | none |  |
 | `basicAuth` | Unsupported | auth basic, with users made by setura gateway hash --kind password | Envoy reads htpasswd entries (bcrypt, SHA-1), Setura stores pbkdf2-sha256 hashes, so no user can be carried over; the controller refuses the targeted traffic until the policy is fixed |
-| `oidc` | Unsupported | auth jwt on the tokens your identity provider issues | Setura does not run the authorization code flow; the controller refuses the targeted traffic |
+| `oidc` | Partial | auth oidc (authorization code flow with PKCE, docs/oidc.md) | needs the secret that seals the session cookie: set the annotation setura.zyvor.dev/compat-oidc-cookie-key on the policy (env:NAME, file:PATH or secret:NAME#KEY); without it the controller refuses the targeted traffic |
+| `oidc.provider.issuer` | Supported | oidc.issuer | required |
+| `oidc.provider.authorizationEndpoint` | Supported | oidc.authorizationEndpoint |  |
+| `oidc.provider.tokenEndpoint` | Supported | oidc.tokenEndpoint |  |
+| `oidc.provider.endSessionEndpoint` | Supported | oidc.endSessionEndpoint |  |
+| `oidc.provider.backendRefs` | Unsupported | none | Setura calls the issuer URL directly |
+| `oidc.clientID` | Supported | oidc.clientId |  |
+| `oidc.clientIDRef` | Unsupported | none | the client id must be written in the policy; the controller refuses the targeted traffic |
+| `oidc.clientSecret` | Supported | oidc.clientSecret from the Secret (key client-secret) | read by the gateway, never copied into the snapshot |
+| `oidc.scopes` | Supported | oidc.scopes | openid is always requested |
+| `oidc.redirectURL` | Supported | oidc.redirectUrl | default /oauth2/callback; the route rule must match that path |
+| `oidc.logoutPath` | Supported | oidc.logoutPath |  |
+| `oidc.forwardAccessToken` | Supported | oidc.accessTokenHeader Authorization with scheme Bearer |  |
+| `oidc.cookieDomain` | Supported | oidc.cookie.domain |  |
+| `oidc.cookieConfig.sameSite` | Supported | oidc.cookie.sameSite |  |
+| `oidc.cookieNames` | Unsupported | oidc.cookie.name | Setura keeps one session cookie, not an access and an ID token cookie |
+| `oidc.refreshToken` | Supported | oidc.disableRefresh (the inverse) | Envoy refreshes only when asked, so a policy without it disables refreshing |
+| `oidc.disableTokenEncryption` | Supported | oidc.cookieMode signed | the session is signed, not encrypted |
+| `oidc.defaultTokenTTL` | Unsupported | oidc.sessionTtl | different meaning: Setura limits the session from login |
+| `oidc.defaultRefreshTokenTTL` | Unsupported | none |  |
+| `oidc.denyRedirect` | Unsupported | none | Setura answers 401 to XHR and API calls and redirects browser navigations (denyRedirect auto); the header list cannot be set |
+| `oidc.resources` | Unsupported | oidc.authParams | the resource parameter is not translated |
 | `extAuth.http` | Supported | ExternalAuth filter (protocol HTTP) |  |
 | `extAuth.grpc` | Supported | ExternalAuth filter (protocol GRPC) |  |
 | `extAuth.headersToBackend` | Supported | ExternalAuth http.allowedResponseHeaders |  |
@@ -145,10 +176,10 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `extAuth.failOpen` | Unsupported | none | the check fails closed |
 | `extAuth.recomputeRoute` | Unsupported | none |  |
 | `authorization.defaultAction` | Supported | auth ipAllow (Deny) or no restriction (Allow) |  |
-| `authorization.rules.principal.clientCIDRs` | Supported | auth ipAllow and ipDeny | rules that name only clientCIDRs |
-| `authorization.rules.principal.jwt` | Unsupported | none | claim and scope rules need a policy engine; the controller refuses the targeted traffic |
-| `authorization.rules.principal.headers` | Unsupported | none | the controller refuses the targeted traffic |
-| `authorization.rules.operation` | Unsupported | none | the controller refuses the targeted traffic |
+| `authorization.rules.principal.clientCIDRs` | Supported | auth ipAllow and ipDeny, or authorization cidrs | rules that name only clientCIDRs become ipAllow and ipDeny; mixed with other members every rule becomes an authorization rule, which keeps the order |
+| `authorization.rules.principal.jwt` | Partial | authorization principal claims and scopes | claims (values any of) and scopes of the verified token; the provider name is not checked, the rule's jwt or oidc policy supplies the claims |
+| `authorization.rules.principal.headers` | Supported | authorization operation headers | exact values; several values of one header become alternatives (at most 32 combinations) |
+| `authorization.rules.operation` | Partial | authorization operation methods | methods only; any other member makes the controller refuse the targeted traffic |
 
 ## HTTPRouteFilter
 
@@ -159,7 +190,8 @@ Every Envoy Gateway policy field Setura knows about, the Setura setting it becom
 | `directResponse.body` | Partial | direct-response body | inline bodies only (64 KiB at most) |
 | `urlRewrite.path.replaceRegexMatch` | Unsupported | URLRewrite filter with replaceFullPath or replacePrefixMatch | Setura rewrites paths without regular expressions; rewrite the route by hand |
 | `urlRewrite.hostname` | Unsupported | URLRewrite filter hostname | only a fixed hostname maps; the Header and Backend types do not |
-| `credentialInjection` | Unsupported | none |  |
+| `credentialInjection` | Supported | auth inject on the rule | the credential comes from the Secret (key credential) and replaces the header on the request sent upstream |
+| `credentialInjection.overwrite` | Partial | auth inject | Setura always replaces the header; overwrite false (keep a header the client sent) is ignored |
 
 ## Backend
 

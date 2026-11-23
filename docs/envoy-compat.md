@@ -37,23 +37,50 @@ target Gateways of another controller are left alone.
 |---------------|--------|
 | BackendTrafficPolicy `retry`, `timeout.http.requestTimeout` | rule `retry`, `timeouts.request` |
 | `circuitBreaker`, `healthCheck.active`, `healthCheck.passive`, `proxyProtocol` | the backend of the targeted rules: `circuitBreaker`, `healthCheck`, `proxyProtocol` |
+| `loadBalancer` (RoundRobin, LeastRequest, Random, ConsistentHash on a header, cookie, source IP or query parameter, `slowStart`, `zoneAware.preferLocal`) | the backend's `loadBalancer` block ([load-balancing.md](load-balancing.md)) |
+| `compression` (Gzip) | rule `setura.zyvor.dev/compress` ([traffic-shaping.md](traffic-shaping.md)) |
+| `requestBuffer.limit` | rule `setura.zyvor.dev/limits` `maxRequestBody` |
 | `rateLimit` (Local) | rule `setura.zyvor.dev/rate-limit` |
+| `rateLimit` (Global) | the same block with `shared.redis`, when the policy names a Redis server (see below) |
 | `faultInjection` | rule `setura.zyvor.dev/fault` (with a ttl, see below) |
 | `mirrors` | a `RequestMirror` filter |
-| ClientTrafficPolicy `tls.minVersion`, `tls.maxVersion` | listener `tls.options` |
-| `tls.clientValidation` | the Gateway's `spec.tls.frontend` validation |
+| ClientTrafficPolicy `tls.minVersion`, `tls.maxVersion`, `tls.ciphers`, `tls.session` | listener `tls.options` (version bounds, `tls-cipher-suites`, `tls-session-resumption`) |
+| `tls.clientValidation` (CA refs, `optional`, `subjectAltNames`) | the Gateway's `spec.tls.frontend` validation and its `setura.zyvor.dev/client-allow` list |
+| `connection.connectionLimit` | the listener's `limits.maxConnections` |
 | SecurityPolicy `cors`, `extAuth` | a `CORS` or `ExternalAuth` filter |
-| `jwt`, `apiKeyAuth`, `authorization` (client CIDRs) | the rule's `setura.zyvor.dev/auth` block |
+| `jwt`, `apiKeyAuth` | the rule's `setura.zyvor.dev/auth` block |
+| `oidc` | the auth block's `oidc` login ([oidc.md](oidc.md)), with the cookie key annotation (see below) |
+| `authorization` (client CIDRs, JWT claims and scopes, headers, methods) | `ipAllow` / `ipDeny` for CIDR-only rules, otherwise the auth block's `authorization` rules ([authorization.md](authorization.md)) |
 | HTTPRouteFilter `directResponse` | rule `setura.zyvor.dev/direct-response` |
+| `credentialInjection` | the auth block's `inject` (the Secret key `credential` fills the header) |
 | Backend | a backend made of the endpoints; `backendRefs` of kind `Backend` resolve to it |
 
 API keys come from the Secrets named in `credentialRefs` (one key per data
 entry); the controller stores salted hashes, never the clear text, and follows
 a changed Secret.
 
-Not available in this build and reported as unsupported: `loadBalancer`,
-`compression`, global rate limits, regular expression URL rewrites, OIDC,
-basic auth, per-listener path and timeout settings.
+Two settings need a value Envoy Gateway has no field for, given as an
+annotation on the policy:
+
+| Annotation | On | Meaning |
+|------------|----|---------|
+| `setura.zyvor.dev/compat-redis: NAME` | BackendTrafficPolicy | the `--redis NAME=ADDR` server a `rateLimit.global` counts in. Without it the global limit is ignored (reported as `Unsupported`): there is no shared counter to use |
+| `setura.zyvor.dev/compat-oidc-cookie-key: SOURCE` | SecurityPolicy | the secret that seals the OIDC session cookie: `env:NAME`, `file:PATH` or `secret:[NAMESPACE/]NAME#KEY` (32 characters or more). Without it the controller refuses the targeted traffic |
+
+The OIDC client secret is read from the Secret named in `clientSecret` (key
+`client-secret`) by the gateway at run time and never copied into a snapshot.
+The route rule must match the redirect path (`/oauth2/callback` by default).
+
+Still reported as unsupported, with the reason in the table: Wasm, Lua,
+ExtProc and EnvoyPatchPolicy extensions, HTTP/3, brotli and zstd compression,
+GeoIP, Redis Cluster, regular expression URL rewrites, basic auth (htpasswd
+hashes cannot be converted), and the settings Setura keeps gateway wide, as
+flags, not per listener: client IP detection (`--trusted-proxies`), path
+normalisation (`--normalize-path`, `--merge-slashes`,
+`--reject-escaped-slashes`), TCP keepalive (`--tcp-keepalive-*`), HTTP/2
+(`--h2-*`), connection and header timeouts (`--idle-timeout`,
+`--header-read-timeout`) and the XFCC header (`--client-cert-xfcc`). A
+ClientTrafficPolicy cannot change a flag; the policy status names it.
 
 ## Which policy applies
 
@@ -88,7 +115,7 @@ controllers (which it keeps):
 |-----------|---------|
 | `Accepted` True, reason `Accepted` | everything was translated |
 | `Accepted` True, reason `Unsupported` | translated, and the message lists the fields Setura ignores |
-| `Accepted` False, reason `Unsupported` | a guard Setura cannot enforce (`basicAuth`, `oidc`, JWT or header authorization rules) |
+| `Accepted` False, reason `Unsupported` | a guard Setura cannot enforce (`basicAuth`, an `oidc` policy without the cookie key annotation or with `clientIDRef`, an authorization rule it cannot express) |
 | `Accepted` False, reason `TargetNotFound`, `Conflicted` or `Invalid` | no target, lost to an older policy everywhere, or a block that does not compile |
 | `Conflicted` True | an older policy on the same target wins |
 | `Overridden` True | a more specific policy replaces it |
@@ -101,10 +128,13 @@ before the controller has written a status.
 ### Guards fail closed
 
 A policy that protects traffic must not become open because Setura cannot
-enforce it. When a SecurityPolicy holds `basicAuth`, `oidc`, an authorization
-rule on JWT claims, headers or operations, or an `apiKeyAuth` whose Secret
-cannot be read, the controller refuses the targeted traffic (403) and says so
-in the policy status. Fix the policy, or accept the risk explicitly with the
+enforce it. Setura enforces OIDC login and claim, scope, header and method
+authorization rules now, so those no longer fail closed. When a SecurityPolicy
+holds `basicAuth`, an `oidc` policy that cannot be translated (no cookie key
+annotation, `clientIDRef`, no issuer), an authorization rule with an operation
+other than methods, or an `apiKeyAuth` whose Secret cannot be read, the
+controller refuses the targeted traffic (403) and says so in the policy
+status. Fix the policy, or accept the risk explicitly with the
 annotation `setura.zyvor.dev/compat-fail-open: "true"` on it, which serves the
 targeted traffic without that guard.
 

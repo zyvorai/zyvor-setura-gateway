@@ -25,8 +25,8 @@ func envoyFixtures() map[string]any {
 		return []any{obj{"controllerName": ctl, "ancestorRef": obj{"kind": "Gateway", "name": "edge"}, "conditions": conds}}
 	}
 	fx["backendtrafficpolicies."+builtin.EnvoyGroup] = obj{"items": []any{
-		policy("BackendTrafficPolicy", "infra", "slow", obj{"targetRefs": []any{ref("HTTPRoute", "ok")}, "retry": obj{"numRetries": 2}, "loadBalancer": obj{"type": "Random"}},
-			ancestor(conds("Accepted", "True", "Unsupported", "translated; Setura ignores these fields: loadBalancer"))),
+		policy("BackendTrafficPolicy", "infra", "slow", obj{"targetRefs": []any{ref("HTTPRoute", "ok")}, "retry": obj{"numRetries": 2}, "dns": obj{"lookupFamily": "IPv4"}},
+			ancestor(conds("Accepted", "True", "Unsupported", "translated; Setura ignores these fields: dns"))),
 		policy("BackendTrafficPolicy", "other", "theirs", obj{"targetRefs": []any{ref("HTTPRoute", "foreign")}, "retry": obj{"numRetries": 1}}, nil),
 	}}
 	fx["securitypolicies."+builtin.EnvoyGroup] = obj{"items": []any{
@@ -49,7 +49,7 @@ func TestGatewayStatusListsEnvoyPolicies(t *testing.T) {
 		byName[p.Name] = p
 	}
 	slow, basic := byName["slow"], byName["basic"]
-	if !slow.OK || slow.Accepted != "True" || len(slow.Unsupported) != 1 || slow.Unsupported[0] != "loadBalancer" {
+	if !slow.OK || slow.Accepted != "True" || len(slow.Unsupported) != 1 || slow.Unsupported[0] != "dns" {
 		t.Errorf("slow: %+v", slow)
 	}
 	if basic.OK || basic.Accepted != "False" || len(basic.FailClosed) != 1 || basic.FailClosed[0] != "basicAuth" || len(basic.Unsupported) == 0 {
@@ -59,7 +59,7 @@ func TestGatewayStatusListsEnvoyPolicies(t *testing.T) {
 		t.Errorf("a rejected policy must show in the verdict: %q", rep.Verdict)
 	}
 	code, out, _ := cli(t, kubectlFake(t, envoyFixtures()), "gateway", "status", "--format", "pretty")
-	for _, want := range []string{"Envoy Gateway policies", "infra/slow (BackendTrafficPolicy)", "Setura ignores: loadBalancer", "Accepted=False (Unsupported)"} {
+	for _, want := range []string{"Envoy Gateway policies", "infra/slow (BackendTrafficPolicy)", "Setura ignores: dns", "Accepted=False (Unsupported)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("pretty output lacks %q:\n%s", want, out)
 		}
@@ -84,7 +84,7 @@ func TestDoctorGatewayKubeEnvoyPolicies(t *testing.T) {
 	delete(fx, "securitypolicies."+builtin.EnvoyGroup)
 	env := dgEnv{cluster: kubectlFake(t, fx)}
 	c := envoyPoliciesCheck(dgOptions{}, env)
-	if c.State != "warn" || !strings.Contains(strings.Join(c.Details, "\n"), "Setura ignores loadBalancer") || c.Fix == "" {
+	if c.State != "warn" || !strings.Contains(strings.Join(c.Details, "\n"), "Setura ignores dns") || c.Fix == "" {
 		t.Errorf("%+v", c)
 	}
 	c = envoyPoliciesCheck(dgOptions{}, dgEnv{cluster: kubectlFake(t, envoyFixtures())})

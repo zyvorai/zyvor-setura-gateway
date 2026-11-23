@@ -190,7 +190,7 @@ func ApplyEnvoyCompat(cfg *Config, in EnvoyInput) *EnvoyResult {
 		c.pols[o.Kind] = append(c.pols[o.Kind], p)
 		out := &EnvoyOutcome{Object: o, ancestors: map[string]ParentRef{}, conflict: map[string]bool{}, overr: map[string]bool{}, merged: map[string]bool{}}
 		c.outcomes[p] = out
-		own := TranslateEnvoyPolicy(o.Kind, o.Spec, EnvoyOptions{TargetKind: ownTargetKind(p)})
+		own := TranslateEnvoyPolicy(o.Kind, o.Spec, EnvoyOptionsFor(o.Annotations, o.NS, o.Name, ownTargetKind(p)))
 		out.Ignored, out.FailClosed = own.Ignored(), own.FailClosed
 		b, _ := json.Marshal(o.Spec)
 		c.digest = append(c.digest, o.Key()+"@"+string(b))
@@ -510,7 +510,7 @@ func (c *envoyCtx) translation(kind string, e *envoyEffective, targetKind string
 		return t
 	}
 	top := e.chain[0].obj
-	t := TranslateEnvoyPolicy(kind, e.spec, EnvoyOptions{TargetKind: targetKind, Name: "envoy-" + top.Name, FaultTTL: top.Annotations[EnvoyFaultTTLAnnotation]})
+	t := TranslateEnvoyPolicy(kind, e.spec, EnvoyOptionsFor(top.Annotations, top.NS, top.Name, targetKind))
 	c.tr[key] = t
 	return t
 }
@@ -533,7 +533,7 @@ func (c *envoyCtx) resolveRoutes() {
 }
 
 func (c *envoyCtx) applyHTTPRule(rt *Route, rule *Rule, gws []gwAttach) {
-	c.resolveExtensionRefs(rt, rule)
+	injects := c.resolveExtensionRefs(rt, rule)
 	c.resolveBackendRefs(rt.NS, rule.BackendRefs)
 	if cands := c.candidates(kBT, "HTTPRoute", rt.NS, rt.Name, rt.Labels, rule.Name, gws); len(cands) > 0 {
 		if e := c.resolve(cands, rt.Key()); e != nil {
@@ -546,9 +546,29 @@ func (c *envoyCtx) applyHTTPRule(rt *Route, rule *Rule, gws []gwAttach) {
 		if e := c.resolve(cands, rt.Key()); e != nil {
 			tr := c.translation(kSP, e, "HTTPRoute")
 			c.overlayRule(rule, tr)
-			c.overlayAuth(&rule.Auth, e, tr)
+			c.overlayAuth(&rule.Auth, e, tr, injects)
+			injects = nil
 		}
 	}
+	if len(injects) > 0 {
+		c.injectOnly(rt, rule, injects)
+	}
+}
+
+// injectOnly gives a rule the credential injection of its HTTPRouteFilter when no
+// SecurityPolicy builds the rule's auth policy.
+func (c *envoyCtx) injectOnly(rt *Route, rule *Rule, injects []any) {
+	if rule.Auth != nil {
+		c.warn = append(c.warn, fmt.Sprintf("HTTPRoute %s/%s: credentialInjection is not applied to a rule that has an auth policy of its own", rt.NS, rt.Name))
+		return
+	}
+	raw, _ := json.Marshal(map[string]any{"inject": injects})
+	p, err := ParseAuthBlock(raw)
+	if err != nil {
+		c.warn = append(c.warn, fmt.Sprintf("HTTPRoute %s/%s: credentialInjection: %v", rt.NS, rt.Name, err))
+		return
+	}
+	rule.Auth = p
 }
 
 func (c *envoyCtx) applyGRPCRule(rt *GRPCRoute, rule *GRPCRule, gws []gwAttach) {
@@ -560,7 +580,7 @@ func (c *envoyCtx) applyGRPCRule(rt *GRPCRoute, rule *GRPCRule, gws []gwAttach) 
 	}
 	if cands := c.candidates(kSP, "GRPCRoute", rt.NS, rt.Name, rt.Labels, rule.Name, gws); len(cands) > 0 {
 		if e := c.resolve(cands, "GRPCRoute/"+rt.NS+"/"+rt.Name); e != nil {
-			c.overlayAuth(&rule.Auth, e, c.translation(kSP, e, "GRPCRoute"))
+			c.overlayAuth(&rule.Auth, e, c.translation(kSP, e, "GRPCRoute"), nil)
 		}
 	}
 }
@@ -585,6 +605,12 @@ func (c *envoyCtx) overlayRule(rule *Rule, tr *EnvoyTranslation) {
 			if rule.Fault == nil {
 				rule.Fault = tmp.Fault
 			}
+			if rule.Compress == nil {
+				rule.Compress = tmp.Compress
+			}
+			if rule.Limits == nil {
+				rule.Limits = tmp.Limits
+			}
 		}
 	}
 	for _, f := range tr.Filters {
@@ -607,7 +633,7 @@ func (c *envoyCtx) overlayRule(rule *Rule, tr *EnvoyTranslation) {
 var denyAll = map[string]any{"ipDeny": []any{"0.0.0.0/0", "::/0"}}
 
 // overlayAuth builds the rule's auth policy of an effective SecurityPolicy.
-func (c *envoyCtx) overlayAuth(slot **AuthPolicy, e *envoyEffective, tr *EnvoyTranslation) {
+func (c *envoyCtx) overlayAuth(slot **AuthPolicy, e *envoyEffective, tr *EnvoyTranslation, inject []any) {
 	if *slot != nil {
 		return // a Setura auth policy of the rule wins
 	}
@@ -640,6 +666,9 @@ func (c *envoyCtx) overlayAuth(slot **AuthPolicy, e *envoyEffective, tr *EnvoyTr
 		} else {
 			tr = &EnvoyTranslation{FailClosed: append(append([]string{}, tr.FailClosed...), "apiKeyAuth")}
 		}
+	}
+	if len(inject) > 0 {
+		block["inject"] = inject
 	}
 	if len(tr.FailClosed) > 0 && !top.obj.failsOpen() {
 		block = map[string]any{}
@@ -699,12 +728,20 @@ func (c *envoyCtx) overlayBackends(ns string, refs []BackendRef, tr *EnvoyTransl
 	}
 	raw, _ := json.Marshal(tr.Backend)
 	var set struct {
-		CircuitBreaker *CircuitConfig `json:"circuitBreaker"`
-		HealthCheck    *HealthCheck   `json:"healthCheck"`
-		ProxyProtocol  string         `json:"proxyProtocol"`
+		CircuitBreaker *CircuitConfig  `json:"circuitBreaker"`
+		HealthCheck    *HealthCheck    `json:"healthCheck"`
+		ProxyProtocol  string          `json:"proxyProtocol"`
+		LoadBalancer   json.RawMessage `json:"loadBalancer"`
 	}
 	if json.Unmarshal(raw, &set) != nil {
 		return
+	}
+	var lb *LBConfig
+	if len(set.LoadBalancer) > 0 {
+		var err error
+		if lb, err = ParseLBBlock(set.LoadBalancer); err != nil {
+			c.warn = append(c.warn, "envoy compat: loadBalancer: "+err.Error())
+		}
 	}
 	for _, ref := range refs {
 		bns := firstStr(ref.Namespace, ns)
@@ -723,6 +760,9 @@ func (c *envoyCtx) overlayBackends(ns string, refs []BackendRef, tr *EnvoyTransl
 		}
 		if def.ProxyProtocol == "" {
 			def.ProxyProtocol = set.ProxyProtocol
+		}
+		if def.LoadBalancer == nil {
+			def.LoadBalancer = lb
 		}
 	}
 }
@@ -767,7 +807,7 @@ func (c *envoyCtx) resolveBackendRefs(routeNS string, refs []BackendRef) {
 // Gateway HTTPRouteFilter with what the filter translates to. A filter that
 // holds anything Setura cannot do stays, so the route is refused rather than
 // served without it.
-func (c *envoyCtx) resolveExtensionRefs(rt *Route, rule *Rule) {
+func (c *envoyCtx) resolveExtensionRefs(rt *Route, rule *Rule) (injects []any) {
 	var keep []Filter
 	for _, f := range rule.Filters {
 		if f.Type != "ExtensionRef" || f.ExtensionRef == nil || f.ExtensionRef.Group != EnvoyGroup || f.ExtensionRef.Kind != "HTTPRouteFilter" {
@@ -779,29 +819,37 @@ func (c *envoyCtx) resolveExtensionRefs(rt *Route, rule *Rule) {
 			keep = append(keep, f)
 			continue
 		}
-		tr := TranslateHTTPRouteFilter(o.Spec)
-		clean := tr.Block != nil
+		tr := TranslateHTTPRouteFilter(o.Spec, o.NS)
+		clean := tr.Block != nil || tr.Inject != nil
 		for _, n := range tr.Notes {
-			clean = clean && !n.Ignored
+			clean = clean && n.Applied() // a partly applied field (credentialInjection.overwrite) still serves
 		}
 		if !clean {
 			keep = append(keep, f)
 			continue
 		}
-		raw, _ := json.Marshal(tr.Block)
-		d, err := ParseDirectResponseBlock(raw)
-		if err != nil {
-			c.warn = append(c.warn, fmt.Sprintf("HTTPRouteFilter %s/%s: %v", o.NS, o.Name, err))
-			keep = append(keep, f)
-			continue
+		if tr.Block != nil {
+			raw, _ := json.Marshal(tr.Block)
+			d, err := ParseDirectResponseBlock(raw)
+			if err != nil {
+				c.warn = append(c.warn, fmt.Sprintf("HTTPRouteFilter %s/%s: %v", o.NS, o.Name, err))
+				keep = append(keep, f)
+				continue
+			}
+			if rule.DirectResponse == nil {
+				rule.DirectResponse = d
+				rule.BackendRefs = nil
+			}
+			c.digest = append(c.digest, o.Key()+"@"+string(raw))
 		}
-		if rule.DirectResponse == nil {
-			rule.DirectResponse = d
-			rule.BackendRefs = nil
+		if tr.Inject != nil {
+			raw, _ := json.Marshal(tr.Inject)
+			injects = append(injects, tr.Inject)
+			c.digest = append(c.digest, o.Key()+"@"+string(raw))
 		}
-		c.digest = append(c.digest, o.Key()+"@"+string(raw))
 	}
 	rule.Filters = keep
+	return injects
 }
 
 // ---- Gateways and listeners ----
@@ -847,6 +895,11 @@ func (p *envoyPolicy) listenerTargeted(gw *Gateway, name string) bool {
 }
 
 func (c *envoyCtx) overlayListener(gw *Gateway, l *Listener, tr *EnvoyTranslation) {
+	if lim, ok := tr.Listener["limits"].(map[string]any); ok && l.Limits == nil {
+		if n, ok := lim["maxConnections"].(int); ok {
+			l.Limits = &ListenerLimits{MaxConnections: n}
+		}
+	}
 	if len(tr.Listener) > 0 && l.TLS != nil {
 		opts := map[string]string{}
 		for k, v := range l.TLS.Options {
@@ -857,6 +910,12 @@ func (c *envoyCtx) overlayListener(gw *Gateway, l *Listener, tr *EnvoyTranslatio
 		}
 		if v, ok := tr.Listener["tlsMaxVersion"].(string); ok && opts[TLSMaxVersionOption] == "" {
 			opts[TLSMaxVersionOption] = v
+		}
+		if v, ok := tr.Listener["tlsCipherSuites"].(string); ok && opts[TLSCipherSuitesOption] == "" {
+			opts[TLSCipherSuitesOption] = v
+		}
+		if v, ok := tr.Listener["tlsSessionResumption"].(string); ok && opts[TLSSessionResumptionOption] == "" {
+			opts[TLSSessionResumptionOption] = v
 		}
 		l.TLS.Options = opts
 	}

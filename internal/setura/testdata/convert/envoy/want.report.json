@@ -3,17 +3,17 @@
   "verdict": "needs-review",
   "ok": false,
   "summary": {
-    "converted": 11,
+    "converted": 16,
     "ignored": 0,
     "resources": 3,
-    "todo": 10
+    "todo": 11
   },
   "resources": [
     {
       "kind": "Gateway",
       "namespace": "demo",
       "name": "eg",
-      "todos": 2
+      "todos": 3
     },
     {
       "kind": "HTTPRoute",
@@ -29,6 +29,12 @@
   ],
   "items": [
     {
+      "source": "HTTPRouteFilter demo/token",
+      "key": "credentialInjection",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth inject"
+    },
+    {
       "source": "HTTPRouteFilter demo/gone",
       "key": "directResponse",
       "status": "converted",
@@ -43,6 +49,18 @@
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
+      "key": "compression",
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/compress (route annotation)"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "compression.brotli",
+      "status": "todo",
+      "reason": "brotli is not in the Go standard library"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
       "key": "faultInjection",
       "status": "converted",
       "target": "rule setura.zyvor.dev/fault (route annotation, ttl 24h)"
@@ -50,14 +68,20 @@
     {
       "source": "BackendTrafficPolicy demo/slow",
       "key": "loadBalancer",
-      "status": "todo",
-      "reason": "this Setura gateway balances weighted backendRefs and has no least request, random, consistent hash or slow start policy"
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/load-balancer (route annotation)"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
       "key": "rateLimit",
       "status": "converted",
       "target": "rule setura.zyvor.dev/rate-limit (route annotation)"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "requestBuffer",
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/limits maxRequestBody (route annotation)"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
@@ -136,10 +160,23 @@
       "target": "setura.zyvor.dev/auth ipAllow / ipDeny"
     },
     {
+      "source": "SecurityPolicy demo/login",
+      "key": "oidc",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth oidc"
+    },
+    {
       "source": "ClientTrafficPolicy demo/client",
       "key": "clientIPDetection",
       "status": "todo",
-      "reason": "gateway wide, not per listener"
+      "reason": "gateway wide, not per listener, and it names networks where Envoy counts hops (numTrustedHops)"
+    },
+    {
+      "source": "ClientTrafficPolicy demo/client",
+      "key": "connection.connectionLimit",
+      "value": "500",
+      "status": "todo",
+      "reason": "has no field in a manifest: the controller (--envoy-compat) translates it to listener limits maxConnections (the port of the listener); offline use --max-connections, or a limits block on the listener of a snapshot file"
     },
     {
       "source": "ClientTrafficPolicy demo/client",

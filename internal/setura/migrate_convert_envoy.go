@@ -121,10 +121,10 @@ func (c *converter) envoyRouteFilters(objs []obj, routes []*convRes) {
 					continue
 				}
 				src := envoySrc(fo)
-				tr := builtin.TranslateHTTPRouteFilter(asMap(fo["spec"]))
-				clean := tr.Block != nil
+				tr := builtin.TranslateHTTPRouteFilter(asMap(fo["spec"]), r.NS)
+				clean := tr.Block != nil || tr.Inject != nil
 				for _, n := range tr.Notes {
-					clean = clean && !n.Ignored
+					clean = clean && n.Applied()
 				}
 				for _, n := range tr.Notes {
 					if n.Ignored || !n.Applied() {
@@ -139,9 +139,15 @@ func (c *converter) envoyRouteFilters(objs []obj, routes []*convRes) {
 					keep = append(keep, f) // Setura refuses the ExtensionRef: serving without it would change the route
 					continue
 				}
-				rule["#ext"] = mergeObj(asMap(rule["#ext"]), obj{builtin.DirectResponseKey: deepCopy(tr.Block)})
-				delete(rule, "backendRefs")
-				c.done(src, "directResponse", "", envoyTargetText("directResponse", ""))
+				if tr.Block != nil {
+					rule["#ext"] = mergeObj(asMap(rule["#ext"]), obj{builtin.DirectResponseKey: deepCopy(tr.Block)})
+					delete(rule, "backendRefs")
+					c.done(src, "directResponse", "", envoyTargetText("directResponse", ""))
+				}
+				if tr.Inject != nil {
+					rule["#auth"] = mergeObj(asMap(rule["#auth"]), obj{"inject": []any{deepCopy(tr.Inject)}})
+					c.done(src, "credentialInjection", "", envoyTargetText("credentialInjection", ""))
+				}
 			}
 			if len(keep) == 0 {
 				delete(rule, "filters")
@@ -213,7 +219,6 @@ func (c *converter) envoyPolicy(p obj, routes []*convRes) {
 	src := envoySrc(p)
 	spec := asMap(p["spec"])
 	kind := asStr(p["kind"])
-	pname, _ := metaOf(p)
 	type target struct {
 		res     *convRes
 		section string
@@ -255,14 +260,26 @@ func (c *converter) envoyPolicy(p obj, routes []*convRes) {
 		if len(res) == 0 || kind == "ClientTrafficPolicy" {
 			continue
 		}
-		tr := builtin.TranslateEnvoyPolicy(kind, spec, builtin.EnvoyOptions{TargetKind: tk, Name: "envoy-" + pname,
-			FaultTTL: asStr(asMap(asMap(p["metadata"])["annotations"])[builtin.EnvoyFaultTTLAnnotation])})
+		tr := builtin.TranslateEnvoyPolicy(kind, spec, c.envoyOptions(p, tk))
 		c.envoyApply(src, tr, res, sections)
 	}
 	if kind == "ClientTrafficPolicy" {
-		tr := builtin.TranslateEnvoyPolicy(kind, spec, builtin.EnvoyOptions{TargetKind: "Gateway"})
+		tr := builtin.TranslateEnvoyPolicy(kind, spec, c.envoyOptions(p, "Gateway"))
 		c.envoyListeners(src, tr, p, gateways)
 	}
+}
+
+// envoyOptions reads the translation options of a policy from its annotations.
+func (c *converter) envoyOptions(p obj, targetKind string) builtin.EnvoyOptions {
+	name, ns := metaOf(p)
+	if ns == "" {
+		ns = c.ns
+	}
+	ann := map[string]string{}
+	for k, v := range asMap(asMap(p["metadata"])["annotations"]) {
+		ann[k] = asStr(v)
+	}
+	return builtin.EnvoyOptionsFor(ann, ns, name, targetKind)
 }
 
 // envoyApply writes a translation into the targeted route rules (and the
@@ -310,6 +327,19 @@ func (c *converter) envoyApply(src string, tr *builtin.EnvoyTranslation, targets
 			})
 		}
 	}
+	// A load balancer is a backend setting in the controller; a manifest holds it as the rule's
+	// setura.zyvor.dev/load-balancer annotation (HTTPRoute rules only).
+	moved := map[string]bool{}
+	if lb := tr.Backend["loadBalancer"]; lb != nil {
+		any := false
+		apply(func(r *convRes, rule obj, _ int) {
+			if r.Kind == kindHTTPRoute {
+				rule["#ext"] = mergeObj(asMap(rule["#ext"]), obj{builtin.LoadBalancerKey: deepCopy(lb)})
+				any = true
+			}
+		})
+		moved["loadBalancer"] = any
+	}
 	if len(tr.Filters) > 0 {
 		apply(func(r *convRes, rule obj, _ int) {
 			for _, f := range tr.Filters {
@@ -329,16 +359,21 @@ func (c *converter) envoyApply(src string, tr *builtin.EnvoyTranslation, targets
 	if len(tr.FailClosed) > 0 {
 		todo("security", strings.Join(tr.FailClosed, ", "), "these guards cannot be translated: the converted routes are NOT protected by them; the controller with --envoy-compat refuses the traffic instead")
 	}
-	c.envoyNotes(src, tr.Notes, todo)
+	c.envoyNotes(src, tr.Notes, todo, moved)
 }
 
 // envoyNotes turns the field notes into report items: one converted line per
 // top-level field, a TODO for everything ignored or without a manifest field.
-func (c *converter) envoyNotes(src string, notes []builtin.FieldNote, todo func(key, value, reason string)) {
+func (c *converter) envoyNotes(src string, notes []builtin.FieldNote, todo func(key, value, reason string), moved map[string]bool) {
 	doneKeys := map[string]bool{}
 	for _, n := range notes {
 		top, _, _ := strings.Cut(n.Field, ".")
 		switch {
+		case moved[top] && !n.Ignored && n.Applied():
+			if !doneKeys[top] {
+				doneKeys[top] = true
+				c.done(src, top, "", envoyTargetText(top, n.Setura))
+			}
 		case n.Ignored:
 			reason := n.Reason
 			if reason == "" {
@@ -357,17 +392,22 @@ func (c *converter) envoyNotes(src string, notes []builtin.FieldNote, todo func(
 // envoyTargetText names what a converted top-level field became.
 func envoyTargetText(top, fallback string) string {
 	if t, ok := map[string]string{
-		"retry":          "rule retry (attempts, codes, backoff, perTryTimeout)",
-		"timeout":        "rule timeouts.request",
-		"rateLimit":      "rule setura.zyvor.dev/rate-limit (route annotation)",
-		"faultInjection": "rule setura.zyvor.dev/fault (route annotation, ttl 24h)",
-		"mirrors":        "RequestMirror filter on every targeted rule",
-		"cors":           "CORS filter on every targeted rule",
-		"jwt":            "setura.zyvor.dev/auth jwt",
-		"extAuth":        "ExternalAuth filter",
-		"authorization":  "setura.zyvor.dev/auth ipAllow / ipDeny",
-		"directResponse": "rule setura.zyvor.dev/direct-response (route annotation)",
-		"tls":            "Gateway listener tls.options and spec.tls.frontend",
+		"retry":               "rule retry (attempts, codes, backoff, perTryTimeout)",
+		"timeout":             "rule timeouts.request",
+		"rateLimit":           "rule setura.zyvor.dev/rate-limit (route annotation)",
+		"faultInjection":      "rule setura.zyvor.dev/fault (route annotation, ttl 24h)",
+		"mirrors":             "RequestMirror filter on every targeted rule",
+		"cors":                "CORS filter on every targeted rule",
+		"jwt":                 "setura.zyvor.dev/auth jwt",
+		"extAuth":             "ExternalAuth filter",
+		"authorization":       "setura.zyvor.dev/auth ipAllow / ipDeny",
+		"directResponse":      "rule setura.zyvor.dev/direct-response (route annotation)",
+		"loadBalancer":        "rule setura.zyvor.dev/load-balancer (route annotation)",
+		"compression":         "rule setura.zyvor.dev/compress (route annotation)",
+		"requestBuffer":       "rule setura.zyvor.dev/limits maxRequestBody (route annotation)",
+		"oidc":                "setura.zyvor.dev/auth oidc",
+		"credentialInjection": "setura.zyvor.dev/auth inject",
+		"tls":                 "Gateway listener tls.options and spec.tls.frontend",
 	}[top]; ok {
 		return t
 	}
@@ -406,6 +446,12 @@ func (c *converter) envoyListeners(src string, tr *builtin.EnvoyTranslation, p o
 				if v, ok := tr.Listener["tlsMaxVersion"].(string); ok {
 					opts[builtin.TLSMaxVersionOption] = v
 				}
+				if v, ok := tr.Listener["tlsCipherSuites"].(string); ok {
+					opts[builtin.TLSCipherSuitesOption] = v
+				}
+				if v, ok := tr.Listener["tlsSessionResumption"].(string); ok {
+					opts[builtin.TLSSessionResumptionOption] = v
+				}
 			}
 		}
 		if len(tr.Frontend) > 0 {
@@ -415,13 +461,25 @@ func (c *converter) envoyListeners(src string, tr *builtin.EnvoyTranslation, p o
 				tls = obj{}
 				spec["tls"] = tls
 			}
-			tls["frontend"] = obj{"default": obj{"validation": deepCopy(tr.Frontend)}}
+			val := deepCopy(tr.Frontend).(obj)
+			if allow, ok := val[builtin.ClientAllowKey]; ok {
+				// the Gateway API schema has no such field: the allow-list is a Gateway annotation
+				delete(val, builtin.ClientAllowKey)
+				meta := asMap(g.Obj["metadata"])
+				if asMap(meta["annotations"]) == nil {
+					meta["annotations"] = obj{}
+				}
+				asMap(meta["annotations"])[builtin.ClientAllowKey] = string(jsonCompact(allow))
+			}
+			tls["frontend"] = obj{"default": obj{"validation": val}}
 		}
 	}
 	done := map[string]bool{}
 	for _, n := range tr.Notes {
 		top, _, _ := strings.Cut(n.Field, ".")
 		switch {
+		case n.Where == "listener" && strings.HasPrefix(n.Field, "connection.") && !n.Ignored:
+			todo(n.Field, n.Value, "has no field in a manifest: the controller (--envoy-compat) translates it to "+n.Setura+"; offline use --max-connections, or a limits block on the listener of a snapshot file")
 		case n.Ignored && n.Applied():
 			todo(n.Field, n.Value, n.Reason)
 		case n.Ignored:

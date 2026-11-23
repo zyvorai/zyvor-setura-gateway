@@ -1,10 +1,13 @@
-# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- gateway wide, not per listener
+# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- gateway wide, not per listener, and it names networks where Envoy counts hops (numTrustedHops)
+# TODO(setura) ClientTrafficPolicy demo/client connection.connectionLimit: 500 -- has no field in a manifest: the controller (--envoy-compat) translates it to listener limits maxConnections (the port of the listener); offline use --max-connections, or a limits block on the listener of a snapshot file
 # TODO(setura) ClientTrafficPolicy demo/client timeout.http.idleTimeout: 60s -- gateway wide, not per listener
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: eg
   namespace: demo
+  annotations:
+    setura.zyvor.dev/client-allow: "{\"san\":[\"*.clients.example.test\"]}"
 spec:
   gatewayClassName: eg
   listeners:
@@ -19,10 +22,20 @@ spec:
           - name: edge-cert
         mode: Terminate
         options:
+          setura.zyvor.dev/tls-cipher-suites: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
           setura.zyvor.dev/tls-min-version: "1.3"
+          setura.zyvor.dev/tls-session-resumption: "on"
+  tls:
+    frontend:
+      default:
+        validation:
+          caCertificateRefs:
+            - kind: ConfigMap
+              name: clients-ca
+          mode: AllowValidOnly
 ---
 # TODO(setura) BackendTrafficPolicy demo/slow circuitBreaker.maxConnections: 10 -- has no field in a manifest: the controller (--envoy-compat) translates it to backend circuitBreaker.maxConnections; offline set it in a config file or with the gateway flags (see docs/envoy-compat.md)
-# TODO(setura) BackendTrafficPolicy demo/slow loadBalancer -- this Setura gateway balances weighted backendRefs and has no least request, random, consistent hash or slow start policy
+# TODO(setura) BackendTrafficPolicy demo/slow compression.brotli -- brotli is not in the Go standard library
 # TODO(setura) BackendTrafficPolicy demo/slow retry.retryOn.triggers: reset -- the gateway retries connection failures and the listed status codes only; this trigger has no equivalent
 # TODO(setura) BackendTrafficPolicy demo/slow timeout.http.connectionIdleTimeout: 5m -- Setura has no per-route connection idle timeout
 # TODO(setura) BackendTrafficPolicy demo/slow timeout.tcp.connectTimeout: 2s -- the dial timeout of the proxy is fixed
@@ -34,13 +47,22 @@ metadata:
   name: orders
   namespace: demo
   annotations:
-    setura.zyvor.dev/auth.rule-1: "{\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
-    setura.zyvor.dev/auth.rule-2: "{\"ipAllow\":[\"10.1.0.0/16\"],\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+    setura.zyvor.dev/auth.rule-1: "{\"inject\":[{\"header\":\"Authorization\",\"secret\":{\"secret\":{\"key\":\"credential\",\"name\":\"upstream-token\",\"namespace\":\"demo\"}}}],\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"},\"oidc\":{\"clientId\":\"orders-web\",\"clientSecret\":{\"secret\":{\"key\":\"client-secret\",\"name\":\"oidc-client\",\"namespace\":\"demo\"}},\"cookieKeys\":[{\"secret\":{\"key\":\"key\",\"name\":\"session-keys\",\"namespace\":\"demo\"}}],\"disableRefresh\":true,\"issuer\":\"https://idp.example.test\",\"redirectUrl\":\"https://orders.example.test/oauth2/callback\",\"scopes\":[\"email\"]}}"
+    setura.zyvor.dev/auth.rule-2: "{\"authorization\":{\"defaultAction\":\"deny\",\"rules\":[{\"action\":\"allow\",\"name\":\"rule-1\",\"operations\":[{\"methods\":[\"GET\",\"POST\"]}],\"principals\":[{\"cidrs\":[\"10.1.0.0/16\"],\"claims\":[{\"in\":[\"admin\"],\"name\":\"role\"}]}]}]},\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
     setura.zyvor.dev/auth.rule-3: "{\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+    setura.zyvor.dev/compress.rule-1: "{\"enabled\":true,\"encodings\":[\"gzip\"]}"
+    setura.zyvor.dev/compress.rule-2: "{\"enabled\":true,\"encodings\":[\"gzip\"]}"
+    setura.zyvor.dev/compress.rule-3: "{\"enabled\":true,\"encodings\":[\"gzip\"]}"
     setura.zyvor.dev/direct-response.rule-3: "{\"body\":\"gone\",\"headers\":{\"Content-Type\":\"text/plain\"},\"status\":410}"
     setura.zyvor.dev/fault.rule-1: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
     setura.zyvor.dev/fault.rule-2: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
     setura.zyvor.dev/fault.rule-3: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
+    setura.zyvor.dev/limits.rule-1: "{\"maxRequestBody\":\"10485760\"}"
+    setura.zyvor.dev/limits.rule-2: "{\"maxRequestBody\":\"10485760\"}"
+    setura.zyvor.dev/limits.rule-3: "{\"maxRequestBody\":\"10485760\"}"
+    setura.zyvor.dev/load-balancer.rule-1: "{\"algorithm\":\"leastRequest\",\"slowStart\":{\"window\":\"30s\"}}"
+    setura.zyvor.dev/load-balancer.rule-2: "{\"algorithm\":\"leastRequest\",\"slowStart\":{\"window\":\"30s\"}}"
+    setura.zyvor.dev/load-balancer.rule-3: "{\"algorithm\":\"leastRequest\",\"slowStart\":{\"window\":\"30s\"}}"
     setura.zyvor.dev/rate-limit.rule-1: "{\"key\":\"route\",\"rate\":\"100/m\"}"
     setura.zyvor.dev/rate-limit.rule-2: "{\"key\":\"route\",\"rate\":\"100/m\"}"
     setura.zyvor.dev/rate-limit.rule-3: "{\"key\":\"route\",\"rate\":\"100/m\"}"

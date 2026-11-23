@@ -2,9 +2,13 @@
   setura migrate convert  envoy-gateway → Gateway API
 
   Converted
+    ✓  HTTPRouteFilter demo/token       credentialInjection                 setura.zyvor.dev/auth inject
     ✓  HTTPRouteFilter demo/gone        directResponse                      rule setura.zyvor.dev/direct-response (route annotation)
+    ✓  BackendTrafficPolicy demo/slow   compression                         rule setura.zyvor.dev/compress (route annotation)
     ✓  BackendTrafficPolicy demo/slow   faultInjection                      rule setura.zyvor.dev/fault (route annotation, ttl 24h)
+    ✓  BackendTrafficPolicy demo/slow   loadBalancer                        rule setura.zyvor.dev/load-balancer (route annotation)
     ✓  BackendTrafficPolicy demo/slow   rateLimit                           rule setura.zyvor.dev/rate-limit (route annotation)
+    ✓  BackendTrafficPolicy demo/slow   requestBuffer                       rule setura.zyvor.dev/limits maxRequestBody (route annotation)
     ✓  BackendTrafficPolicy demo/slow   retry                               rule retry (attempts, codes, backoff, perTryTimeout)
     ✓  BackendTrafficPolicy demo/slow   timeout                             rule timeouts.request
     ✓  SecurityPolicy demo/web          apiKeyAuth                          auth apiKey.keys
@@ -12,27 +16,29 @@
     ✓  SecurityPolicy demo/web          extAuth                             ExternalAuth filter
     ✓  SecurityPolicy demo/web          jwt                                 setura.zyvor.dev/auth jwt
     ✓  SecurityPolicy demo/admin-only   authorization                       setura.zyvor.dev/auth ipAllow / ipDeny
+    ✓  SecurityPolicy demo/login        oidc                                setura.zyvor.dev/auth oidc
     ✓  ClientTrafficPolicy demo/client  tls                                 Gateway listener tls.options and spec.tls.frontend
 
   Needs a human
     ▲  BackendTrafficPolicy demo/slow   circuitBreaker.maxConnections       has no field in a manifest: the controller (--envoy-compat) translates it to b...
-    ▲  BackendTrafficPolicy demo/slow   loadBalancer                        this Setura gateway balances weighted backendRefs and has no least request, ra...
+    ▲  BackendTrafficPolicy demo/slow   compression.brotli                  brotli is not in the Go standard library
     ▲  BackendTrafficPolicy demo/slow   retry.retryOn.triggers              the gateway retries connection failures and the listed status codes only; this...
     ▲  BackendTrafficPolicy demo/slow   timeout.http.connectionIdleTimeout  Setura has no per-route connection idle timeout
     ▲  BackendTrafficPolicy demo/slow   timeout.tcp.connectTimeout          the dial timeout of the proxy is fixed
     ▲  SecurityPolicy demo/web          apiKeyAuth                          the converter cannot read the Secret: store each key as a hash with `setura ga...
     ▲  SecurityPolicy demo/web          jwt.providers                       an auth block accepts one JWT issuer: tokens of provider other are refused
-    ▲  ClientTrafficPolicy demo/client  clientIPDetection                   gateway wide, not per listener
+    ▲  ClientTrafficPolicy demo/client  clientIPDetection                   gateway wide, not per listener, and it names networks where Envoy counts hops ...
+    ▲  ClientTrafficPolicy demo/client  connection.connectionLimit          has no field in a manifest: the controller (--envoy-compat) translates it to l...
     ▲  ClientTrafficPolicy demo/client  timeout.http.idleTimeout            gateway wide, not per listener
     ▲  SecurityPolicy demo/ghost        targetRefs                          the target is not among the converted routes or their Gateways; nothing was ch...
 
   Generated
-    Gateway    demo/eg        2 TODO
+    Gateway    demo/eg        3 TODO
     HTTPRoute  demo/orders    7 TODO
     GRPCRoute  demo/rpc     
 
   Check  ✓ 4 rules equivalent to the original
 
-  needs review  11 converted, 10 need a human, 3 resources
+  needs review  16 converted, 11 need a human, 3 resources
   Next: resolve the TODO(setura) comments, then run again with --out DIR
 

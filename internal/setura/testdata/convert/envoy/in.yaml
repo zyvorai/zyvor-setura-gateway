@@ -20,6 +20,9 @@ spec:
   - name: read
     matches: [{path: {type: PathPrefix, value: /orders}}]
     backendRefs: [{name: orders, port: 80}]
+    filters:
+    - type: ExtensionRef
+      extensionRef: {group: gateway.envoyproxy.io, kind: HTTPRouteFilter, name: token}
   - name: admin
     matches: [{path: {type: PathPrefix, value: /admin}}]
     backendRefs: [{name: admin, port: 80}]
@@ -56,7 +59,9 @@ spec:
       rules:
       - limit: {requests: 100, unit: Minute}
   circuitBreaker: {maxConnections: 10}
-  loadBalancer: {type: LeastRequest}
+  loadBalancer: {type: LeastRequest, slowStart: {window: 30s}}
+  compression: [{type: Gzip}, {type: Brotli}]
+  requestBuffer: {limit: 10Mi}
   faultInjection:
     delay: {fixedDelay: 2s, percentage: 10}
 ---
@@ -96,14 +101,40 @@ spec:
     defaultAction: Deny
     rules:
     - action: Allow
-      principal: {clientCIDRs: ["10.1.0.0/16"]}
+      principal:
+        clientCIDRs: ["10.1.0.0/16"]
+        jwt: {provider: idp, claims: [{name: role, valueType: String, values: [admin]}]}
+      operation: {methods: [GET, POST]}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: login
+  namespace: demo
+  annotations:
+    setura.zyvor.dev/compat-oidc-cookie-key: "secret:session-keys#key"
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: orders, sectionName: read}]
+  oidc:
+    provider: {issuer: https://idp.example.test}
+    clientID: orders-web
+    clientSecret: {name: oidc-client}
+    redirectURL: https://orders.example.test/oauth2/callback
+    scopes: [email]
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: ClientTrafficPolicy
 metadata: {name: client, namespace: demo}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: eg}]
-  tls: {minVersion: "1.3"}
+  tls:
+    minVersion: "1.3"
+    ciphers: [ECDHE-RSA-AES128-GCM-SHA256, ECDHE-ECDSA-AES256-GCM-SHA384]
+    session: {resumption: {stateless: {}}}
+    clientValidation:
+      caCertificateRefs: [{kind: ConfigMap, name: clients-ca}]
+      subjectAltNames: ["*.clients.example.test"]
+  connection: {connectionLimit: {value: 500}}
   timeout:
     http: {idleTimeout: 60s}
   clientIPDetection: {xForwardedFor: {numTrustedHops: 1}}
@@ -113,6 +144,14 @@ kind: HTTPRouteFilter
 metadata: {name: gone, namespace: demo}
 spec:
   directResponse: {statusCode: 410, contentType: text/plain, body: {type: Inline, inline: gone}}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: HTTPRouteFilter
+metadata: {name: token, namespace: demo}
+spec:
+  credentialInjection:
+    header: Authorization
+    credential: {valueRef: {name: upstream-token}}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
