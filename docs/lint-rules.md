@@ -37,6 +37,13 @@
 | SET045 | warning | AI prompt cache scope `route` on a rule that authenticates: one client's cached answer can be served to another |
 | SET046 | warning | AI `monthlyCost` budget with no `prices` on the route (only `--ai-prices` on the gateway could price it) |
 | SET047 | warning | AI rule also has `backendRefs`, which are ignored |
+| SET070 | error | `setura.zyvor.dev/compress`, `grpc-web` or `bandwidth` block or annotation is invalid (brotli/zstd, bad size or rate, unknown field) or names no rule (see [traffic-shaping.md](traffic-shaping.md)) |
+| SET071 | warning | shared rate limit fails closed (`failOpen: false`) or has `fallback: none`: a Redis outage refuses all traffic or lifts the limit (see [shared-rate-limits.md](shared-rate-limits.md)) |
+| SET072 | warning | shared rate limit counts per a request header the client sets, on a rule without an auth policy |
+| SET073 | warning | compress block lists a content type that is already compressed |
+| SET074 | warning | gRPC-web rule has neither `allowOrigins` nor a CORS filter |
+| SET075 | warning | gRPC-web rule also has retries or a mirror, which do not apply to bridged calls |
+| SET076 | warning | listener `maxConnectionsPerIP` is above `maxConnections` |
 
 ## ReferenceGrants (SET004, SET012)
 

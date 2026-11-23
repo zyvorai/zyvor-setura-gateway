@@ -225,6 +225,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	if s.authDenied(rec, r, st, l, rule.Rule) {
 		return
 	}
+	if rule.GRPCWeb != nil && r.Method == http.MethodOptions && s.grpcWebPreflight(rec, r, rule.GRPCWeb) {
+		return
+	}
+	r, endShaping := s.installShaping(rec, r, l, rule)
+	defer endShaping()
 	if rule.Direct != nil {
 		serveDirect(rec, r, rule)
 		return
@@ -266,6 +271,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 
+	if rule.GRPCWeb != nil {
+		if text, suffix, ok := grpcWebMode(r.Header.Get("Content-Type")); ok {
+			s.serveGRPCWeb(rec, r, st, rule, e, pg, text, suffix)
+			return
+		}
+	}
 	ref := s.pickRef(rule)
 	var ep *Endpoint
 	if len(rule.sessionPolicies()) > 0 {
@@ -382,7 +393,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			// proxy then Adds the upstream headers on top, so drop ours or an upstream that
 			// echoes X-Request-Id would produce two.
 			w.Header().Del(RequestIDHeader)
-			resp.Header.Set(RequestIDHeader, st.reqID)
+			s.responseRequestID(resp.Header, st)
 			rt.annotate(resp.Header)
 			if idleCancel != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 				resp.Body = newIdleBody(resp.Body, idle, idleCancel)

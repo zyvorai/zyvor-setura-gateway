@@ -53,6 +53,10 @@ type TLSOptions struct{ Min, Max uint16 }
 // ListenerLimits is the limits block of a listener in a snapshot.
 type ListenerLimits struct {
 	MaxRequestBody flexString `json:"maxRequestBody,omitempty"`
+	// MaxConnections and MaxConnectionsPerIP bound the client connections of the
+	// listener's port (the lowest value of the listeners sharing a port wins).
+	MaxConnections      int `json:"maxConnections,omitempty"`
+	MaxConnectionsPerIP int `json:"maxConnectionsPerIP,omitempty"`
 }
 
 // ParseTLSVersion reads "1.2" or "1.3" (also "TLS1.2", "tls1.3").
@@ -125,6 +129,18 @@ func (l *RTListener) resolveLimits() error {
 			return fmt.Errorf("%s: maxRequestBody: %w", LimitsKey, err)
 		}
 		l.MaxBody = &n
+	}
+	if b := l.L.Limits; b != nil {
+		if b.MaxConnections < 0 || b.MaxConnectionsPerIP < 0 {
+			return fmt.Errorf("%s: connection limits must not be negative", LimitsKey)
+		}
+		l.MaxConns, l.MaxConnsPerIP = b.MaxConnections, b.MaxConnectionsPerIP
+	}
+	if c := l.L.Compress; c != nil {
+		if err := c.validate(); err != nil {
+			return err
+		}
+		l.Compress = c
 	}
 	return nil
 }
@@ -393,6 +409,9 @@ func ParseListenerLimitsBlock(raw []byte) (*ListenerLimits, error) {
 		if _, err := parseBodyLimit(string(l.MaxRequestBody)); err != nil {
 			return nil, fmt.Errorf("%s: maxRequestBody: %w", LimitsKey, err)
 		}
+	}
+	if l.MaxConnections < 0 || l.MaxConnectionsPerIP < 0 {
+		return nil, fmt.Errorf("%s: maxConnections and maxConnectionsPerIP must not be negative", LimitsKey)
 	}
 	return &l, nil
 }

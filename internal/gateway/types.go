@@ -60,6 +60,8 @@ type Listener struct {
 	AllowedRoutes *AllowedRoutes `json:"allowedRoutes,omitempty"`
 	// Limits is a Setura extension of the listener (snapshot files).
 	Limits *ListenerLimits `json:"setura.zyvor.dev/limits,omitempty"`
+	// Compress is the listener's default response compression (setura.zyvor.dev/compress).
+	Compress *CompressConfig `json:"setura.zyvor.dev/compress,omitempty"`
 }
 
 // ListenerTLS is a listener's TLS block.
@@ -149,7 +151,12 @@ type Rule struct {
 	DirectResponse *DirectResponse `json:"setura.zyvor.dev/direct-response,omitempty"`
 	RateLimit      *RouteRateLimit `json:"setura.zyvor.dev/rate-limit,omitempty"`
 	Limits         *RuleLimits     `json:"setura.zyvor.dev/limits,omitempty"`
-	extErr         error           // an annotation of the rule could not be decoded
+	// Compress, GRPCWeb and Bandwidth are the traffic shaping extensions (compress.go,
+	// grpcweb.go, shaping.go).
+	Compress  *CompressConfig  `json:"setura.zyvor.dev/compress,omitempty"`
+	GRPCWeb   *GRPCWebConfig   `json:"setura.zyvor.dev/grpc-web,omitempty"`
+	Bandwidth *BandwidthConfig `json:"setura.zyvor.dev/bandwidth,omitempty"`
+	extErr    error            // an annotation of the rule could not be decoded
 	// Fault injects latency, errors and other failures for game days. It must
 	// carry a ttl or an expiry (setura.zyvor.dev/fault, chaos.go).
 	Fault *Fault `json:"setura.zyvor.dev/fault,omitempty"`

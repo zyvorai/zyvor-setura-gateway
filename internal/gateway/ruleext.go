@@ -58,6 +58,8 @@ type RouteRateLimit struct {
 	Rate  flexString `json:"rate"`
 	Burst int        `json:"burst,omitempty"`
 	Key   string     `json:"key,omitempty"` // route, client-ip (default) or header:NAME
+	// Shared counts in Redis instead of per replica (docs/shared-rate-limits.md).
+	Shared *SharedLimit `json:"shared,omitempty"`
 }
 
 // RuleLimits overrides the gateway-wide limits for one rule.
@@ -171,7 +173,7 @@ func (r *RouteRateLimit) config() (RateLimitConfig, error) {
 	default:
 		return RateLimitConfig{}, fmt.Errorf("%s: key %q: want route, client-ip or header:NAME", RateLimitKey, r.Key)
 	}
-	c := RateLimitConfig{Rate: rate, Per: per, Burst: r.Burst, Key: key}
+	c := RateLimitConfig{Rate: rate, Per: per, Burst: r.Burst, Key: key, Shared: r.Shared}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("%s: %w", RateLimitKey, err)
 	}
@@ -260,6 +262,27 @@ func annotateExt(rules []Rule, ann map[string]string) {
 				r.Limits = d
 			}
 		}
+		if key, v, ok := pick(CompressKey); ok && r.Compress == nil {
+			if d, err := ParseCompressBlock([]byte(v)); err != nil {
+				fail(key, err)
+			} else {
+				r.Compress = d
+			}
+		}
+		if key, v, ok := pick(GRPCWebKey); ok && r.GRPCWeb == nil {
+			if d, err := ParseGRPCWebBlock([]byte(v)); err != nil {
+				fail(key, err)
+			} else {
+				r.GRPCWeb = d
+			}
+		}
+		if key, v, ok := pick(BandwidthKey); ok && r.Bandwidth == nil {
+			if d, err := ParseBandwidthBlock([]byte(v)); err != nil {
+				fail(key, err)
+			} else {
+				r.Bandwidth = d
+			}
+		}
 	}
 }
 
@@ -305,6 +328,7 @@ func (cr *CRule) compileExt(rule *Rule) error {
 		if err != nil {
 			return err
 		}
+		c.Scope = fmt.Sprintf("%s#%d", cr.RouteKey, cr.Index+1)
 		cr.Limit = newLimiter(c, nil)
 	}
 	if l := rule.Limits; l != nil {
@@ -312,6 +336,30 @@ func (cr *CRule) compileExt(rule *Rule) error {
 		if cr.MaxBody, cr.StreamIdle, err = l.compile(); err != nil {
 			return err
 		}
+	}
+	if c := rule.Compress; c != nil {
+		if err := c.validate(); err != nil {
+			return err
+		}
+		cr.Compress = c
+	}
+	if g := rule.GRPCWeb; g != nil {
+		if err := g.validate(); err != nil {
+			return err
+		}
+		if g.on() {
+			if rule.DirectResponse != nil || len(rule.BackendRefs) == 0 {
+				return fmt.Errorf("%s: a gRPC-web rule needs backendRefs and no direct-response", GRPCWebKey)
+			}
+			cr.GRPCWeb = g
+		}
+	}
+	if b := rule.Bandwidth; b != nil {
+		sp, err := b.compile()
+		if err != nil {
+			return err
+		}
+		cr.BW = sp
 	}
 	return nil
 }

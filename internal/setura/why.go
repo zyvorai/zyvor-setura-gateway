@@ -520,7 +520,11 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 			if rl.Limited != nil && *rl.Limited {
 				verdict = u.red("refused with 429")
 			}
-			fmt.Fprintf(b, "        live bucket holds %.1f tokens: this request would be %s\n", *rl.Tokens, verdict)
+			if rl.Source == "shared" {
+				fmt.Fprintf(b, "        shared window has %.1f requests left: this request would be %s\n", *rl.Tokens, verdict)
+			} else {
+				fmt.Fprintf(b, "        live bucket holds %.1f tokens: this request would be %s\n", *rl.Tokens, verdict)
+			}
 		}
 		if rl.Note != "" {
 			for _, ln := range wrap(rl.Note, "        ", width) {

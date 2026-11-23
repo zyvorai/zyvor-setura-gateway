@@ -130,9 +130,10 @@ at 100,000 live buckets new keys are refused until some refill.
 
 ### Replicas: `--rate-limit-share`
 
-Buckets live in each replica's memory. Sharing them would need a store every replica
-talks to on the request path (Redis or a gossip protocol), and the gateway deliberately has
-no such dependency, so it does not pretend to. Instead tell each replica how many there are:
+Buckets live in each replica's memory. For an exact fleet-wide limit on a rule, count in
+Redis instead: see [shared-rate-limits.md](shared-rate-limits.md) (optional, per rule, with a
+local fallback; the gateway has no Redis dependency unless you configure it). Otherwise
+tell each replica how many there are:
 `--rate-limit-share 4` divides the configured rate, and an explicit `--rate-burst`
 (rounded up, at least 1), by 4, so four replicas together admit about the configured rate
 (`--rate-limit 100/s --rate-limit-share 4` is 25/s per replica). It is an approximation:

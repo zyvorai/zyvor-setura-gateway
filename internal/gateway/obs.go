@@ -213,6 +213,8 @@ func (s *Server) writeObsMetrics(w io.Writer) {
 		head("setura_gateway_otlp_queue_length", "gauge", "Spans waiting in the bounded export queue.")
 		fmt.Fprintf(&b, "setura_gateway_otlp_queue_length %d\n", len(x.ch))
 	}
+	s.sharedMetrics(&b)
+	s.shapingMetrics(&b)
 	io.WriteString(w, b.String())
 	s.writeUsageMetrics(w)
 }

@@ -315,8 +315,9 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st := &reqState{}
 	st.countBody(r)
 	st.grpcSvc, st.grpcMethod = splitGRPCPath(r.URL.Path)
-	if st.reqID = r.Header.Get(RequestIDHeader); !validRequestID(st.reqID) {
-		st.reqID = randHex(16)
+	var clientID string
+	if st.reqID, clientID = s.requestID(r.Header); clientID != "" {
+		r.Header.Set("X-Client-Request-Id", clientID)
 	}
 	defer func() { s.logRequest(rec, r, st, start) }()
 	defer s.trackOpen(rec, r, st, "grpc")()

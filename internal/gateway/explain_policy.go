@@ -22,6 +22,7 @@ type ExplainServer struct {
 	Limits     LimitsOptions     // --max-request-body and the other limits, for the notes
 	AuthClock  func() time.Time  // clock of token validation (the running gateway's)
 	Plans      *PlanSet          // API plans (--plans); evaluated against fresh counters offline
+	Shape      ShapeOptions      // --compress, --bandwidth-*, --request-id: the gateway wide shaping defaults
 
 	chaos   *chaosState // live run-time faults of a running gateway
 	limiter *limiter    // live limiter of a running gateway (admin endpoint)
@@ -32,7 +33,7 @@ type ExplainServer struct {
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter, chaos: &s.chaos, Plans: s.Plans(), meter: s.meter, srv: s}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, Shape: s.opts.Shape, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter, chaos: &s.chaos, Plans: s.Plans(), meter: s.meter, srv: s}
 }
 
 // TraceMirror is one mirror target of the winning rule.
@@ -58,6 +59,7 @@ type TraceRateLimit struct {
 	Policy  string   `json:"policy,omitempty"` // rate, burst and key
 	Bucket  string   `json:"bucket,omitempty"` // the key this request resolves to
 	Live    bool     `json:"live"`             // Tokens and WouldLimit come from a running gateway
+	Source  string   `json:"source,omitempty"` // local (a token bucket in this process) or shared (a counter in Redis)
 	Tokens  *float64 `json:"tokens,omitempty"`
 	Limited *bool    `json:"would_be_limited,omitempty"`
 	Note    string   `json:"note,omitempty"`
@@ -188,9 +190,12 @@ func (e ExplainServer) ruleRateLimit(rule *CRule, route string, q ExplainRequest
 	if l == nil {
 		return nil
 	}
-	t := &TraceRateLimit{Enabled: true, Applies: true}
+	t := &TraceRateLimit{Enabled: true, Applies: true, Source: "local"}
 	t.Policy = fmt.Sprintf("%g tokens/s, burst %g, key %s (this rule)", l.perSec, l.burst, l.key)
 	t.Bucket = strings.ReplaceAll(l.bucketKey(route, r), "\x00", " | ")
+	if l.sh != nil {
+		return e.sharedRateLimit(t, l, route, q, r)
+	}
 	if !q.Live {
 		t.Note = "policy only: a fresh bucket starts full, so the first request for this key is admitted; live bucket state needs --admin"
 		return t
@@ -227,4 +232,76 @@ func (e ExplainServer) noteLimits(w *TraceWinner, rule *CRule, l *RTListener) {
 	if idle > 0 && rule.Direct == nil {
 		w.Notes = append(w.Notes, fmt.Sprintf("a response that sends no byte for %s is cut", idle))
 	}
+	if pol := e.compressFor(l, rule); pol.enabled {
+		src := "gateway --compress"
+		switch {
+		case rule.Compress != nil && rule.Compress.Enabled != nil:
+			src = "the rule's " + CompressKey + " block"
+		case l != nil && l.Compress != nil && l.Compress.Enabled != nil:
+			src = "the listener's " + CompressKey + " block"
+		}
+		w.Notes = append(w.Notes, fmt.Sprintf("responses are compressed (%s; %s) when the client accepts it, the content type is on the list and the body is at least %d bytes; source: %s",
+			strings.Join(pol.encodings, ", "), "level "+fmt.Sprint(pol.level), pol.min, src))
+	} else if rule.Compress != nil && rule.Compress.Enabled != nil && !*rule.Compress.Enabled {
+		w.Notes = append(w.Notes, "response compression is switched off for this rule")
+	}
+	if in, out, _ := e.bandwidthFor(rule); (in > 0 || out > 0) && rule.Direct == nil {
+		w.Notes = append(w.Notes, fmt.Sprintf("bandwidth is limited per request to %d bytes/s (request body, 0 = none) and %d bytes/s (response body, 0 = none)", in, out))
+	}
+	if rule.GRPCWeb != nil {
+		w.Notes = append(w.Notes, "gRPC-web calls (application/grpc-web, application/grpc-web-text) are translated to gRPC for the backend")
+	}
+}
+
+// sharedRateLimit describes a rule limit whose count lives in Redis. A running
+// gateway reads the client's counters (a read only, nothing is counted).
+func (e ExplainServer) sharedRateLimit(t *TraceRateLimit, l *limiter, route string, q ExplainRequest, r *http.Request) *TraceRateLimit {
+	sh := l.sh
+	t.Source = "shared"
+	t.Policy = sh.describe() + fmt.Sprintf("; key %s (this rule)", l.key)
+	t.Bucket = sh.scope + " | " + l.clientPart(r)
+	if !q.Live {
+		t.Note = "policy only: the count is in Redis and is shared by every gateway replica; live state needs --admin"
+		return t
+	}
+	now := q.Now
+	if now.IsZero() {
+		now = l.now()
+	}
+	est, err := sh.peek(l, route, r, now)
+	if err != nil {
+		t.Note = "Redis could not be read (" + err.Error() + "): requests are served by the " + map[bool]string{true: "per-replica fallback bucket", false: "fail-closed 503 answer"}[sh.cfg.failOpen()]
+		return t
+	}
+	rem := float64(sh.limit) - est
+	limited := rem < 1
+	t.Live, t.Tokens, t.Limited = true, &rem, &limited
+	t.Note = fmt.Sprintf("%.1f of %d requests used in the sliding window", est, sh.limit)
+	return t
+}
+
+func (e ExplainServer) compressFor(l *RTListener, rule *CRule) compressPolicy {
+	var lc *CompressConfig
+	if l != nil {
+		lc = l.Compress
+	}
+	var gw *CompressConfig
+	if e.Shape.Compress.Enabled {
+		gw = e.Shape.Compress.config()
+	}
+	return resolveCompress(gw, lc, rule.Compress)
+}
+
+func (e ExplainServer) bandwidthFor(rule *CRule) (in, out, burst int64) {
+	in, out = e.Shape.BandwidthIn, e.Shape.BandwidthOut
+	if sp := rule.BW; sp != nil {
+		if sp.in != nil {
+			in = *sp.in
+		}
+		if sp.out != nil {
+			out = *sp.out
+		}
+		burst = sp.burst
+	}
+	return
 }
