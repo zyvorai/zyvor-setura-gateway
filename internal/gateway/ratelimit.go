@@ -306,3 +306,25 @@ func (s *Server) prepareLimiters(old, next *Table) {
 func (l *limiter) sameAs(o *limiter) bool {
 	return l.perSec == o.perSec && l.burst == o.burst && l.key == o.key && l.header == o.header
 }
+
+// grpcRateLimited is rateLimited for a gRPC call: a Trailers-Only
+// RESOURCE_EXHAUSTED answer (HTTP 429 in logs and counters) with the wait in
+// grpc-retry-pushback-ms.
+func (s *Server) grpcRateLimited(rec *recorder, r *http.Request, st *reqState) bool {
+	l := s.obs.limiter
+	if l == nil {
+		return false
+	}
+	ok, wait := l.allow(st.route, r)
+	if ok {
+		return false
+	}
+	ms := wait.Milliseconds()
+	if ms < 1 {
+		ms = 1
+	}
+	st.errMsg, st.rateLimited = "rate limited", true
+	rec.Header().Set("Grpc-Retry-Pushback-Ms", strconv.FormatInt(ms, 10))
+	grpcFail(rec, grpcResourceExhaust, "rate limit exceeded", http.StatusTooManyRequests)
+	return true
+}

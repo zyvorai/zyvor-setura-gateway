@@ -98,10 +98,7 @@ func (p *AuthPolicy) credentialNames() (headers, query []string) {
 // backend would see. The TLS handshake cannot be simulated: a policy that
 // needs a client certificate answers "unknown".
 func (tr *Trace) explainAuth(w *TraceWinner, e *Entry, q ExplainRequest, r *http.Request) {
-	var rule *Rule
-	if !e.GRPC {
-		rule = e.Rule.Rule
-	}
+	rule := e.Rule.Rule
 	prepareIdentity(r, rule, nil)
 	if rule == nil || rule.Auth == nil || rule.Auth.c == nil {
 		w.Auth = &TraceAuth{Decision: "allow", Reason: "no auth policy applies to this rule"}

@@ -117,11 +117,21 @@ func AuthRuleAnnotation(n int) string { return AuthKey + ".rule-" + strconv.Itoa
 // that cannot be decoded becomes a policy that fails compilation, so the route
 // turns invalid instead of silently serving without protection.
 func annotateAuth(rules []Rule, ann map[string]string) {
+	annotateAuthSlots(len(rules), func(i int) **AuthPolicy { return &rules[i].Auth }, ann)
+}
+
+// annotateAuthGRPC is annotateAuth for the rules of a GRPCRoute.
+func annotateAuthGRPC(rules []GRPCRule, ann map[string]string) {
+	annotateAuthSlots(len(rules), func(i int) **AuthPolicy { return &rules[i].Auth }, ann)
+}
+
+func annotateAuthSlots(n int, slot func(i int) **AuthPolicy, ann map[string]string) {
 	if len(ann) == 0 {
 		return
 	}
-	for i := range rules {
-		if rules[i].Auth != nil {
+	for i := 0; i < n; i++ {
+		sp := slot(i)
+		if *sp != nil {
 			continue
 		}
 		key := AuthRuleAnnotation(i + 1)
@@ -137,7 +147,7 @@ func annotateAuth(rules []Rule, ann map[string]string) {
 		if err != nil {
 			p = &AuthPolicy{annErr: fmt.Errorf("annotation %s: %w", key, err)}
 		}
-		rules[i].Auth = p
+		*sp = p
 	}
 }
 
@@ -369,6 +379,7 @@ func stripIdentity(h http.Header, extra []string) {
 			delete(h, k)
 		}
 	}
+	h.Del(XFCCHeader)
 	for _, k := range extra {
 		h.Del(k)
 	}
@@ -411,11 +422,31 @@ func prepareIdentity(r *http.Request, rule *Rule, cert *ClientCert) {
 // authDenied runs the rule's policy for an HTTP request and answers it when
 // it fails. On success the identity headers are in place on r.
 func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState, l *RTListener, rule *Rule) bool {
+	return s.authCheck(r, st, l, rule, func(status int, challenges []string, certDeny bool) {
+		if certDeny {
+			plain(w, http.StatusMisdirectedRequest, "client certificate validation is required for this host")
+			return
+		}
+		for _, ch := range challenges {
+			w.Header().Add("WWW-Authenticate", ch)
+		}
+		if status == http.StatusUnauthorized {
+			plain(w, status, "unauthorized")
+		} else {
+			plain(w, status, "forbidden")
+		}
+	})
+}
+
+// authCheck is the protocol independent part of authDenied: it prepares the
+// identity headers, evaluates the policy, counts the outcome and calls reject
+// with the HTTP-equivalent status (the gRPC path maps it to a gRPC status).
+func (s *Server) authCheck(r *http.Request, st *reqState, l *RTListener, rule *Rule, reject func(status int, challenges []string, certDeny bool)) bool {
 	cert, deny := s.clientCertFor(l, r)
 	if deny != "" {
 		s.ext.authOutcome(st.route, "denied", "client_cert")
 		st.errMsg = deny
-		plain(w, http.StatusMisdirectedRequest, "client certificate validation is required for this host")
+		reject(http.StatusMisdirectedRequest, nil, true)
 		return true
 	}
 	prepareIdentity(r, rule, cert)
@@ -439,14 +470,7 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 	}
 	s.ext.authOutcome(st.route, "denied", reason)
 	st.errMsg = "auth: " + res.Reason
-	for _, ch := range res.Challenges {
-		w.Header().Add("WWW-Authenticate", ch)
-	}
-	if res.Status == http.StatusUnauthorized {
-		plain(w, res.Status, "unauthorized")
-	} else {
-		plain(w, res.Status, "forbidden")
-	}
+	reject(res.Status, res.Challenges, false)
 	return true
 }
 

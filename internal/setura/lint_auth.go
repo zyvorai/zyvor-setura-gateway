@@ -8,7 +8,7 @@ import (
 	builtin "github.com/zyvorai/zyvor-setura-gateway/internal/gateway"
 )
 
-// authRules evaluates SET016, SET017 and SET018 over HTTPRoutes: every inline
+// authRules evaluates SET016, SET017 and SET018 over HTTPRoutes and GRPCRoutes: every inline
 // setura.zyvor.dev/auth block and every setura.zyvor.dev/auth annotation must
 // parse and validate the way the built-in gateway compiles them (SET018), and
 // obviously weak policies are flagged: a JWT policy that does not check the
@@ -17,10 +17,15 @@ func authRules(specs obj, ns string) []obj {
 	var findings []obj
 	for _, key := range sortedKeys(specs) {
 		resource, name, _ := strings.Cut(key, "/")
-		if resource != route {
+		kind := "HTTPRoute"
+		switch resource {
+		case route:
+		case grpcRoute:
+			kind = "GRPCRoute"
+		default:
 			continue
 		}
-		id := "HTTPRoute/" + ns + "/" + name
+		id := kind + "/" + ns + "/" + name
 		add := func(rule, msg string) {
 			findings = append(findings, obj{"id": rule, "severity": ruleSeverity(rule), "resource": id, "message": msg})
 		}

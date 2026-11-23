@@ -59,7 +59,8 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
 	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
 	"--max-request-body", "--max-header-bytes", "--header-read-timeout", "--idle-timeout", "--stream-idle-timeout",
-	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version"}
+	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version",
+	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

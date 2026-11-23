@@ -252,6 +252,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			continue
 		}
 		gw := spec.gateway(g.Metadata.Namespace, g.Metadata.Name, g.Metadata.Generation)
+		gw.Annotations = g.Metadata.Annotations
 		cfg.Gateways = append(cfg.Gateways, gw)
 		mine[gw.Key()] = true
 		gwRaw[gw.Key()] = gwItems[i]

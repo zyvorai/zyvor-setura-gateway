@@ -73,8 +73,8 @@ every command.
   and with `--admin` the live token count says whether this request would be
   refused with 429); and each mirror with its percentage and shadow-diff
   settings (compare on or off, sample, headers, ignored paths, size and latency
-  threshold). gRPC calls and TLS passthrough are not rate limited, retried or
-  mirrored by the gateway, and the trace says so.
+  threshold). TLS passthrough is not rate limited, retried or mirrored by the
+  gateway, and the trace says so; gRPC calls are rate limited like HTTP requests.
 
 ## Running gateway
 

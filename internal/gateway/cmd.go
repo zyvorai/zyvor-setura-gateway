@@ -48,6 +48,11 @@ Flags for run and up:
   --proxy-protocol N=CIDR[,..]   accept PROXY protocol v1/v2 on spec port N from these sources only; repeatable
                         (a backend option proxyProtocol: v1|v2 sends it upstream; see docs/certificates.md)
   --alt-svc VALUE       send an Alt-Svc header on HTTPS responses, to advertise an HTTP/3-capable edge in front (docs/http3.md)
+  --client-allow-san PATTERN[,..]   with client certificate validation, accept only certificates with a DNS, URI or email SAN
+                        matching PATTERN: exact or *.suffix, optionally dns:/uri:/email: prefixed; repeatable (or SETURA_CLIENT_ALLOW_SAN).
+                        A Gateway's setura.zyvor.dev/client-allow annotation overrides it (docs/client-cert-authz.md)
+  --client-allow-cn PATTERN[,..]    the same for the subject common name; a certificate matching a SAN or a CN entry is accepted
+  --client-cert-xfcc    also forward the verified client certificate as an Envoy-style X-Forwarded-Client-Cert header
   --interval DUR        poll interval for config changes (default 1s; with --kubernetes only used by --poll, default 5s)
   --poll                with --kubernetes: poll instead of using watches
   --resync DUR          with --kubernetes: safety relist while watching (default 1m)
@@ -63,6 +68,9 @@ Flags for run and up:
   --access-log-max-size SIZE    rotate the access log file past SIZE (100, 64k, 10MB, 1g; default off)
   --access-log-keep N           rotated files to keep (default: all)
   --access-log-gzip             gzip rotated files
+  --access-log-exclude PATTERN  keep a path out of the access log and its sinks: exact (/edge-health) or prefix (/healthz*);
+                        repeatable; excluded requests still count in metrics (docs/headers-and-logs.md)
+  --access-log-sample N         log one request in N (5xx responses are always logged); the rest still count in metrics
                         (a file access log also rotates on SIGHUP; a file moved away by logrotate is reopened)
   --otlp-endpoint HOST:PORT|URL   export spans via OTLP/HTTP JSON (default off)
   --otlp-protocol http|grpc   OTLP transport for spans and logs: JSON over HTTP (default) or protobuf over gRPC
@@ -138,6 +146,9 @@ type runFlags struct {
 	uiToken    string
 	cert       certFlags
 	limits     limitFlags
+	allowSAN   stringList
+	allowCN    stringList
+	xfcc       bool
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -181,6 +192,9 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.BoolVar(&f.opts.OCSPStaple, "ocsp-staple", false, "staple OCSP responses to listener certificates")
 	addCertFlags(fs, &f.cert)
 	addLimitFlags(fs, &f.limits)
+	fs.Var(&f.allowSAN, "client-allow-san", "accept only client certificates with a SAN matching PATTERN[,..] (exact or *.suffix; dns:/uri:/email: prefix optional); repeatable")
+	fs.Var(&f.allowCN, "client-allow-cn", "accept only client certificates whose subject CN matches PATTERN[,..] (exact or *.suffix); repeatable")
+	fs.BoolVar(&f.xfcc, "client-cert-xfcc", false, "also forward the verified client certificate as X-Forwarded-Client-Cert")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -234,6 +248,17 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
+	san := []string(f.allowSAN)
+	if len(san) == 0 {
+		if env := os.Getenv("SETURA_CLIENT_ALLOW_SAN"); env != "" {
+			san = []string{env}
+		}
+	}
+	allow, err := ParseClientAllowFlags(san, f.allowCN)
+	if err != nil {
+		return nil, fmt.Errorf("--client-allow-san/--client-allow-cn: %w", err)
+	}
+	f.opts.ClientAllow, f.opts.ClientCertXFCC = allow, f.xfcc
 	if err := f.cert.apply(&f.opts); err != nil {
 		return nil, err
 	}

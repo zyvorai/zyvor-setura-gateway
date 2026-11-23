@@ -61,12 +61,17 @@ type FrontendValidation struct {
 	// chains to the CA bundle is refused. AllowInsecureFallback accepts such
 	// clients too; the request then carries no verified identity.
 	Mode string `json:"mode,omitempty"`
+	// Allow restricts which certificates of the CA bundle are accepted, by
+	// SAN and subject CN (clientallow.go). The Gateway annotation
+	// setura.zyvor.dev/client-allow supplies it when this is absent.
+	Allow *ClientAllow `json:"setura.zyvor.dev/client-allow,omitempty"`
 }
 
 // ClientValidation is the resolved form on a listener.
 type ClientValidation struct {
-	Mode string
-	Pool *x509.CertPool
+	Mode  string
+	Pool  *x509.CertPool
+	Allow *compiledAllow // nil: the --client-allow-* default, or every trusted certificate
 }
 
 func (v *FrontendValidation) mode() string {
@@ -156,7 +161,12 @@ func (c *Config) resolveClientCA(l *RTListener) {
 			return
 		}
 	}
-	l.Client = &ClientValidation{Mode: v.mode(), Pool: pool}
+	allow, err := resolveClientAllow(v, l.GW)
+	if err != nil {
+		fail("%v", err)
+		return
+	}
+	l.Client = &ClientValidation{Mode: v.mode(), Pool: pool, Allow: allow}
 }
 
 // listenerForTLS picks the listener a handshake with this SNI belongs to,
@@ -199,19 +209,45 @@ func (s *Server) clientTLSConfig(base *tls.Config, port int, h *tls.ClientHelloI
 	c.ClientCAs = l.Client.Pool
 	if l.Client.Mode == ModeAllowValidOnly {
 		c.ClientAuth = tls.RequireAndVerifyClientCert
+		if allow := s.allowFor(l.Client); allow != nil {
+			// The chain is verified by now; refuse a certificate the allow-list
+			// does not name before any request is read.
+			c.VerifyConnection = func(cs tls.ConnectionState) error {
+				if len(cs.PeerCertificates) == 0 || allow.allows(cs.PeerCertificates[0]) {
+					return nil
+				}
+				s.rejectClientCert(l.Key, cs.PeerCertificates[0])
+				return fmt.Errorf("client certificate is not on the allow-list")
+			}
+		}
 	} else {
 		c.ClientAuth = tls.RequestClientCert // verified per request, so a bad certificate does not end the connection
 	}
 	return c, nil
 }
 
+// allowFor is the effective allow-list of a validation: the listener's own,
+// else the --client-allow-san/--client-allow-cn default (nil: no restriction).
+func (s *Server) allowFor(v *ClientValidation) *compiledAllow {
+	if v.Allow != nil {
+		return v.Allow
+	}
+	return s.defaultAllow
+}
+
 // ClientCert is the identity of a presented client certificate.
 type ClientCert struct {
+	// Verified is true when the certificate chains to the CA bundle and, where
+	// an allow-list applies, is on it.
 	Verified    bool
+	Refused     bool // chains to the CA bundle but is not on the allow-list
 	Subject     string
 	SAN         string
 	Serial      string
 	Fingerprint string // SHA-256 of the DER certificate, hex
+	leaf        *x509.Certificate
+	xfcc        bool   // also write X-Forwarded-Client-Cert (--client-cert-xfcc)
+	by          string // URI SAN of the serving certificate, the XFCC By field
 }
 
 func sanList(c *x509.Certificate) string {
@@ -232,7 +268,7 @@ func sanList(c *x509.Certificate) string {
 }
 
 // verifyClientCert checks the peer certificate against a pool at a time.
-func verifyClientCert(peers []*x509.Certificate, v *ClientValidation, now time.Time) *ClientCert {
+func verifyClientCert(peers []*x509.Certificate, v *ClientValidation, allow *compiledAllow, now time.Time) *ClientCert {
 	if len(peers) == 0 {
 		return nil
 	}
@@ -245,9 +281,12 @@ func verifyClientCert(peers []*x509.Certificate, v *ClientValidation, now time.T
 	}
 	_, err := leaf.Verify(x509.VerifyOptions{Roots: v.Pool, Intermediates: inter, CurrentTime: now,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
-	if err == nil {
+	if err == nil && !allow.allows(leaf) {
+		cc.Refused = true
+	} else if err == nil {
 		cc.Verified = true
 		cc.Subject, cc.SAN, cc.Serial = leaf.Subject.String(), sanList(leaf), leaf.SerialNumber.Text(16)
+		cc.leaf = leaf
 	}
 	return cc
 }
@@ -265,8 +304,17 @@ func (s *Server) clientCertFor(l *RTListener, r *http.Request) (cc *ClientCert, 
 	if r.TLS != nil {
 		peers = r.TLS.PeerCertificates
 	}
-	cc = verifyClientCert(peers, l.Client, s.authNow())
+	cc = verifyClientCert(peers, l.Client, s.allowFor(l.Client), s.authNow())
+	if cc != nil && cc.Refused && len(peers) > 0 {
+		s.rejectClientCert(l.Key, peers[0])
+	}
+	if cc != nil && s.opts.ClientCertXFCC {
+		cc.xfcc, cc.by = true, serverURI(l)
+	}
 	if l.Client.Mode == ModeAllowValidOnly && (cc == nil || !cc.Verified) {
+		if cc != nil && cc.Refused {
+			return cc, "client certificate is not on the allow-list of this listener"
+		}
 		return cc, "client certificate required and not valid for this listener"
 	}
 	return cc, ""
@@ -290,6 +338,58 @@ func (c *ClientCert) setHeaders(h http.Header) {
 	}
 	h.Set(clientHeaderPrefix+"Serial", c.Serial)
 	h.Set(clientHeaderPrefix+"Fingerprint", c.Fingerprint)
+	if c.xfcc {
+		h.Set(XFCCHeader, c.xfccValue())
+	}
+}
+
+// XFCCHeader is the Envoy-compatible client certificate header.
+const XFCCHeader = "X-Forwarded-Client-Cert"
+
+// xfccQuote quotes a value when it holds a character that is syntax in XFCC.
+func xfccQuote(v string) string {
+	if strings.ContainsAny(v, ",;=\" \t") {
+		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+	}
+	return v
+}
+
+// xfccValue is the verified identity in Envoy's X-Forwarded-Client-Cert
+// format: By (the URI SAN of the serving certificate, when it has one), Hash
+// (SHA-256 of the DER certificate), Subject (always quoted), then every URI
+// and DNS SAN of the client certificate.
+func (c *ClientCert) xfccValue() string {
+	var parts []string
+	if c.by != "" {
+		parts = append(parts, "By="+xfccQuote(c.by))
+	}
+	parts = append(parts, "Hash="+c.Fingerprint, `Subject="`+strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(c.Subject)+`"`)
+	if c.leaf != nil {
+		for _, u := range c.leaf.URIs {
+			parts = append(parts, "URI="+xfccQuote(u.String()))
+		}
+		for _, d := range c.leaf.DNSNames {
+			parts = append(parts, "DNS="+xfccQuote(d))
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+// serverURI is the first URI SAN of the listener's certificate ("" without).
+func serverURI(l *RTListener) string {
+	for _, c := range l.Certs {
+		if len(c.Certificate) == 0 {
+			continue
+		}
+		leaf := c.Leaf
+		if leaf == nil {
+			leaf, _ = x509.ParseCertificate(c.Certificate[0])
+		}
+		if leaf != nil && len(leaf.URIs) > 0 {
+			return leaf.URIs[0].String()
+		}
+	}
+	return ""
 }
 
 // loadClientCAs fetches the CA bundles frontend validation refers to (the

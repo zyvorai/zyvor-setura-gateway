@@ -329,7 +329,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			if keepPristine { // before filters, for retries on another backendRef
 				pristine, inbound = pr.Out.Clone(pr.Out.Context()), pr.In
 			}
-			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false)
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, requestFilters(rule, ref), e.Match, false, st.reqID, st.listener)
 			s.chainForwardedFor(pr.In, pr.Out)
 			injectTrace(pr.Out, st)
 			s.fireMirrorsOrSpool(pr.Out, body, mirrors, sc, sp)
@@ -385,7 +385,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	}
 	rt.rebuild = func(ctx context.Context, nr *CRef) *http.Request {
 		out := pristine.Clone(ctx)
-		shapeUpstream(out, inbound, remoteIP(inbound), pg.TLS, requestFilters(rule, nr), e.Match, false)
+		shapeUpstream(out, inbound, remoteIP(inbound), pg.TLS, requestFilters(rule, nr), e.Match, false, st.reqID, st.listener)
 		s.chainForwardedFor(inbound, out)
 		injectTrace(out, st)
 		return out
@@ -428,20 +428,25 @@ func (s *Server) fireMirrors(out *http.Request, body []byte, mirrors []*CMirror,
 }
 
 // applyHeaderMod applies set, add and remove in that order, as the spec does.
-func applyHeaderMod(h http.Header, m *HeaderMod) {
+func applyHeaderMod(h http.Header, m *HeaderMod) { applyHeaderModVars(h, m, nil) }
+
+// applyHeaderModVars is applyHeaderMod with {client_ip}-style variables
+// expanded in set and add values (nil vars: values are literal).
+func applyHeaderModVars(h http.Header, m *HeaderMod, vars *headerVars) {
 	for _, nv := range m.Set {
 		if !strings.EqualFold(nv.Name, "host") {
-			h.Set(nv.Name, nv.Value)
+			h.Set(nv.Name, vars.expand(nv.Value))
 		}
 	}
 	for _, nv := range m.Add {
 		if strings.EqualFold(nv.Name, "host") {
 			continue
 		}
+		val := vars.expand(nv.Value)
 		if old := h.Get(nv.Name); old != "" {
-			h.Set(nv.Name, old+","+nv.Value)
+			h.Set(nv.Name, old+","+val)
 		} else {
-			h.Set(nv.Name, nv.Value)
+			h.Set(nv.Name, val)
 		}
 	}
 	for _, n := range m.Remove {

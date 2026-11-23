@@ -130,3 +130,19 @@ func TestWhyShowsAuthDecision(t *testing.T) {
 		t.Errorf("json without --client-ip:\n%s", out)
 	}
 }
+
+func TestAuthRulesCoverGRPCRoute(t *testing.T) {
+	specs := obj{grpcRoute + "/g": obj{
+		"rules":                        []any{obj{"setura.zyvor.dev/auth": obj{"apiKey": obj{"keys": []any{obj{"name": "ci", "key": "clear"}}}}}},
+		"setura.zyvor.dev/annotations": obj{"setura.zyvor.dev/auth.rule-3": `{"ipAllow":["10.0.0.0/8"]}`},
+	}}
+	got := authRules(specs, "demo")
+	var ids []string
+	for _, f := range got {
+		ids = append(ids, f["id"].(string)+" "+f["resource"].(string))
+	}
+	want := []string{"SET017 GRPCRoute/demo/g", "SET018 GRPCRoute/demo/g"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("findings %v, want %v", ids, want)
+	}
+}

@@ -42,6 +42,9 @@ type Gateway struct {
 	BackendClientCert *ObjRef
 	// TLS is spec.tls (Gateway API 1.5 frontend TLS validation).
 	TLS *GatewayTLS
+	// Annotations are the Gateway's setura.zyvor.dev/* annotations (a snapshot
+	// carries them under setura.zyvor.dev/annotations).
+	Annotations map[string]string
 }
 
 // Key is namespace/name.
@@ -422,6 +425,8 @@ type gatewaySpec struct {
 	Listeners        []Listener `json:"listeners"`
 	// TLS is spec.tls: frontend client certificate validation and the backend client certificate.
 	TLS *GatewayTLS `json:"tls,omitempty"`
+	// Annotations carries the Gateway annotations of the object this spec was taken from.
+	Annotations map[string]string `json:"setura.zyvor.dev/annotations,omitempty"`
 	// Addresses are the static addresses the Gateway asks for (reported in status).
 	Addresses []GatewayAddress `json:"addresses,omitempty"`
 	// AllowedListeners says which ListenerSets may attach (default: none).
@@ -432,7 +437,7 @@ type gatewaySpec struct {
 
 // gateway builds the Gateway a gatewaySpec describes.
 func (s gatewaySpec) gateway(ns, name string, generation int64) *Gateway {
-	g := &Gateway{NS: ns, Name: name, Generation: generation, ClassName: s.GatewayClassName, Listeners: s.Listeners, TLS: s.TLS, Addresses: s.Addresses}
+	g := &Gateway{NS: ns, Name: name, Generation: generation, ClassName: s.GatewayClassName, Listeners: s.Listeners, TLS: s.TLS, Addresses: s.Addresses, Annotations: s.Annotations}
 	if s.AllowedListeners != nil {
 		g.AllowedListeners = s.AllowedListeners.Namespaces
 	}

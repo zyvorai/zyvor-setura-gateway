@@ -107,6 +107,8 @@ the families that are always on even before the first sample.
 | `setura_gateway_ratelimit_buckets` | gauge |  |
 | `setura_gateway_shadow_total` | counter | `route`, `result` |
 | `setura_gateway_auth_requests_total` | counter | `route`, `decision`, `reason` |
+| `setura_gateway_accesslog_skipped_total` | counter | `reason` |
+| `setura_gateway_client_cert_rejected_total` | counter | `listener` |
 | `setura_gateway_cors_preflights_total` | counter | `route` |
 | `setura_gateway_backend_tls_handshake_failures_total` | counter | `backend` |
 | `setura_gateway_session_persistence_hits_total` | counter | `route` |
