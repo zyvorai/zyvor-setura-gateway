@@ -148,6 +148,7 @@ type Trace struct {
 	// credHeaders and credQuery name where the winning rule's auth policy reads
 	// credentials, so the echoed request can hide them.
 	credHeaders, credQuery []string
+	authRes                *authResult // outcome of the winning rule's policy, for plan resolution
 	erec                   []entryRec
 	trec                   []tlsRec
 }
@@ -262,6 +263,7 @@ type TraceWinner struct {
 	Retry         *TraceRetry     `json:"retry,omitempty"`
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
 	Auth          *TraceAuth      `json:"auth,omitempty"`
+	Plan          *TracePlan      `json:"plan,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 
 	// Gateway API 1.5 additions (explain_ext.go).

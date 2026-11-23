@@ -36,6 +36,7 @@ var commandNames = []string{
 	"exposure",
 	"gateway",
 	"shadow",
+	"usage",
 	"completion",
 	"watch",
 	"history",
@@ -57,7 +58,8 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
 	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
-	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc"}
+	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
+	"--plans", "--plans-interval", "--usage-state", "--usage-interval", "--usage-max-series", "--usage-retention-days"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
@@ -74,7 +76,13 @@ var uiFlags = []string{"--listen", "--snapshot", "--kube", "--token", "--redact"
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
-var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff"}
+var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff", "--plans"}
+
+// usageFlags are offered after "setura usage".
+var usageFlags = []string{"invoice", "--admin", "--format", "--since", "--until", "--by", "--identity", "--route", "--plan", "--period", "--plans"}
+
+// lintFlags are offered after "setura lint".
+var lintFlags = []string{"--format", "--manifest-dir", "--baseline", "--write-baseline", "--disable", "--severity-override", "--snapshot", "--strict", "--rules", "--namespace", "--plans"}
 
 // initFlags are offered after "setura init".
 var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}
@@ -92,6 +100,8 @@ var flagSets = []struct {
 	{"replay", replayFlags},
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
+	{"usage", usageFlags},
+	{"lint", lintFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
 	{"top", topFlags},

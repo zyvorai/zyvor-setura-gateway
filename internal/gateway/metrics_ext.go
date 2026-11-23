@@ -267,4 +267,13 @@ var MetricCatalog = []MetricDef{
 	{"setura_gateway_logsink_failures_total", "counter", []string{"sink"}, "a log sink is configured"},
 	{"setura_gateway_logsink_retries_total", "counter", []string{"sink"}, "a log sink is configured"},
 	{"setura_gateway_logsink_queue_length", "gauge", []string{"sink"}, "a log sink is configured"},
+	{"setura_gateway_usage_requests_total", "counter", []string{"plan", "route", "code"}, "plans enabled"},
+	{"setura_gateway_usage_bytes_total", "counter", []string{"plan", "direction"}, "plans enabled"},
+	{"setura_gateway_quota_exceeded_total", "counter", []string{"plan", "quota", "mode"}, "plans enabled"},
+	{"setura_gateway_plan_rejected_total", "counter", nil, "plans enabled"},
+	{"setura_gateway_usage_series", "gauge", nil, "plans enabled"},
+	{"setura_gateway_usage_overflow_total", "counter", nil, "plans enabled"},
+	{"setura_gateway_usage_persist_errors_total", "counter", nil, "plans enabled"},
+	{"setura_gateway_plans_reload_errors_total", "counter", nil, "plans enabled"},
+	{"setura_gateway_plans", "gauge", nil, "plans enabled"},
 }

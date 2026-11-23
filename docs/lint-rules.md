@@ -25,6 +25,9 @@
 | SET017 | warning | `setura.zyvor.dev/auth` API key or basic auth password stored in clear text instead of a hash |
 | SET018 | error | `setura.zyvor.dev/auth` block or annotation is invalid, or names a rule that does not exist |
 | SET019 | error | Gateway API 1.5 setting the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, `backendRequest` longer than `request`, BackendTLSPolicy without hostname or CA source (see [gateway-api-1-5.md](gateway-api-1-5.md)) |
+| SET020 | error | API plan file (`setura lint --plans FILE`) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method (see [metering-plans.md](metering-plans.md)) |
+| SET021 | warning | API plan file names a route (plan `routes` or `unmeteredRoutes`) that no HTTPRoute in the snapshot has |
+| SET022 | warning | API plan file maps `apikey:NAME` for a key that no route's apiKey policy declares |
 
 ## ReferenceGrants (SET004, SET012)
 

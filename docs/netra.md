@@ -130,12 +130,21 @@ the families that are always on even before the first sample.
 | `setura_gateway_logsink_failures_total` | counter | `sink` |
 | `setura_gateway_logsink_retries_total` | counter | `sink` |
 | `setura_gateway_logsink_queue_length` | gauge | `sink` |
+| `setura_gateway_usage_requests_total` | counter | `plan`, `route`, `code` |
+| `setura_gateway_usage_bytes_total` | counter | `plan`, `direction` |
+| `setura_gateway_quota_exceeded_total` | counter | `plan`, `quota`, `mode` |
+| `setura_gateway_plan_rejected_total` | counter |  |
+| `setura_gateway_usage_series` | gauge |  |
+| `setura_gateway_usage_overflow_total` | counter |  |
+| `setura_gateway_usage_persist_errors_total` | counter |  |
+| `setura_gateway_plans_reload_errors_total` | counter |  |
+| `setura_gateway_plans` | gauge |  |
 
 Histograms are exposed as the usual `_bucket`, `_sum` and `_count` series. Label
 values: `route` is `namespace/name` of the HTTPRoute, `backend` is
 `namespace/service:port`, `code` is the status class (`1xx` to `5xx`),
 `decision` is `allowed` or `denied`, `reason` for denials is `unauthenticated`,
-`forbidden`, `client_cert` or `external`, `sink` is `syslog`, `loki` or `otlp_logs`.
+`forbidden`, `client_cert` or `external`, `sink` is `syslog`, `loki` or `otlp_logs`, `plan` is a plan name from the plan file (or `_none`), `quota` is `burst`, `requestsPerMinute`, `requestsPerDay`, `requestsPerMonth` or `bytesPerMonth`, `mode` is `hard` or `soft`, `direction` is `in` or `out`. The usage families exist with `--plans` (see [metering-plans.md](metering-plans.md)); no label is ever an identity.
 
 ## Optional: a `setura` preset in Netra
 

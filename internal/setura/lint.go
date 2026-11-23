@@ -36,6 +36,9 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET016", SeverityWarning, "auth policy accepts any audience (jwt without audience) or fetches its JWKS over plain http"},
 	{"SET017", SeverityWarning, "auth policy stores an API key or a basic auth password in clear text instead of a hash"},
 	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
+	{"SET020", SeverityError, "API plan file (--plans) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method"},
+	{"SET021", SeverityWarning, "API plan file names a route (plan routes or unmeteredRoutes) that no HTTPRoute in the snapshot has"},
+	{"SET022", SeverityWarning, "API plan file maps an API key name that no route's apiKey policy declares"},
 }
 
 func ruleSeverity(id string) string {

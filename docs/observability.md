@@ -199,6 +199,13 @@ setura_gateway_accesslog_rotation_errors_total
 Rate-limit, access-log, OTLP and rotation series appear only when the feature is enabled.
 Resilience series (retries, ejection, circuit breaking) are in [resilience.md](resilience.md).
 
+## Usage metering and plans
+
+`--plans FILE` adds per-plan usage counters, quota enforcement and the `/usage`, `/usage.csv` and
+`/plans` admin endpoints. The Prometheus families (`setura_gateway_usage_*`, `setura_gateway_quota_exceeded_total`,
+`setura_gateway_plan*`) only carry plan, route, status class and quota labels, never an identity. See
+[metering-plans.md](metering-plans.md).
+
 ## OTLP over gRPC
 
 `--otlp-protocol grpc` sends spans (and, with `--otlp-logs-endpoint`, access log records) as

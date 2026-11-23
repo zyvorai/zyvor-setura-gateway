@@ -125,6 +125,7 @@ func (tr *Trace) explainAuth(w *TraceWinner, e *Entry, q ExplainRequest, r *http
 	}
 	ip, _ := netip.ParseAddr(q.Remote)
 	res := p.c.evaluate(authInput{r: r, clientIP: ip, now: now, offline: !q.Live})
+	tr.authRes = &res
 	ta.Decision, ta.Status, ta.Method, ta.Subject, ta.Reason, ta.Challenge = res.Decision, res.Status, res.Method, res.Subject, res.Reason, res.Challenges
 	switch res.Decision {
 	case "allow":

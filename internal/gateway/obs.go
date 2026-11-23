@@ -140,6 +140,7 @@ func (s *Server) writeObsMetrics(w io.Writer) {
 		fmt.Fprintf(&b, "setura_gateway_otlp_queue_length %d\n", len(x.ch))
 	}
 	io.WriteString(w, b.String())
+	s.writeUsageMetrics(w)
 }
 
 type obsFlags struct {

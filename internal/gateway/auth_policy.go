@@ -240,6 +240,7 @@ type authResult struct {
 	Challenges []string
 	headers    map[string]string
 	strip      func(*http.Request)
+	claims     jwtClaims // verified JWT claims, for plan and tenant lookup
 }
 
 func (a authResult) allowed() bool { return a.Decision == "allow" }
@@ -293,7 +294,7 @@ func (c *compiledAuth) credentials(in authInput) authResult {
 			claims, je := c.jwt.verify(tok, in.now, in.offline)
 			switch {
 			case je == nil:
-				res := authResult{Decision: "allow", Method: "jwt", Reason: "JWT verified", headers: map[string]string{}, strip: c.jwt.strip}
+				res := authResult{Decision: "allow", Method: "jwt", Reason: "JWT verified", headers: map[string]string{}, strip: c.jwt.strip, claims: claims}
 				if sub, ok := claims["sub"].(string); ok {
 					res.Subject = sub
 				}
@@ -431,6 +432,7 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 	if res.allowed() {
 		s.ext.authOutcome(st.route, "allowed", "")
 		res.apply(r)
+		st.auth = &res
 		return false
 	}
 	reason := "forbidden"

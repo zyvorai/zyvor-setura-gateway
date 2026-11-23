@@ -46,3 +46,12 @@ setura_gateway_logsink_dropped_total counter sink
 setura_gateway_logsink_failures_total counter sink
 setura_gateway_logsink_retries_total counter sink
 setura_gateway_logsink_queue_length gauge sink
+setura_gateway_usage_requests_total counter plan,route,code
+setura_gateway_usage_bytes_total counter plan,direction
+setura_gateway_quota_exceeded_total counter plan,quota,mode
+setura_gateway_plan_rejected_total counter 
+setura_gateway_usage_series gauge 
+setura_gateway_usage_overflow_total counter 
+setura_gateway_usage_persist_errors_total counter 
+setura_gateway_plans_reload_errors_total counter 
+setura_gateway_plans gauge 

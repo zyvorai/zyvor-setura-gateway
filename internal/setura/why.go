@@ -31,6 +31,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 	rateLimit := fs.String("rate-limit", "", "model the gateway's --rate-limit (N/s, N/m, N/h); offline only")
 	rateBurst := fs.Int("rate-burst", 0, "model the gateway's --rate-burst; offline only")
 	rateKey := fs.String("rate-key", "ip", "model the gateway's --rate-key: ip, route or header:NAME; offline only")
+	plansFile := fs.String("plans", "", "model the gateway's --plans file: which plan and quota would apply (offline; --admin reports the running gateway's)")
 	shadowDiff := fs.Int("shadow-diff", 0, "model the gateway's --shadow-diff default sample percent; offline only")
 	var headers stringList
 	fs.Var(&headers, "H", `request header, "Name: value"; repeatable`)
@@ -76,6 +77,18 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 			return usage("--rate-limit: " + err.Error())
 		}
 		policy.RateLimit = builtin.RateLimitConfig{Rate: rate, Per: per, Burst: *rateBurst, Key: *rateKey}
+	}
+	if *plansFile != "" {
+		if *admin != "" {
+			return usage("--plans models a plan file offline; --admin already reports the running gateway's plans")
+		}
+		raw, err := os.ReadFile(*plansFile)
+		if err != nil {
+			return 0, err
+		}
+		if policy.Plans, err = builtin.ParsePlans(raw); err != nil {
+			return usage(*plansFile + ": " + err.Error())
+		}
 	}
 	if *shadowDiff < 0 || *shadowDiff > 100 {
 		return usage("--shadow-diff must be 0-100")
@@ -446,6 +459,7 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 			fmt.Fprintln(b, u.gray("        headers set for the backend: "+strings.Join(a.Headers, ", ")))
 		}
 	}
+	u.whyPlan(b, win.Plan, width)
 	if rl := win.RateLimit; rl != nil {
 		switch {
 		case !rl.Enabled:
@@ -485,6 +499,45 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 	}
 	for _, n := range win.Notes {
 		for _, ln := range wrap(n, "    ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+	}
+}
+
+// whyPlan renders the API plan decision.
+func (u *ui) whyPlan(b *strings.Builder, p *builtin.TracePlan, width int) {
+	if p == nil || (!p.Enabled && p.Note == "") {
+		return
+	}
+	if !p.Enabled || !p.Applies {
+		fmt.Fprintf(b, "    %s plan: %s\n", u.arrow(), u.gray("none applies"))
+		for _, ln := range wrap(p.Note, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+		return
+	}
+	if p.Plan == "" {
+		fmt.Fprintf(b, "    %s plan: identity %s has no plan\n", u.arrow(), u.bold(p.Identity))
+	} else {
+		fmt.Fprintf(b, "    %s plan %s for %s %s\n", u.arrow(), u.bold(p.Plan), u.bold(p.Identity), u.gray("("+p.Source+")"))
+	}
+	verdict := u.green("admitted")
+	switch p.Decision {
+	case "warn":
+		verdict = u.amber("admitted with a soft-limit warning")
+	case "quota", "forbidden", "rejected":
+		verdict = u.red(fmt.Sprintf("refused with %d", p.Status))
+	}
+	fmt.Fprintf(b, "        this request would be %s\n", verdict)
+	for _, l := range p.Limits {
+		line := fmt.Sprintf("%s %d (%s, %s)", l.Name, l.Limit, l.Mode, l.Window)
+		if l.Used != nil {
+			line = fmt.Sprintf("%s: %d of %d used, resets in %ds (%s, %s)", l.Name, *l.Used, l.Limit, *l.ResetSeconds, l.Mode, l.Window)
+		}
+		fmt.Fprintf(b, "        %s\n", u.gray(line))
+	}
+	if p.Note != "" {
+		for _, ln := range wrap(p.Note, "        ", width) {
 			fmt.Fprintln(b, u.gray(ln))
 		}
 	}

@@ -58,6 +58,8 @@ type Options struct {
 	AuthClock func() time.Time
 	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
 	Cert CertOptions
+	// Meter holds API plans, usage metering and quota enforcement (docs/metering-plans.md).
+	Meter MeterOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -128,6 +130,9 @@ type Server struct {
 	proxyOut atomic.Bool              // some backend sends PROXY headers
 	acme     *acmeManager             // nil without --acme-dir
 	acmeErr  error                    // reported by the first Apply
+	meter    *meter                   // nil without --plans
+	pl       *planRuntime
+	meterErr error // plan or usage state that could not be loaded, reported by the first Apply
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -148,6 +153,7 @@ func New(opts Options) *Server {
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
 	s.shadowP = s.startShadowPersist()
 	s.initCert()
+	s.meterErr = s.initMeter()
 	return s
 }
 
@@ -307,6 +313,9 @@ func (s *Server) Apply(ld *Loaded) error {
 	defer s.mu.Unlock()
 	if s.acmeErr != nil {
 		return s.acmeErr
+	}
+	if s.meterErr != nil {
+		return s.meterErr
 	}
 	ld.Config.ACME, ld.Config.ACMEDNS = s.acme != nil, s.acme != nil && s.opts.Cert.ACME.DNSHook != ""
 	s.seq++
@@ -499,6 +508,9 @@ func (s *Server) Run(ctx context.Context, src Source, interval time.Duration) er
 		if s.opts.AdminToken != "" {
 			note = ", token required"
 		}
+		if s.meter != nil {
+			note = ", /usage /usage.csv /plans" + note
+		}
 		s.diag("admin http://%s (/ready /config /stats /status /shadow%s)", a, note)
 	}
 	write := func() {
@@ -582,6 +594,7 @@ func (s *Server) Close() {
 	s.res.closeTransports()
 	s.closeBackendTLSTransports()
 	s.shadowP.close()
+	s.closeMeter()
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()
@@ -641,6 +654,9 @@ func (s *Server) startAdmin() error {
 		return nil
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
+	mux.HandleFunc("/usage", s.usageHandler(false))
+	mux.HandleFunc("/usage.csv", s.usageHandler(true))
+	mux.HandleFunc("/plans", jsonOut(func() any { return s.plansDoc() }))
 	mux.HandleFunc("/acme", jsonOut(func() any { return s.ACMEInfo() }))
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
