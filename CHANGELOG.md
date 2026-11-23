@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Request shaping for probes.** `explain`, `check` files and `watch` files can send a method (`GET`, `HEAD`, `OPTIONS`; `POST`, `PUT`, `PATCH`, `DELETE` need `--allow-unsafe-method` and carry no body) and request headers (`--request-header`, `request_headers`), over HTTP/1.1 and HTTP/2. This makes method-matched, header-matched and header-canary routes verifiable from the client. Host and framing headers, CR/LF and control characters, duplicates, and more than 32 headers or 16 KiB are refused.
+- **`setura split`.** Sends requests and checks the share each backend identity answered with against expected weights, with a per-backend binomial tolerance (3.29 sigma, about 0.1% false alarms), a minimum sample size for small shares, unexpected-identity detection and an error budget. Honest about being statistical and client-side.
+- **`setura cors`.** Sends the preflight a browser would send and judges the answer against the Fetch standard: status, `Access-Control-Allow-Origin`, credentials, methods, headers, `Max-Age`, and a `Vary: Origin` warning.
+- **Lint rule `SET090`.** Reports HTTPRoute rules whose filters a conforming controller refuses (`IncompatibleFilters`): `URLRewrite` with `RequestRedirect`, a repeated core filter, a missing or foreign filter block, `ReplacePrefixMatch` beside an `Exact` or regular-expression match, a mismatched path modifier, a redirect scheme other than http or https, a redirect port out of range. See `docs/lint-rules.md`.
+- See `docs/probe-requests.md` and `docs/research.md`.
+
+### Dependency and tooling upgrades (checked 2026-11-23)
+
+- Container base image moved from `gcr.io/distroless/static-debian12` to `static-debian13` (tag verified to exist). The binary is static, so nothing else changes.
+- Already current, no change: the main module has no third-party dependencies; `conformance/` modules (`sigs.k8s.io/gateway-api` v1.7.0, the latest stable) were already at the newest versions `go get -u` offers; Go 1.27 (1.27.4 is current); `golang:1.27-alpine`; every GitHub Action pin is already on the latest major listed in the release process.
+- Held back: Envoy Gateway v1.8.6 (CI helm install and docs) stays. v1.9.4 and v1.10.0 exist, but v1.10.0 has many breaking changes (session persistence cookies, health check protocol, OIDC, SecurityPolicy admission) and there is no cluster here to run the cluster smoke against it. K3s `v1.35.6-k3s1` stays for the same reason (`v1.37.2-k3s1` exists). `actions/configure-pages` v6 and `actions/attest-build-provenance` v4.1.0 were not verified against newer majors and are left alone.
+
 ## 0.9.0-rc1
 
 Release candidate for 0.9.0: the same changes as the 0.9.0 section below.

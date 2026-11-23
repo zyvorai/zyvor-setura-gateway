@@ -58,6 +58,7 @@
 | SET074 | warning | gRPC-web rule has neither `allowOrigins` nor a CORS filter |
 | SET075 | warning | gRPC-web rule also has retries or a mirror, which do not apply to bridged calls |
 | SET076 | warning | listener `maxConnectionsPerIP` is above `maxConnections` |
+| SET090 | error | HTTPRoute rule filters the Gateway API rejects: `URLRewrite` with `RequestRedirect`; a repeated `RequestHeaderModifier`, `ResponseHeaderModifier`, `URLRewrite` or `RequestRedirect`; a filter without its block (or with another filter's block); `ReplacePrefixMatch` where a match is `Exact` or a regular expression; a path modifier whose `type` and field disagree; a redirect `scheme` other than `http` or `https`; a redirect `port` outside 1 to 65535 (see Filter combinations below) |
 
 ## ReferenceGrants (SET004, SET012)
 
@@ -89,3 +90,7 @@ skipped.
 
 The schema is still `setura.route-specs/v1`. `captured` and `foreign` are
 optional; snapshots without them lint as before.
+
+## Filter combinations (SET090)
+
+SET090 reads only the declared `filters` of each HTTPRoute rule. The Gateway API says `URLRewrite` and `RequestRedirect` "may not be combined", that repeating a core filter has unspecified behaviour, and lets a controller report `IncompatibleFilters` when it refuses a combination. SET090 reports what a conforming controller would refuse so you find out before the route shows `Accepted: False`. The checks that the API reference page did not state in words (the one-per-rule limit as an admission rule, `ReplacePrefixMatch` needing a prefix match, the redirect scheme enum) follow the published CRD validation as the authors understand it; see `docs/research.md`. Filters inside `backendRefs`, GRPCRoute filters and extension filters are not examined. The built-in gateway tolerates some of these combinations; SET090 is about portability to other controllers.

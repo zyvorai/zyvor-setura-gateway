@@ -26,3 +26,81 @@
 5. **Netra and external-origin evidence.** Add optional Linux policy verdicts and an explicit LAN probe. Label which observations came from the Mac, Envoy or Linux node. Missing telemetry must remain visible as unknown.
 
 A useful benchmark uses the same Mac, guest, route, backend payload and concurrency for kubectl, native VZ and external ingress. Collect successful requests, failures, p50/p95 latency, sustained throughput, host/guest CPU, and time to first verified response after wake. No benchmark or conformance result is claimed for this release.
+
+## Research pass 2026-11: verifying what a Gateway API listener actually answers
+
+Added 2026-11-23 to the earlier findings above. Every claim carries a source URL read during this pass. A claim
+marked **[U]** was not read from a fetched page (it comes from memory or from a search
+snippet) and should be re-checked before anyone relies on it. Nothing here is a
+conformance or performance result for Setura.
+
+### What the field does
+
+| Tool or spec | What it does | Source |
+| --- | --- | --- |
+| Gateway API conformance suite | Implementations run the upstream suite and publish reports. CORS is an Extended feature tested as `HTTPRoute CORS` (supported feature `HTTPRouteCORS`). The suite runs inside the cluster against a controller; it verifies an implementation, not a particular deployment of your routes. Profiles (Gateway, Mesh) and the report format: **[U]**, the conformance concepts page returned 404. | <https://gateway-api.sigs.k8s.io/geps/gep-1767> (CORS status); search result for v1.5 implementations page <https://gateway-api.sigs.k8s.io/implementations/v1.5/> **[U]** |
+| Gateway API v1.5 (2026-02-27) | Moved ListenerSet, TLSRoute, HTTPRoute CORS filter, client certificate validation, certificate selection for Gateway TLS origination and ReferenceGrant to the Standard channel. | <https://kubernetes.io/blog/2026/04/21/gateway-api-v1-5/> (feature list only; the rest of the article was not read) |
+| NGINX Gateway Fabric 2.5.0 | Claims Gateway API 1.5 conformance and CORS support through the HTTPRoute CORS filter. Envoy Gateway, Istio, Cilium and Contour support was not found in the search results: **[U]**. | <https://blog.nginx.org/?p=74969> (search snippet) |
+| HTTPRoute filter rules | URLRewrite and RequestRedirect "may not be combined"; repeating a core filter has unspecified behaviour; a controller may report `IncompatibleFilters`; a rule with no backends and no responding filter returns 500. | <https://gateway-api.sigs.k8s.io/reference/api-types/httproute/> |
+| Traffic splitting | `weight` is a proportion, not a percentage, default 1; weight 0 means no traffic; the denominator is the sum of the rule's weights. The guide says nothing about how closely observed traffic follows the weights. | <https://gateway-api.sigs.k8s.io/guides/traffic-splitting/> |
+| CORS filter (GEP-1767) | `allowOrigins`, `allowCredentials`, `allowMethods`, `allowHeaders`, `exposeHeaders`, `maxAge` (default 5). Credentialed requests must never get `*`; the gateway answers preflights itself with 200 or 204; a non-matching preflight gets 200/204 without CORS headers (403 also mentioned). | <https://gateway-api.sigs.k8s.io/geps/gep-1767> |
+| CORS on the wire | Preflight is `OPTIONS` with `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`; wildcards are not honoured for credentialed requests; `Vary: Origin` should accompany a specific origin; `Max-Age` default 5 and browser ceilings. | <https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS> |
+| Blackbox exporter | HTTP probe with `method`, `headers`, `body`, `valid_status_codes`, `fail_if_header_matches` and `fail_if_header_not_matches`, `fail_if_ssl`, `follow_redirects`. It does not mention traffic splits or CORS. Certificate expiry metrics: not on the configuration page, **[U]**. | <https://github.com/prometheus/blackbox_exporter/blob/master/CONFIGURATION.md> |
+| k6 | Thresholds decide the exit code; checks alone do not fail a run. Setura follows the same split: assertions in `check` fail the run, informational output does not. | <https://grafana.com/docs/k6/latest/using-k6/thresholds/> |
+| Checkly, Istio, Cilium, Contour, Envoy Gateway verification features | Not researched beyond search results. **[U]** | |
+| `ReferenceGrant`, `BackendTLSPolicy`, `ClientTrafficPolicy` | ReferenceGrant is Standard in v1.5 (above); Setura already lints it (SET004, SET012). BackendTLSPolicy is already linted (SET019) and ClientTrafficPolicy is covered by the Envoy Gateway compatibility rules (SET080 to SET083). | <https://kubernetes.io/blog/2026/04/21/gateway-api-v1-5/>, repository docs |
+
+### What Setura lacked at 0.9.0
+
+1. **Probes could only `GET`.** `explain`, `check`, `watch`, `bench` sent one fixed request. A
+   route that matches on method or header, a header-based canary, a rewrite visible only
+   through a response header, or a CORS preflight could not be verified from the client
+   at all, which is the point of the product. Blackbox exporter has had `method` and
+   `headers` for years.
+2. **No way to check a traffic split.** `bench` reports latency; nothing counted who
+   answered. The Gateway API guide defines weights as proportions, and the observed
+   share is a sampling outcome, so a naive "is it exactly 90/10" test either flakes or
+   hides real errors.
+3. **No CORS verification.** CORS became a Standard filter in v1.5. A user can lint the
+   filter's shape (SET019), but not ask "does this origin get through, from the client".
+4. **Lint did not know the filter-combination rules** the HTTPRoute page states in words
+   (URLRewrite with RequestRedirect).
+5. Not built, see ranked list: certificate and DNS expiry as a `check` assertion (partly
+   there: `warn_expiry_days`, `min_cert_days`, `certs`), redirect-chain following,
+   GRPCRoute and TLSRoute probes beyond `grpc-health`, running the upstream conformance
+   suite for a report.
+
+### Ranked ideas
+
+| # | Idea | Why it ranks here | Decision |
+| --- | --- | --- | --- |
+| 1 | Method and request headers in probes | Unblocks every other check. A client-side verifier that cannot send a header cannot verify a header match. Small, stdlib only. | **Built**: `--method`, `--request-header`, check and watch keys. Refuses Host and framing headers, CR/LF, more than 32 headers, non-allow-listed methods; mutating methods need an explicit flag and never carry a body. |
+| 2 | Canary traffic-split verification | The commonest rollout question ("did 10% really reach v2?"). The rollout and `shadow` commands judge error rate and diffs; nothing checked the split. | **Built**: `setura split`. Binomial tolerance (3.29 sigma), minimum sample for small shares, unexpected identities fail, error budget, caps. States that it is statistical and client-side. |
+| 3 | CORS preflight verifier | Standard filter in v1.5; wrong CORS is invisible to curl-style probes and obvious to users. The rules are deterministic, so the check is exact for one response. | **Built**: `setura cors`. Limited to one response; says it is not a browser. |
+| 4 | Lint for filter combinations (SET090) | Cheap, offline, catches `Accepted: False` before apply. | **Built**, errors only for combinations the HTTPRoute page names or the CRD validation implies; items not read from a page are marked **[U]** below. |
+| 5 | Run the upstream conformance suite and publish a report | The largest credibility gap (ROADMAP "Prove it"). | Not built: needs a real K3s cluster, Docker and root. Already scripted (`scripts/run-conformance.sh`); cannot run here. |
+| 6 | Redirect-chain and `Location` assertions | Already possible: probes do not follow redirects, so `status: 301` plus `headers: {"Location": ...}` works. A convenience wrapper adds little. | Rejected. |
+| 7 | Derive expected split from the snapshot (`split --route`) | Convenient, but the identity header value need not equal a Service name, so mapping would be a guess and violate the honesty rule. | Rejected; the user states the identity names. |
+| 8 | Synthetic-monitoring SaaS integration (Checkly-style scheduling) | Outside the one-binary identity; `watch` plus Prometheus covers it. | Rejected. |
+| 9 | Certificate and DNS expiry gates across a hostname list | Mostly covered by `certs --warn-expiry-days` and `explain --warn-expiry-days`; a list mode would be a loop. | Deferred. |
+| 10 | HTTPRoute `CORS` filter lint against live preflight | Joins SET019 with `cors`; needs a running listener. | Deferred. |
+
+### Unverified items used by SET090 **[U]**
+
+The HTTPRoute page read for this pass states the URLRewrite and RequestRedirect
+exclusion and the unspecified repeat of core filters. It does not state these, which
+SET090 also enforces from the published CRD validation as remembered: a core filter must
+not repeat (admission rule), `ReplacePrefixMatch` is valid only with `PathPrefix`
+matches, `requestRedirect.scheme` is `http` or `https`, `port` is 1 to 65535. If a
+controller you use accepts any of these, `--disable SET090` or a baseline silences the
+rule; the finding text says what it believes the API requires.
+
+### Honesty boundaries kept
+
+- Probes originate at the CLI and report one client's observation. `split` and `cors`
+  repeat that statement in their output and docs.
+- Statistics are named as statistics, with their false-alarm rate and a refusal when the
+  sample is too small, instead of a green tick on a number that could be noise.
+- No new dependency (standard library only); the CONTRIBUTING rule holds.
+- Exit codes keep their meaning: `0` passed, `1` observed failure, `2` usage or setup.
+- No data leaves the machine: header values are never echoed in errors.
