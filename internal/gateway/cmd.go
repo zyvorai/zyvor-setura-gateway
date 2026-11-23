@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zyvorai/zyvor-setura-gateway/internal/contract"
 )
 
 const usage = `setura gateway - the built-in Gateway API data plane (no Envoy required)
@@ -130,6 +132,14 @@ Flags for run and up:
   --usage-interval DUR  usage snapshot period (default 30s; a final snapshot is written at shutdown)
   --usage-max-series N  cap on distinct day+identity+route+plan counters; more fold into an _overflow series (default 10000)
   --usage-retention-days N   days of counters kept (default 100)
+  --learn FILE          learn an inventory of the endpoints served (path templates, methods, status codes, content
+                        types, sizes, latency percentiles, parameter and header NAMES, never values or bodies) and
+                        persist it to FILE; also togglable at runtime with POST /contract/learn on the admin endpoint
+  --learn-max N         endpoints the learner keeps (default 5000); later ones are counted and dropped
+  --contract-spec FILE  OpenAPI 3.x document (JSON or simple YAML) requests are checked against; reloaded when it changes
+  --contract-enforce monitor|block   default mode for routes: monitor counts and logs requests whose method and path
+                        are not in the spec, block answers 404 (unknown path) or 405 (unknown method); a route's
+                        setura.zyvor.dev/contract annotation (off|monitor|block) overrides it (see docs/contract.md)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -227,6 +237,10 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.DurationVar(&f.opts.Meter.StateInterval, "usage-interval", 0, "usage snapshot period (default 30s)")
 	fs.IntVar(&f.opts.Meter.MaxSeries, "usage-max-series", 0, "cap on distinct usage counters before folding into _overflow (default 10000)")
 	fs.IntVar(&f.opts.Meter.RetentionDays, "usage-retention-days", 0, "days of usage counters kept (default 100)")
+	fs.StringVar(&f.opts.LearnFile, "learn", "", "learn the endpoint inventory and persist it to FILE")
+	fs.IntVar(&f.opts.LearnMax, "learn-max", 0, "endpoints the learner keeps (default 5000)")
+	fs.StringVar(&f.opts.ContractSpec, "contract-spec", "", "OpenAPI 3.x document requests are checked against")
+	fs.StringVar(&f.opts.ContractEnforce, "contract-enforce", "", "monitor or block requests not in the contract spec (default off)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -270,6 +284,22 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	}
 	if f.rotate.Keep < 0 {
 		return nil, fmt.Errorf("--access-log-keep %d: want 0 or more", f.rotate.Keep)
+	}
+	if f.opts.LearnMax < 0 {
+		return nil, fmt.Errorf("--learn-max %d: want 0 (default) or a positive count", f.opts.LearnMax)
+	}
+	switch f.opts.ContractEnforce {
+	case "", ContractMonitor, ContractBlock:
+	default:
+		return nil, fmt.Errorf("--contract-enforce %q: want monitor or block", f.opts.ContractEnforce)
+	}
+	if f.opts.ContractEnforce != "" && f.opts.ContractSpec == "" {
+		return nil, errors.New("--contract-enforce needs --contract-spec FILE")
+	}
+	if f.opts.ContractSpec != "" {
+		if _, err := contract.LoadSpecFile(f.opts.ContractSpec); err != nil {
+			return nil, fmt.Errorf("--contract-spec: %w", err)
+		}
 	}
 	if f.connHist < 0 {
 		return nil, fmt.Errorf("--conn-history %d: want 0 (off) or a positive count", f.connHist)

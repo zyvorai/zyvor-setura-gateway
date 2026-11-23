@@ -144,6 +144,10 @@ type Options struct {
 	// the page then shows how to connect one.
 	Changes      func() any
 	ChangeDetail func(id string) (any, bool)
+	// Inventory returns the document served at /api/inventory: the learned API
+	// inventory and the contract status. Nil when the source has no learner;
+	// the page then shows how to turn it on.
+	Inventory func() any
 	// Token, when set, is required as a Bearer token or session cookie.
 	Token string
 	// Interval is how often an SSE client checks for a changed state.
@@ -181,6 +185,7 @@ func New(o Options) http.Handler {
 	mux.HandleFunc("/api/events", s.guard(s.events))
 	mux.HandleFunc("/api/connections", s.guard(s.connections))
 	mux.HandleFunc("/api/palette", s.guard(s.palette))
+	mux.HandleFunc("/api/inventory", s.guard(s.inventory))
 	mux.HandleFunc("/api/changes", s.guard(s.changes))
 	mux.HandleFunc("/api/changes/", s.guard(s.changeDetail))
 	mux.HandleFunc("/events", s.guard(s.stream))

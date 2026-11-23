@@ -279,7 +279,7 @@ dt{white-space:nowrap} dd{margin:0;color:var(--ink-2);font-size:15px}
 
 /* tabs, palette button, changes, palette, sparklines */
 .tabs{display:flex;gap:2px;padding:3px;background:color-mix(in srgb,var(--ink) 6%,transparent);border-radius:980px}
-.tabs a{font-size:14px;font-weight:500;color:var(--ink-2);text-decoration:none;padding:4px 14px;border-radius:980px;transition:background .2s,color .2s}
+.tabs a{white-space:nowrap;font-size:14px;font-weight:500;color:var(--ink-2);text-decoration:none;padding:4px 14px;border-radius:980px;transition:background .2s,color .2s}
 .tabs a:hover{color:var(--ink)}
 .tabs a[aria-current="page"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 .5px var(--line)}
 .kbtn svg{width:14px;height:14px;color:var(--ink-3)}
@@ -372,6 +372,40 @@ dialog#pal[open]{animation:pop .22s var(--ease)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 html[data-still] *,html[data-still] *::before,html[data-still] *::after{animation:none!important;transition:none!important}
 @media (forced-colors:active){.seg,.legend i{forced-color-adjust:none}}
+
+/* API inventory */
+.inv-top{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:22px 0 0}
+.inv-tools{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;margin:26px 0 14px}
+.inv-tools .field{position:relative;flex:1 1 220px;max-width:340px}
+.inv-tools .field svg{position:absolute;left:12px;top:10px;width:16px;height:16px;color:var(--ink-3);pointer-events:none}
+.inv-tools input{width:100%;height:36px;border-radius:980px;border:1px solid var(--line);background:var(--card);padding:0 14px 0 36px;font-size:14px}
+.inv-tools input::placeholder{color:var(--ink-3)}
+.inv-tools select{height:36px;border-radius:980px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-size:14px;color:var(--ink)}
+.tog{height:36px;border-radius:980px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-size:14px;color:var(--ink-2);transition:background .15s,color .15s}
+.tog:hover{background:var(--card-2)}
+.tog[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.inv-tools .cnt{margin-left:auto;font-size:14px;color:var(--ink-2)}
+table.ct.inv{min-width:780px}
+.inv td{max-width:none}
+.inv td.ep{white-space:normal;overflow:visible;min-width:260px}
+.inv button.link{display:inline-flex;align-items:center;gap:10px;font:13px var(--mono);max-width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.inv button.link::before{content:"\203a";display:inline-block;width:10px;color:var(--ink-3);transition:transform .2s var(--ease);font-family:var(--font)}
+.inv button.link[aria-expanded="true"]::before{transform:rotate(90deg)}
+.mth{display:inline-block;min-width:54px;text-align:center;border-radius:8px;padding:1px 7px;font:600 11.5px/1.7 var(--mono);color:var(--ink-2);background:color-mix(in srgb,var(--ink) 7%,transparent);letter-spacing:.02em}
+.mth[data-m="POST"],.mth[data-m="PUT"],.mth[data-m="PATCH"]{color:var(--accent);background:var(--accent-soft)}
+.mth[data-m="DELETE"]{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.rbar{display:flex;width:120px;height:8px;border-radius:980px;overflow:hidden;background:var(--line);vertical-align:middle}
+.rbar i{display:block;height:100%}
+.rbar .s2{background:var(--ok-fill)}.rbar .s3{background:var(--line-2)}.rbar .s4{background:color-mix(in srgb,var(--warn-fill) 55%,transparent)}.rbar .s5{background:var(--bad-fill)}
+.rcell{display:flex;align-items:center;gap:10px}
+.rcell span{font-size:12px;color:var(--ink-3);white-space:nowrap}
+tr.invd>td{background:var(--card-2);padding:16px 22px 20px;white-space:normal;max-width:none}
+.invd dl{display:grid;grid-template-columns:minmax(9em,15%) 1fr;gap:10px 16px;margin:0;align-items:baseline}
+.invd dt{color:var(--ink-3);font-size:13px}
+.invd dd{margin:0;display:flex;flex-wrap:wrap;gap:6px;font-size:14px;color:var(--ink-2)}
+.invd .chip{font:12.5px var(--mono)}
+.inv-note{margin:14px 4px 0;font-size:13px;color:var(--ink-3);max-width:62em}
+@media (max-width:720px){table.ct.inv{min-width:0}.inv td,.inv th{padding-left:10px;padding-right:10px}.inv .hm{display:none}.invd dl{grid-template-columns:1fr}.inv-tools .cnt{margin-left:0;flex-basis:100%}}
 </style>
 </head>
 <body>
@@ -380,7 +414,7 @@ html[data-still] *,html[data-still] *::before,html[data-still] *::after{animatio
 <header class="bar"><div class="bar-in">
   <div class="brand"><i aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 22c0-7 18-5 18-12M7 10c0 7 18 5 18 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg></i><span class="bt">Setura</span></div>
   <span class="pill" id="source" hidden></span>
-  <nav class="tabs" id="tabs" aria-label="Pages"><a href="#/" id="tab-over" aria-current="page">Overview</a><a href="#/changes" id="tab-changes">Changes</a></nav>
+  <nav class="tabs" id="tabs" aria-label="Pages"><a href="#/" id="tab-over" aria-current="page">Overview</a><a href="#/changes" id="tab-changes">Changes</a><a href="#/inventory" id="tab-inv">Inventory</a></nav>
   <span class="grow"></span>
   <div class="search" id="searchbox" role="search">
     <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -484,6 +518,25 @@ html[data-still] *,html[data-still] *::before,html[data-still] *::after{animatio
       <p class="detail flush" id="chgd" aria-live="polite">Reading the history.</p>
     </section>
     <div id="chgbody" aria-busy="true"></div>
+  </div>
+
+  <div id="v-inventory" hidden>
+    <section class="hero" aria-labelledby="invh">
+      <h1 id="invh" class="plainh">API inventory</h1>
+      <p class="detail flush" id="invd" aria-live="polite">Reading the inventory.</p>
+    </section>
+    <div class="stats" id="invstats" aria-label="Inventory summary"></div>
+    <div class="inv-top" id="invtop"></div>
+    <div class="inv-tools" id="invtools" hidden>
+      <div class="field"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input id="invq" type="search" placeholder="Filter endpoints" aria-label="Filter endpoints by path or method" autocomplete="off" spellcheck="false"></div>
+      <button class="tog" id="inv-open" type="button" aria-pressed="false">No auth filter</button>
+      <button class="tog" id="inv-err" type="button" aria-pressed="false">Has server errors</button>
+      <label class="sr" for="inv-sort">Sort endpoints</label>
+      <select id="inv-sort"><option value="path">Sort by path</option><option value="count">Sort by requests</option><option value="seen">Sort by last seen</option></select>
+      <span class="cnt" id="invcount" role="status" aria-live="polite"></span>
+    </div>
+    <div id="invbody" aria-busy="true"></div>
   </div>
 
   <p class="foot"><span id="gen"></span><span id="reloadinfo"></span><span>Read-only. Nothing here changes your cluster or gateway.</span></p>
@@ -1204,6 +1257,7 @@ $('palkbd').textContent=mac?'⌘K':'Ctrl K';$('hk').textContent=mac?'⌘':'Ctrl'
 function parseHash(){
   var h=location.hash,m;
   if((m=/^#\/changes(?:\/(.+))?$/.exec(h)))return {v:'changes',id:m[1]?decodeURIComponent(m[1]):null};
+  if(h==='#/inventory')return {v:'inventory'};
   if(h==='#/connections')return {v:'over',go:'connsec'};
   if((m=/^#q=(.*)$/.exec(h)))return {v:'over',q:decodeURIComponent(m[1])};
   if((m=/^#route=(.+)$/.exec(h)))return {v:'over',route:decodeURIComponent(m[1])};
@@ -1211,9 +1265,15 @@ function parseHash(){
 }
 function route(first){
   var p=parseHash(),was=view;view=p.v;
-  $('v-over').hidden=view!=='over';$('v-changes').hidden=view!=='changes';
-  var to=$('tab-over'),tc=$('tab-changes');
-  if(view==='over'){to.setAttribute('aria-current','page');tc.removeAttribute('aria-current')}else{tc.setAttribute('aria-current','page');to.removeAttribute('aria-current')}
+  $('v-over').hidden=view!=='over';$('v-changes').hidden=view!=='changes';$('v-inventory').hidden=view!=='inventory';
+  var tabIds={over:'tab-over',changes:'tab-changes',inventory:'tab-inv'};
+  for(var tk in tabIds){var tel=$(tabIds[tk]);if(tk===view)tel.setAttribute('aria-current','page');else tel.removeAttribute('aria-current')}
+  if(view==='inventory'){
+    document.title='API inventory · Setura';
+    if(was!=='inventory'||first){window.scrollTo(0,0);loadInventory()}
+    if(selChange||sel||selConn!=null)closeSheet(true);
+    return;
+  }
   if(view==='changes'){
     document.title='Changes · Setura';
     if(was!=='changes'||first){window.scrollTo(0,0);loadChanges()}
@@ -1226,8 +1286,8 @@ function route(first){
   if(p.route){if(S&&sel!==p.route)openRoute(p.route)}
   else if(sel&&!first&&!p.q)closeSheet(true);
   if(p.go){var el=$(p.go);if(el&&!el.classList.contains('hide'))el.scrollIntoView({behavior:reduced?'auto':'smooth',block:'start'})}
-  else if(was==='changes'){window.scrollTo(0,0)}
-  if(was==='changes')requestAnimationFrame(drawLines);
+  else if(was==='changes'||was==='inventory'){window.scrollTo(0,0)}
+  if(was==='changes'||was==='inventory')requestAnimationFrame(drawLines);
 }
 window.addEventListener('hashchange',function(){route(false)});
 
@@ -1345,10 +1405,119 @@ function renderChangeSheet(d){
   }
 }
 
+
+/* ---------- API inventory ---------- */
+var INV={doc:null,loading:false,err:null,open:{},q:'',noauth:false,errs:false,sort:'path'};
+function loadInventory(quiet){
+  if(INV.loading)return;INV.loading=true;if(!quiet||!INV.doc)renderInventory();
+  fetch('api/inventory',{credentials:'same-origin',headers:{Accept:'application/json'}}).then(function(r){
+    if(!r.ok)throw new Error(r.status===401?'This dashboard needs a token. Open it with /?token=YOUR_TOKEN once.':'The server answered '+r.status+'.');return r.json();
+  }).then(function(d){INV.doc=d;INV.err=null}).catch(function(e){INV.err=e}).then(function(){INV.loading=false;renderInventory()});
+}
+function fmtB(n){if(n==null)return '';if(n<1024)return Math.round(n)+' B';if(n<1048576)return (n/1024).toFixed(n<10240?1:0)+' KB';return (n/1048576).toFixed(n<10485760?1:0)+' MB'}
+function realTime(iso){return iso&&iso.indexOf('0001-')!==0}
+function invCounts(e){var c={2:0,3:0,4:0,5:0};Object.keys(e.status||{}).forEach(function(k){var d=k.charAt(0);if(c[d]!=null)c[d]+=e.status[k]});return c}
+function invOpen(e){return !(e.auth&&e.auth.protected>0)}
+function invRows(inv){
+  var q=INV.q.trim().toLowerCase(),rows=(inv.endpoints||[]).filter(function(e){
+    if(q&&(e.method+' '+e.path).toLowerCase().indexOf(q)<0)return false;
+    if(INV.noauth&&!invOpen(e))return false;
+    if(INV.errs&&!invCounts(e)[5])return false;
+    return true;
+  });
+  if(INV.sort==='count')rows.sort(function(a,b){return b.count-a.count});
+  else if(INV.sort==='seen')rows.sort(function(a,b){return Date.parse(b.last_seen)-Date.parse(a.last_seen)});
+  return rows;
+}
+function invStat(v,l,sm){return h('div',{class:'stat'},h('b',{text:v}),h('span',{text:l}),sm?h('small',{text:sm}):null)}
+function invDetail(e){
+  var dl=h('dl'),row=function(k,items,plain){
+    if(plain!=null){dl.appendChild(h('dt',{text:k}));dl.appendChild(h('dd',{text:plain}));return}
+    if(!items||!items.length)return;dl.appendChild(h('dt',{text:k}));dl.appendChild(h('dd',null,items.map(function(t){return h('span',{class:'chip',text:t})})));
+  };
+  var cnt=function(m){return Object.keys(m||{}).sort(function(a,b){return m[b]-m[a]}).map(function(k){return k+' · '+num(m[k])})};
+  row('Responses',cnt(e.status));
+  row('Served by routes',cnt(e.routes));row('Backends',cnt(e.backends));
+  row('Response types',cnt(e.response_content_types));row('Request types',cnt(e.request_content_types));
+  row('Query parameters',e.query_params);row('Request headers',e.headers);
+  row('Latency',null,'p50 '+fmtMs(e.latency_ms.p50)+' · p90 '+fmtMs(e.latency_ms.p90)+' · p99 '+fmtMs(e.latency_ms.p99)+' · max '+fmtMs(e.latency_ms.max));
+  if(e.response_bytes&&e.response_bytes.n)row('Response size',null,'p50 '+fmtB(e.response_bytes.p50)+' · p99 '+fmtB(e.response_bytes.p99)+' · max '+fmtB(e.response_bytes.max));
+  if(e.request_bytes&&e.request_bytes.n)row('Request size',null,'p50 '+fmtB(e.request_bytes.p50)+' · p99 '+fmtB(e.request_bytes.p99)+' · max '+fmtB(e.request_bytes.max));
+  row('First seen',null,realTime(e.first_seen)?new Date(e.first_seen).toLocaleString()+' ('+ago(e.first_seen)+')':'');
+  return dl;
+}
+function renderInventory(){
+  var body=clear($('invbody')),top=clear($('invtop')),st=clear($('invstats'));
+  var d=INV.doc;
+  $('invbody').setAttribute('aria-busy',String(INV.loading&&!d));
+  if(!d&&INV.loading){
+    $('invd').textContent='Reading the inventory.';$('invtools').hidden=true;
+    for(var i=0;i<4;i++)st.appendChild(h('div',{class:'skel','aria-hidden':'true',style:'height:92px'}));
+    body.appendChild(h('div',{class:'skel tall','aria-hidden':'true',style:'margin-top:26px'}));return;
+  }
+  if(!d){
+    $('invd').textContent='The inventory did not load.';$('invtools').hidden=true;
+    body.appendChild(empty('Could not read the inventory',(INV.err&&INV.err.message||'')+' Nothing is wrong with your gateway; only this page could not get its data.',null,h('button',{class:'btn',type:'button',onclick:function(){loadInventory()}},'Try again')));return;
+  }
+  if(d.available===false){
+    $('invd').textContent=d.headline||'No inventory';$('invtools').hidden=true;
+    body.appendChild(empty(d.headline||'No inventory',d.detail,d.next));return;
+  }
+  var data=d.data||{},inv=data.inventory||{},cs=data.status||{},ln=cs.learning||{},en=cs.enforcement||{},eps=inv.endpoints||[];
+  var open=eps.filter(invOpen).length,errs=eps.filter(function(e){return invCounts(e)[5]>0}).length;
+  var unknown=0;Object.keys(en.unknown||{}).forEach(function(k){unknown+=en.unknown[k]});
+  $('invd').textContent=eps.length?plural(eps.length,'endpoint','endpoints')+' seen across '+plural(inv.requests||0,'request','requests')+(realTime(inv.first_seen)?', the first '+ago(inv.first_seen):'')+'.':
+    (ln.enabled?'Watching for traffic.':'Learning is off.');
+  top.appendChild(h('span',{class:'chip '+(ln.enabled?'ok':''),text:ln.enabled?'Learning on':'Learning off'}));
+  if(ln.file)top.appendChild(h('span',{class:'chip mono',text:ln.file}));
+  if(en.spec)top.appendChild(h('span',{class:'chip',text:'Contract '+(en.mode||'per route')+' · '+plural(en.operations||0,'operation','operations')}));
+  if(en.error)top.appendChild(h('span',{class:'chip warn',text:'Spec not reloaded: '+en.error}));
+  if(inv.dropped_requests)top.appendChild(h('span',{class:'chip warn',text:plural(inv.dropped_requests,'request','requests')+' past the '+num(inv.max_endpoints)+' endpoint cap'}));
+  if(!eps.length){
+    $('invtools').hidden=true;
+    body.appendChild(empty(ln.enabled?'No endpoints yet':'Nothing learned yet',
+      ln.enabled?'The gateway is learning. Endpoints appear here as soon as it serves traffic.':'Turn learning on to see every method and path the gateway serves, which of them have an auth filter, and how they behave.',
+      ln.enabled?null:'setura contract learn --admin 127.0.0.1:19000 --enable'));
+    return;
+  }
+  st.appendChild(invStat(num(eps.length),'Endpoints',en.spec?num(en.operations||0)+' in the contract':'method and path templates'));
+  st.appendChild(invStat(num(inv.requests||0),'Requests','recorded by the learner'));
+  st.appendChild(invStat(num(open),'No auth filter',open?'gateway level; a backend may still check':'every endpoint has one'));
+  st.appendChild(invStat(en.spec?num(unknown):num(errs),en.spec?'Outside the contract':'With server errors',en.spec?(en.mode==='block'?'answered 404 or 405':'counted, not blocked'):'at least one 5xx'));
+  $('invtools').hidden=false;
+  var rows=invRows(inv);
+  $('invcount').textContent=rows.length===eps.length?plural(eps.length,'endpoint','endpoints'):rows.length+' of '+eps.length;
+  if(!rows.length){body.appendChild(empty('No endpoint matches','Try a shorter filter or switch the toggles off.',null,h('button',{class:'btn',type:'button',onclick:function(){INV.q='';INV.noauth=INV.errs=false;$('invq').value='';syncInvTools();renderInventory()}},'Clear filters')));return}
+  var tb=h('tbody');
+  rows.forEach(function(e){
+    var key=e.method+' '+e.path,isOpen=!!INV.open[key],c=invCounts(e),tot=(c[2]+c[3]+c[4]+c[5])||1;
+    var bar=h('div',{class:'rbar',role:'img','aria-label':[2,3,4,5].filter(function(k){return c[k]}).map(function(k){return num(c[k])+' '+k+'xx'}).join(', ')||'no responses'},
+      [2,3,4,5].map(function(k){return c[k]?h('i',{class:'s'+k,style:'width:'+(c[k]*100/tot)+'%'}):null}));
+    var p=e.auth||{},authChip=p.protected>0?(p.open>0?h('span',{class:'chip warn',text:'Mixed'}):h('span',{class:'chip ok',text:'Protected'})):h('span',{class:'chip warn',text:'No auth filter'});
+    var btn=h('button',{class:'link',type:'button','aria-expanded':String(isOpen),onclick:function(){INV.open[key]=!INV.open[key];renderInventory()}},h('span',{class:'mth','data-m':e.method,text:e.method}),h('span',{text:e.path}));
+    tb.appendChild(h('tr',{'data-open':isOpen?'1':null},
+      h('td',{class:'ep'},btn),h('td',{class:'r',text:num(e.count)}),
+      h('td',{class:'hm'},h('div',{class:'rcell'},bar,h('span',{text:c[5]?num(c[5])+' 5xx':c[4]?num(c[4])+' 4xx':''}))),
+      h('td',{class:'r hm',text:fmtMs(e.latency_ms.p50)}),h('td',{class:'r hm',text:fmtMs(e.latency_ms.p99)}),
+      h('td',null,authChip),h('td',{class:'dim hm',text:realTime(e.last_seen)?ago(e.last_seen):''})));
+    if(isOpen)tb.appendChild(h('tr',{class:'invd'},h('td',{colspan:'7'},invDetail(e))));
+  });
+  var tbl=h('table',{class:'ct inv'},h('caption',{class:'sr',text:'Endpoints the gateway has served. Select a method and path to see its details.'}),
+    h('thead',null,h('tr',null,h('th',{scope:'col',text:'Endpoint'}),h('th',{scope:'col',class:'r',text:'Requests'}),h('th',{scope:'col',class:'hm',text:'Responses'}),h('th',{scope:'col',class:'r hm',text:'p50'}),h('th',{scope:'col',class:'r hm',text:'p99'}),h('th',{scope:'col',text:'Auth'}),h('th',{scope:'col',class:'hm',text:'Last seen'}))),tb);
+  body.appendChild(h('div',{class:'card twrap tall-inv',tabindex:'0',role:'region','aria-label':'Endpoint inventory',style:'max-height:none'},tbl));
+  body.appendChild(h('p',{class:'inv-note',text:'Paths are templates: numeric, UUID and hash segments become {id}. Only names are kept for query parameters and headers, never values or bodies. Auth shows whether the serving rule runs a gateway auth filter; a backend may still enforce its own.'}));
+}
+function syncInvTools(){$('inv-open').setAttribute('aria-pressed',String(INV.noauth));$('inv-err').setAttribute('aria-pressed',String(INV.errs))}
+$('invq').addEventListener('input',function(){INV.q=this.value;renderInventory()});
+$('inv-open').addEventListener('click',function(){INV.noauth=!INV.noauth;syncInvTools();renderInventory()});
+$('inv-err').addEventListener('click',function(){INV.errs=!INV.errs;syncInvTools();renderInventory()});
+$('inv-sort').addEventListener('change',function(){INV.sort=this.value;renderInventory()});
+setInterval(function(){if(view==='inventory'&&!document.hidden&&INV.doc&&INV.doc.available!==false)loadInventory(true)},5000);
+
 /* ---------- command palette ---------- */
 var PL={items:[],i:0,res:[]},TYPES={page:'Page',route:'Route',backend:'Backend',doc:'Docs'},GROUPS={page:'Pages',route:'Routes',backend:'Backends',doc:'Docs'};
 function localItems(){
-  var it=[{type:'page',title:'Overview',subtitle:'Status, routes and health',hash:'#/'},{type:'page',title:'Changes',subtitle:'What changed and what a rollback would do',hash:'#/changes'}];
+  var it=[{type:'page',title:'Overview',subtitle:'Status, routes and health',hash:'#/'},{type:'page',title:'Changes',subtitle:'What changed and what a rollback would do',hash:'#/changes'},{type:'page',title:'API inventory',subtitle:'Endpoints the gateway has served, shadow and undocumented APIs',hash:'#/inventory'}];
   if(connOn())it.push({type:'page',title:'Connections',subtitle:'Recent and open connections',hash:'#/connections'});
   var seen={};
   routes().forEach(function(r){it.push({type:'route',title:r.name,subtitle:(r.hostnames||[]).join(', ')||'any host',hash:'#route='+encodeURIComponent(r.id)});

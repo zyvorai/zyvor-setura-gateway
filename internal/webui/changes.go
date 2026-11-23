@@ -24,6 +24,7 @@ var docPages = []struct{ Title, Path, Hint string }{
 	{"Rollout and rollback", "docs/rollout.md", "guarded config changes and history"},
 	{"Replay", "docs/replay.md", "what an access log would do under a new config"},
 	{"Why", "docs/why.md", "explain a routing decision"},
+	{"API contract", "docs/contract.md", "learn endpoints, find shadow and zombie APIs, enforce an OpenAPI document"},
 	{"Lint rules", "docs/lint-rules.md", "every check and how to fix it"},
 	{"Built-in gateway", "docs/builtin-gateway.md", "the data plane"},
 	{"Top, init and doctor", "docs/top-init-doctor.md", "live view, scaffolding, health checks"},
@@ -50,6 +51,7 @@ func buildPalette(st any, hasChanges, hasConns bool) []PaletteItem {
 	items := []PaletteItem{
 		{Type: "page", Title: "Overview", Subtitle: "Status, routes and health", Hash: "#/"},
 		{Type: "page", Title: "Changes", Subtitle: "What changed and what a rollback would do", Hash: "#/changes"},
+		{Type: "page", Title: "API inventory", Subtitle: "Endpoints the gateway has served, shadow and undocumented APIs", Hash: "#/inventory"},
 	}
 	if hasConns {
 		items = append(items, PaletteItem{Type: "page", Title: "Connections", Subtitle: "Recent and open connections", Hash: "#/connections"})

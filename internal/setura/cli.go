@@ -676,6 +676,8 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "usage":
 		return runUsage(fs, rest, stdout, stderr, u)
+	case "contract":
+		return runContract(fs, rest, stdout, stderr, u)
 
 	case "replay":
 		return runReplay(fs, rest, u, stdoutTTY, os.Stdin, stdout, stderr)

@@ -153,6 +153,9 @@ type Rule struct {
 	// Fault injects latency, errors and other failures for game days. It must
 	// carry a ttl or an expiry (setura.zyvor.dev/fault, chaos.go).
 	Fault *Fault `json:"setura.zyvor.dev/fault,omitempty"`
+	// Contract is the API contract enforcement mode of the rule: off, monitor
+	// or block (setura.zyvor.dev/contract). Empty uses --contract-enforce.
+	Contract string `json:"setura.zyvor.dev/contract,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -501,6 +504,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			annotateAuth(spec.Rules, spec.Annotations)
 			annotateExt(spec.Rules, spec.Annotations)
 			annotateFault(spec.Rules, spec.Annotations)
+			annotateContract(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {
