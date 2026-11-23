@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **Request shaping for probes.** `explain`, `check` files and `watch` files can send a method (`GET`, `HEAD`, `OPTIONS`; `POST`, `PUT`, `PATCH`, `DELETE` need `--allow-unsafe-method` and carry no body) and request headers (`--request-header`, `request_headers`), over HTTP/1.1 and HTTP/2. This makes method-matched, header-matched and header-canary routes verifiable from the client. Host and framing headers, CR/LF and control characters, duplicates, and more than 32 headers or 16 KiB are refused.
+- **`setura split`.** Sends requests and checks the share each backend identity answered with against expected weights, with a per-backend binomial tolerance (3.29 sigma, about 0.1% false alarms), a minimum sample size for small shares, unexpected-identity detection and an error budget. Honest about being statistical and client-side.
+- **`setura cors`.** Sends the preflight a browser would send and judges the answer against the Fetch standard: status, `Access-Control-Allow-Origin`, credentials, methods, headers, `Max-Age`, and a `Vary: Origin` warning.
+- See `docs/probe-requests.md` and `docs/RESEARCH.md`.
+
 ### Dependency and tooling upgrades (checked 2026-11-23)
 
 - Container base image moved from `gcr.io/distroless/static-debian12` to `static-debian13` (tag verified to exist). The binary is static, so nothing else changes.
