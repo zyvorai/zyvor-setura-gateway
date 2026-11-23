@@ -33,6 +33,11 @@ type GRPCRule struct {
 	BackendRefs []BackendRef `json:"backendRefs,omitempty"`
 	// Retry retries replayable (unary) calls on UNAVAILABLE and similar.
 	Retry *GRPCRetry `json:"retry,omitempty"`
+	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth),
+	// the same block an HTTPRoute rule takes: JWT, API key, basic, address
+	// lists and a client certificate requirement. Rejections are answered with
+	// a Trailers-Only gRPC status.
+	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
 }
 
 // GRPCMatch is one GRPCRouteMatch.
@@ -74,6 +79,7 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 			return err
 		}
 		annotateGRPC(spec.Rules, spec.Annotations)
+		annotateAuthGRPC(spec.Rules, spec.Annotations)
 		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	case tlsRouteKey:
 		var spec tlsRouteSpec
@@ -167,7 +173,11 @@ rules:
 			fail(err)
 			break
 		}
-		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Name: rule.Name, Filters: rule.Filters}}
+		cr := &CRule{RouteKey: stub.StatusKey(), Index: i, Rule: &Rule{Name: rule.Name, Filters: rule.Filters, Auth: rule.Auth}}
+		if err := compileAuth(rule.Auth); err != nil {
+			fail(err)
+			break
+		}
 		if rule.Retry != nil {
 			var err error
 			if cr.GRPCRetry, err = compileGRPCRetry(rule.Retry); err != nil {
@@ -234,6 +244,8 @@ func isGRPC(r *http.Request) bool {
 const (
 	grpcDeadlineExceeded = 4
 	grpcUnimplemented    = 12
+	grpcPermissionDenied = 7
+	grpcResourceExhaust  = 8
 	grpcUnavailable      = 14
 	grpcUnauthenticated  = 16
 )
@@ -303,6 +315,9 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st := &reqState{}
 	st.countBody(r)
 	st.grpcSvc, st.grpcMethod = splitGRPCPath(r.URL.Path)
+	if st.reqID = r.Header.Get(RequestIDHeader); !validRequestID(st.reqID) {
+		st.reqID = randHex(16)
+	}
 	defer func() { s.logRequest(rec, r, st, start) }()
 	defer s.trackOpen(rec, r, st, "grpc")()
 	fail := func(code int, msg string, stats int) {
@@ -325,12 +340,6 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	st.listener = l.Key
-	cc, deny := s.clientCertFor(l, r)
-	if deny != "" {
-		fail(grpcUnauthenticated, deny, http.StatusMisdirectedRequest)
-		return
-	}
-	prepareIdentity(r, nil, cc)
 	e := l.selectEntry(r, host)
 	if e == nil {
 		fail(grpcUnimplemented, "no route matched", http.StatusNotFound)
@@ -342,6 +351,21 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	st.rule = &idx
 	st.match, st.matched = e.MatchIdx, true
 	st.markRoute()
+	if s.grpcRateLimited(rec, r, st) {
+		return
+	}
+	if s.authCheck(r, st, l, rule.Rule, func(status int, _ []string, certDeny bool) {
+		switch {
+		case certDeny:
+			grpcFail(rec, grpcUnauthenticated, st.errMsg, status)
+		case status == http.StatusUnauthorized:
+			grpcFail(rec, grpcUnauthenticated, "unauthenticated", status)
+		default:
+			grpcFail(rec, grpcPermissionDenied, "permission denied", status)
+		}
+	}) {
+		return
+	}
 	ref := s.pickRef(rule)
 	if ref == nil || ref.B == nil {
 		fail(grpcUnavailable, "no valid backend for this route", http.StatusInternalServerError)
@@ -385,7 +409,7 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		ErrorLog:      discardLog,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true)
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true, st.reqID, st.listener)
 			s.chainForwardedFor(pr.In, pr.Out)
 			if hasHdr {
 				// Forward what is left of the deadline; drop an unparsable value.

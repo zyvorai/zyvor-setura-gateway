@@ -57,7 +57,8 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
 	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
-	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc"}
+	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
+	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

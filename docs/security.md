@@ -47,8 +47,8 @@ In Kubernetes mode an HTTPRoute annotation does the same, with the JSON as a str
 `setura.zyvor.dev/auth` for every rule of the route, `setura.zyvor.dev/auth.rule-N`
 (N counts from 1) for one rule; the rule-specific annotation wins, and an inline block
 on the rule wins over both. `{"enabled": false}` switches a policy off for one rule (the
-per-route switch). A snapshot taken from a cluster carries these annotations. GRPCRoutes do not support auth policies; they do get the client-certificate
-headers and the header stripping.
+per-route switch). A snapshot taken from a cluster carries these annotations. GRPCRoutes take the same block and annotations;
+rejections are Trailers-Only gRPC statuses (see [headers-and-logs](headers-and-logs.md)).
 
 Checks run in this order and the first failure answers:
 

@@ -23,6 +23,17 @@ type extStats struct {
 	cors map[string]int64    // route
 	sess map[string]int64    // route
 	btls map[string]int64    // backend
+	cert map[string]int64    // listener: client certificates refused by the allow-list
+}
+
+func (e *extStats) certRejectSnapshot() map[string]int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]int64, len(e.cert))
+	for k, v := range e.cert {
+		out[k] = v
+	}
+	return out
 }
 
 func (e *extStats) bump(m *map[string]int64, key string) {
@@ -118,6 +129,10 @@ func (s *Server) writeExtMetrics(w io.Writer) {
 			fmt.Fprintf(w, "%s{%s=\"%s\"} %d\n", name, label, promLabel(k), m[k])
 		}
 	}
+	head("setura_gateway_accesslog_skipped_total", "counter", "Requests kept out of the access log: reason excluded (--access-log-exclude) or sampled (--access-log-sample). They still count in every other metric.")
+	fmt.Fprintf(w, "setura_gateway_accesslog_skipped_total{reason=\"excluded\"} %d\n", s.obs.excluded.Load())
+	fmt.Fprintf(w, "setura_gateway_accesslog_skipped_total{reason=\"sampled\"} %d\n", s.obs.sampledOut.Load())
+	one("setura_gateway_client_cert_rejected_total", "counter", "Client certificates that chain to the CA but are refused by the SAN or subject CN allow-list (handshake or request), per listener.", "listener", s.ext.certRejectSnapshot())
 	one("setura_gateway_cors_preflights_total", "counter", "CORS preflight requests answered by the gateway, per route.", "route", cors)
 	one("setura_gateway_backend_tls_handshake_failures_total", "counter", "TLS handshakes with a backend that failed (verification, protocol or alert), per backend.", "backend", btls)
 	one("setura_gateway_session_persistence_hits_total", "counter", "Requests routed to their pinned endpoint by session persistence, per route.", "route", sess)
@@ -244,6 +259,8 @@ var MetricCatalog = []MetricDef{
 	{"setura_gateway_ratelimit_buckets", "gauge", nil, "rate limiting enabled"},
 	{"setura_gateway_shadow_total", "counter", []string{"route", "result"}, ""},
 	{"setura_gateway_auth_requests_total", "counter", []string{"route", "decision", "reason"}, ""},
+	{"setura_gateway_accesslog_skipped_total", "counter", []string{"reason"}, ""},
+	{"setura_gateway_client_cert_rejected_total", "counter", []string{"listener"}, ""},
 	{"setura_gateway_cors_preflights_total", "counter", []string{"route"}, ""},
 	{"setura_gateway_backend_tls_handshake_failures_total", "counter", []string{"backend"}, ""},
 	{"setura_gateway_session_persistence_hits_total", "counter", []string{"route"}, ""},

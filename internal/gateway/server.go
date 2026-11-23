@@ -58,6 +58,13 @@ type Options struct {
 	AuthClock func() time.Time
 	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
 	Cert CertOptions
+	// ClientAllow is the default client certificate allow-list
+	// (--client-allow-san, --client-allow-cn) for listeners whose Gateway
+	// declares none.
+	ClientAllow *ClientAllow
+	// ClientCertXFCC also writes the verified client certificate as an
+	// Envoy-style X-Forwarded-Client-Cert header (--client-cert-xfcc).
+	ClientCertXFCC bool
 }
 
 // Loaded is one configuration read from a Source.
@@ -88,12 +95,13 @@ type boundPort struct {
 
 // Server is the built-in gateway data plane.
 type Server struct {
-	opts     Options
-	table    atomic.Pointer[Table]
-	stats    *Stats
-	obs      *obs
-	conns    *connTable   // nil when connection history is disabled
-	inflight atomic.Int64 // requests inside the data-plane handler, until their log line is queued
+	defaultAllow *compiledAllow // --client-allow-san/-cn
+	opts         Options
+	table        atomic.Pointer[Table]
+	stats        *Stats
+	obs          *obs
+	conns        *connTable   // nil when connection history is disabled
+	inflight     atomic.Int64 // requests inside the data-plane handler, until their log line is queued
 
 	mu       sync.Mutex
 	ports    map[int]*boundPort
@@ -146,6 +154,9 @@ func New(opts Options) *Server {
 	}
 	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
+	if opts.ClientAllow != nil {
+		s.defaultAllow, _ = opts.ClientAllow.compile() // validated by the flags
+	}
 	s.shadowP = s.startShadowPersist()
 	s.initCert()
 	return s

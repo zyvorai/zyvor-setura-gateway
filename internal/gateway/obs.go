@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +27,13 @@ type ObsOptions struct {
 	// working out the client address (rate-limit key, access log client_ip).
 	TrustedProxies []netip.Prefix
 	Now            func() time.Time // clock for rate limiting (tests)
+	// AccessLogExclude lists request paths kept out of the access log and its
+	// sinks: exact, or a prefix when the pattern ends in "*". Excluded requests
+	// still count in metrics, history and spans.
+	AccessLogExclude []string
+	// AccessLogSample N logs one request in N (0 or 1 = all); responses with a
+	// 5xx status are always logged.
+	AccessLogSample int
 }
 
 // obs bundles the optional components; nil members are disabled.
@@ -35,10 +43,47 @@ type obs struct {
 	limiter *limiter
 	sinks   []*batchSink // access log sinks (syslog, Loki, OTLP logs)
 	once    sync.Once
+
+	exclude    []string
+	sample     int64
+	seq        atomic.Int64
+	excluded   atomic.Int64
+	sampledOut atomic.Int64
+}
+
+// ValidateLogExclude checks --access-log-exclude patterns.
+func ValidateLogExclude(pats []string) error {
+	for _, p := range pats {
+		if !strings.HasPrefix(p, "/") {
+			return fmt.Errorf("access log exclude pattern %q: want an absolute path such as /edge-health or a prefix such as /healthz*", p)
+		}
+	}
+	return nil
+}
+
+// logSkipped reports whether the request stays out of the access log and
+// counts the reason: an exclude pattern, or sampling.
+func (x *obs) logSkipped(path string, status int) bool {
+	for _, p := range x.exclude {
+		if pre, ok := strings.CutSuffix(p, "*"); ok {
+			if strings.HasPrefix(path, pre) {
+				x.excluded.Add(1)
+				return true
+			}
+		} else if path == p {
+			x.excluded.Add(1)
+			return true
+		}
+	}
+	if x.sample > 1 && status < 500 && (x.seq.Add(1)-1)%x.sample != 0 {
+		x.sampledOut.Add(1)
+		return true
+	}
+	return false
 }
 
 func newObs(o *Options) *obs {
-	x := &obs{}
+	x := &obs{exclude: o.Obs.AccessLogExclude, sample: int64(o.Obs.AccessLogSample)}
 	if o.AccessLog != nil {
 		x.access = newAccessLogger(o.AccessLog, o.Obs.AccessLogFormat, o.Obs.AccessLogBuffer)
 	}
@@ -155,10 +200,14 @@ type obsFlags struct {
 	sinkQueue, sinkBatch    int
 	sinkRetries             int
 	sinkBackoff, sinkTick   time.Duration
+	exclude                 stringList
+	sample                  int
 }
 
 func addObsFlags(fs *flag.FlagSet, f *obsFlags) {
 	fs.StringVar(&f.format, "access-log-format", "json", "access log format: json or text")
+	fs.Var(&f.exclude, "access-log-exclude", "keep this path out of the access log: exact (/edge-health) or prefix (/healthz*); repeatable")
+	fs.IntVar(&f.sample, "access-log-sample", 0, "log one request in N (5xx responses are always logged; default all)")
 	fs.StringVar(&f.otlp, "otlp-endpoint", "", "export spans to this OTLP/HTTP collector (host:port or URL)")
 	fs.BoolVar(&f.logQuery, "log-query", false, "keep query strings in logged paths (default: stripped, they often hold tokens)")
 	fs.StringVar(&f.rate, "rate-limit", "", "local rate limit such as 100/s, 600/m (empty disables)")
@@ -188,6 +237,13 @@ func (f *obsFlags) apply(o *Options) error {
 	default:
 		return fmt.Errorf("--access-log-format %q: want json or text", f.format)
 	}
+	if err := ValidateLogExclude(f.exclude); err != nil {
+		return fmt.Errorf("--access-log-exclude: %w", err)
+	}
+	if f.sample < 0 {
+		return fmt.Errorf("--access-log-sample %d: want 0 (all) or a positive N", f.sample)
+	}
+	o.Obs.AccessLogExclude, o.Obs.AccessLogSample = []string(f.exclude), f.sample
 	o.Obs.AccessLogFormat, o.Obs.OTLPEndpoint, o.Obs.LogQuery = f.format, f.otlp, f.logQuery
 	o.Obs.OTLP = OTLPOptions{Queue: f.otlpQueue, Retries: f.otlpRetries, Backoff: f.otlpBackoff, Protocol: f.otlpProto}
 	if f.otlpProto != "" && f.otlpProto != "http" && f.otlpProto != "grpc" {

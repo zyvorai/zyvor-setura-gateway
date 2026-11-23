@@ -111,7 +111,7 @@ func (tr *Trace) explainPolicy(w *TraceWinner, e *Entry, q ExplainRequest, r *ht
 	srv := q.Server
 	tr.explainAuth(w, e, q, r)
 	if e.GRPC {
-		w.Notes = append(w.Notes, "gRPC calls are not rate limited, retried or mirrored by the built-in gateway")
+		w.RateLimit = srv.rateLimit(w.Route, q, r)
 	} else {
 		w.RateLimit = srv.rateLimit(w.Route, q, r)
 		if rule.Redirect == nil {

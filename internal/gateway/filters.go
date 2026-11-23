@@ -3,6 +3,7 @@ package gateway
 import (
 	"net"
 	"net/http"
+	"strings"
 )
 
 // This file is the single implementation of "what the upstream request looks
@@ -48,14 +49,19 @@ func setForwarded(out http.Header, clientIP, host string, tlsPort bool) {
 // (whose URL scheme and host the caller has already pointed at the endpoint):
 // forwarded headers, Host, the original path, then every filter in order.
 // gRPC calls take header modifiers only; URLRewrite does not apply to them.
-func shapeUpstream(out, in *http.Request, clientIP string, tlsPort bool, filters []Filter, m *CMatch, grpc bool) {
+func shapeUpstream(out, in *http.Request, clientIP string, tlsPort bool, filters []Filter, m *CMatch, grpc bool, reqID, listener string) {
 	out.Host = in.Host
+	scheme := "http"
+	if tlsPort {
+		scheme = "https"
+	}
+	vars := &headerVars{clientIP: clientIP, requestID: reqID, host: in.Host, scheme: scheme, listener: listener}
 	setForwarded(out.Header, clientIP, in.Host, tlsPort)
 	out.URL.Path, out.URL.RawPath = in.URL.Path, in.URL.RawPath
 	for _, f := range filters {
 		switch {
 		case f.Type == "RequestHeaderModifier" && f.RequestHeaderModifier != nil:
-			applyHeaderMod(out.Header, f.RequestHeaderModifier)
+			applyHeaderModVars(out.Header, f.RequestHeaderModifier, vars)
 		case f.Type == "ExternalAuth" && f.ExternalAuth != nil && !grpc:
 			applyAuthToRequest(out, in, f.ExternalAuth)
 		case f.Type == "URLRewrite" && f.URLRewrite != nil && !grpc:
@@ -67,6 +73,35 @@ func shapeUpstream(out, in *http.Request, clientIP string, tlsPort bool, filters
 			}
 		}
 	}
+}
+
+// headerVars are the values a request HeaderModifier can refer to as
+// {client_ip}, {request_id}, {host}, {scheme} and {listener}: things the
+// gateway knows and Gateway API cannot express. client_ip is the TCP peer, not
+// X-Forwarded-For, so a header set from it cannot be spoofed.
+type headerVars struct {
+	clientIP, requestID, host, scheme, listener string
+}
+
+// HeaderVarNames lists the supported variables, for docs and lint.
+var HeaderVarNames = []string{"client_ip", "request_id", "host", "scheme", "listener"}
+
+func cleanHeaderValue(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c < 0x20 && c != '\t' || c == 0x7f {
+			return -1
+		}
+		return c
+	}, s)
+}
+
+// expand replaces the known variables in s; an unknown {name} stays as written.
+func (v *headerVars) expand(s string) string {
+	if v == nil || !strings.Contains(s, "{") {
+		return s
+	}
+	return strings.NewReplacer("{client_ip}", cleanHeaderValue(v.clientIP), "{request_id}", cleanHeaderValue(v.requestID),
+		"{host}", cleanHeaderValue(v.host), "{scheme}", v.scheme, "{listener}", cleanHeaderValue(v.listener)).Replace(s)
 }
 
 // shapeResponse is the response-side counterpart of shapeUpstream: every
