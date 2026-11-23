@@ -68,7 +68,7 @@ func templateObjects(t *testing.T) []string {
 }
 
 func TestChartMatchesGatewayInstall(t *testing.T) {
-	want := objects(gateway.Install(gateway.InstallOptions{}))
+	want := objects(gateway.Install(gateway.InstallOptions{CreateAdminSecret: true}))
 	got := templateObjects(t)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("chart objects differ from `setura gateway install`\nchart:\n%s\ninstall:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -114,7 +114,7 @@ func TestHelmTemplate(t *testing.T) {
 		t.Fatalf("helm template: %v\n%s", err, out)
 	}
 	got := objects(string(out))
-	want := objects(gateway.Install(gateway.InstallOptions{}))
+	want := objects(gateway.Install(gateway.InstallOptions{CreateAdminSecret: true}))
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("rendered chart differs from install\nchart:\n%s\ninstall:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}

@@ -43,3 +43,13 @@ func init() {
 		return BuildUIState(snap, UIInput{Mode: "gateway", Source: "built-in gateway", Stats: in.Stats, Reload: in.Reload, Connections: in.Connections})
 	}
 }
+
+// wantsCheck reports whether install's arguments ask for --check.
+func wantsCheck(args []string) bool {
+	for _, a := range args {
+		if a == "--check" || a == "-check" || a == "--check=true" || a == "-check=true" {
+			return true
+		}
+	}
+	return false
+}

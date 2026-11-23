@@ -155,6 +155,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		return 0, nil
 
 	case "gateway":
+		if len(rest) > 0 && (rest[0] == "status" || (rest[0] == "install" && wantsCheck(rest[1:]))) {
+			if rest[0] == "status" {
+				return runGatewayStatus(cluster, rest[1:], stdout, stderr, u, stdoutTTY), nil
+			}
+			return runInstallCheck(cluster, rest[1:], stdout, stderr, u, stdoutTTY), nil
+		}
 		return runGateway(rest, stdout, stderr), nil
 
 	case "connections":
@@ -349,7 +355,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "doctor":
 		if len(rest) > 0 && rest[0] == "gateway" {
-			return runDoctorGateway(rest[1:], stdout, stderr, u, stdoutTTY)
+			return runDoctorGatewayWith(cluster, rest[1:], stdout, stderr, u, stdoutTTY)
 		}
 		proxyNS := fs.String("proxy-namespace", "envoy-gateway-system", "namespace of the Envoy proxy Services")
 		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")

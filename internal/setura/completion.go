@@ -57,7 +57,10 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
 	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
-	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc"}
+	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
+	"install", "status", "--service-type", "--node-port", "--listener-port", "--external-traffic-policy", "--host-network", "--arg", "--resources",
+	"--node-selector", "--admin-token-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
+	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
@@ -80,7 +83,7 @@ var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc
 var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}
 
 // doctorFlags are offered after "setura doctor" (gateway checks).
-var doctorFlags = []string{"--config", "--admin", "--format", "--warn-cert-days", "--timeout", "--namespace", "--proxy-namespace"}
+var doctorFlags = []string{"--config", "--admin", "--format", "--warn-cert-days", "--timeout", "--namespace", "--proxy-namespace", "--kube", "--gateway-api-version"}
 
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.

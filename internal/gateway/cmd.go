@@ -25,6 +25,8 @@ Usage:
   setura gateway hash --kind apikey|password   read a secret on stdin, print the hash to store in a config
   setura gateway install [flags]               print Kubernetes YAML for the controller (never applies); --with-monitoring adds
                                                an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard
+  setura gateway install --check               check the cluster's Gateway API CRDs (missing or too old) through kubectl
+  setura gateway status [-n NS | -A]           Gateways and routes with Accepted, Programmed and ResolvedRefs and the reason
   setura gateway rollout --config LIVE --new CANDIDATE --checks CHECKS   guarded rollout with automatic rollback
   setura gateway history --config LIVE         list config backups
   setura gateway rollback --config LIVE [--to ID]   restore a backup
@@ -105,6 +107,22 @@ Flags for run and up:
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
+
+Flags for install (output is plain YAML; docs/install-options.md):
+  --namespace NS, --image IMG, --class NAME, --replicas N, --with-monitoring, --expose-gateway-ports
+  --service-type ClusterIP|NodePort|LoadBalancer
+  --node-port HTTP=30080,HTTPS=30443   map Service ports to node ports (names or numbers); repeatable
+  --listener-port N     add a Service port for a Gateway listener port (7443, 8443, ...); repeatable
+  --external-traffic-policy Local|Cluster   (NodePort and LoadBalancer)
+  --host-network        pod on the node's network (ports 8080, 8443 and the listener ports)
+  --arg FLAG            append one flag to the controller args, e.g. --arg --rate-limit=100; repeatable
+  --resources requests.cpu=100m,requests.memory=64Mi,limits.cpu=500m,limits.memory=256Mi   any subset
+  --node-selector K=V[,K=V]   schedule on labelled nodes; repeatable
+  --admin-token-secret NAME   Secret holding the admin token (default setura-gateway-admin, key token); not printed
+  --create-admin-secret       also print that Secret with a NEW random token (apply once; re-applying rotates it)
+  --crds                print the command that installs the Gateway API CRDs; --gateway-api-version vX.Y.Z (default ` + GatewayAPIVersion + `),
+                        --gateway-api-channel standard|experimental
+  --check               check the cluster's Gateway API CRDs instead of printing manifests (kubectl; global --context applies)
 `
 
 type stringList []string
@@ -354,8 +372,46 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		fs.IntVar(&io.Replicas, "replicas", 1, "controller replicas")
 		fs.BoolVar(&io.ExposePorts, "expose-gateway-ports", false, "run the controller with --expose-gateway-ports and grant it patch on its own Service")
 		fs.BoolVar(&io.WithMonitoring, "with-monitoring", false, "also print an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard ConfigMap")
+		fs.StringVar(&io.ServiceType, "service-type", "", "Service type: ClusterIP (default), NodePort or LoadBalancer")
+		fs.Func("node-port", "map Service ports to node ports, HTTP=30080,HTTPS=30443 or 7443=30743; repeatable (NodePort and LoadBalancer)", func(v string) (err error) {
+			io.NodePorts, err = ParseNodePorts(v, io.NodePorts)
+			return err
+		})
+		fs.Func("listener-port", "add a Service port for a Gateway listener port, for example 7443; repeatable", func(v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("want a port number")
+			}
+			io.ListenerPorts = append(io.ListenerPorts, n)
+			return nil
+		})
+		fs.StringVar(&io.ExternalTrafficPolicy, "external-traffic-policy", "", "Service externalTrafficPolicy: Local (keeps client IPs) or Cluster")
+		fs.BoolVar(&io.HostNetwork, "host-network", false, "run the pod on the node's network (binds node ports 8080, 8443 and the listener ports)")
+		fs.Func("arg", "append one flag to the controller args, for example --arg --rate-limit=100; repeatable", func(v string) error {
+			io.Args = append(io.Args, v)
+			return nil
+		})
+		fs.Func("resources", "requests.cpu=100m,requests.memory=64Mi,limits.cpu=500m,limits.memory=256Mi (any subset)", func(v string) (err error) {
+			io.Resources, err = ParseResources(v, io.Resources)
+			return err
+		})
+		fs.Func("node-selector", "schedule the controller on nodes with these labels, KEY=VALUE[,KEY=VALUE]; repeatable", func(v string) (err error) {
+			io.NodeSelector, err = ParseKeyValues("node-selector", v, io.NodeSelector)
+			return err
+		})
+		fs.StringVar(&io.AdminTokenSecret, "admin-token-secret", "", "Secret holding the admin token under key token (default "+DefaultAdminSecret+"); it is not printed unless --create-admin-secret")
+		fs.BoolVar(&io.CreateAdminSecret, "create-admin-secret", false, "also print the admin token Secret with a NEW random token (apply it once; re-applying rotates the token)")
+		fs.BoolVar(&io.CRDs, "crds", false, "print the command that installs the Gateway API CRDs first")
+		fs.StringVar(&io.GatewayAPIVersion, "gateway-api-version", "", "Gateway API release for --crds (default "+GatewayAPIVersion+")")
+		fs.StringVar(&io.GatewayAPIChannel, "gateway-api-channel", "", "CRD channel for --crds: standard (default) or experimental (needed for TCPRoute and UDPRoute)")
 		if _, err := parseInterleaved(fs, rest); err != nil {
 			return fail(err)
+		}
+		if err := io.Validate(); err != nil {
+			return fail(err)
+		}
+		if !io.CreateAdminSecret {
+			fmt.Fprintf(stderr, "setura: the admin token Secret %q is not printed (re-applying must not rotate it); create it once, or add --create-admin-secret\n", orDefault(io.AdminTokenSecret, DefaultAdminSecret))
 		}
 		fmt.Fprint(stdout, Install(io))
 		return 0

@@ -44,6 +44,14 @@ type PortGroup struct {
 	Listeners   []*RTListener
 }
 
+// owner names a listener and its Gateway (or ListenerSet) for messages.
+func (l *RTListener) owner() string {
+	if l.LS != nil {
+		return fmt.Sprintf("listener %q of ListenerSet %s", l.L.Name, l.LS.Key())
+	}
+	return fmt.Sprintf("listener %q of Gateway %s", l.L.Name, l.GW.Key())
+}
+
 // RTListener is a resolved listener.
 type RTListener struct {
 	GW         *Gateway
@@ -299,8 +307,8 @@ func BuildTable(cfg *Config) *Table {
 
 	t.resolvePolicies()
 	t.resolveListenerSets()
-	portProto := map[int]string{}
-	hostSeen := map[string]string{}
+	portProto := map[int]*RTListener{} // first listener that claimed each port
+	hostSeen := map[string]*RTListener{}
 	for _, gw := range gws {
 		names := map[string]bool{}
 		for _, ent := range t.listenersOf(gw) {
@@ -331,17 +339,21 @@ func BuildTable(cfg *Config) *Table {
 			if bad := l.invalidKinds(); len(bad) > 0 {
 				l.Resolved = fact{false, "InvalidRouteKinds", "allowedRoutes.kinds names kinds this listener cannot carry: " + strings.Join(bad, ", ")}
 			}
-			if prev, ok := portProto[spec.Port]; ok && prev != proto {
-				l.Conflicted = fact{true, "ProtocolConflict", fmt.Sprintf("port %d already serves %s", spec.Port, prev)}
+			if prev, ok := portProto[spec.Port]; ok && prev.L.Protocol != proto {
+				l.Conflicted = fact{true, "ProtocolConflict", fmt.Sprintf("port %d already serves %s through %s; a port carries one protocol, so give this listener another port", spec.Port, prev.L.Protocol, prev.owner())}
 				continue
 			}
 			shape := fmt.Sprintf("%d/%s/%s", spec.Port, proto, l.Host)
-			if prev, ok := hostSeen[shape]; ok && prev != l.Key {
-				l.Conflicted = fact{true, "HostnameConflict", "listener " + prev + " already serves this port, protocol and hostname"}
+			if prev, ok := hostSeen[shape]; ok && prev.Key != l.Key {
+				host := "no hostname"
+				if l.Host != "" {
+					host = fmt.Sprintf("hostname %q", l.Host)
+				}
+				l.Conflicted = fact{true, "HostnameConflict", fmt.Sprintf("%s already serves port %d, protocol %s and %s (Gateways are ordered by namespace/name and the first one wins); change the port or hostname here, or remove the duplicate", prev.owner(), spec.Port, proto, host)}
 				continue
 			}
-			hostSeen[shape] = l.Key
-			portProto[spec.Port] = proto
+			hostSeen[shape] = l
+			portProto[spec.Port] = l
 			if proto == "TLS" && spec.TLS.Mode != "Passthrough" {
 				l.Terminate = true
 				cfg.resolveCerts(l)
@@ -725,8 +737,9 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 		}
 		candidates, notAllowed, noHost := 0, 0, 0
 		attached := false
+		var whys []string
 		for _, l := range t.Listeners {
-			hosts, fit, _ := t.parentFit(kind, routeNS, p, gw, hostnames, l)
+			hosts, fit, why := t.parentFit(kind, routeNS, p, gw, hostnames, l)
 			if fit == fitSkip {
 				continue
 			}
@@ -734,6 +747,7 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 			switch fit {
 			case fitNotAllowed:
 				notAllowed++
+				whys = append(whys, why)
 			case fitNoHost:
 				noHost++
 			default:
@@ -750,7 +764,11 @@ func (t *Table) attachParents(kind, routeNS string, parents []ParentRef, hostnam
 		case noHost > 0 && notAllowed == 0:
 			pr.Accepted = fact{false, "NoMatchingListenerHostname", "route hostnames do not intersect the listener hostname"}
 		default:
-			pr.Accepted = fact{false, "NotAllowedByListeners", "listener does not allow this route"}
+			msg := "listener does not allow this route"
+			if len(whys) > 0 {
+				msg += ": " + strings.Join(whys, "; ")
+			}
+			pr.Accepted = fact{false, "NotAllowedByListeners", msg}
 		}
 	}
 	return out
