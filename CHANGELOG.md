@@ -1,21 +1,23 @@
 # Changelog
 
+## 0.9.0-rc1
+
+Release candidate for 0.9.0: the same changes as the 0.9.0 section below.
+
 ## 0.9.0
 
-Closes the gaps found by comparing Setura with Envoy Gateway. See `docs/envoy-gateway-parity.md` for what matches and what does not.
+### Closing the gaps with Envoy Gateway
+
+Found by comparing Setura with Envoy Gateway. See `docs/envoy-gateway-parity.md` for what matches and what does not.
 
 - **Load balancing and backends.** Round robin, least request, random and consistent hash (ring or Maglev, by header, cookie, source IP or query), slow start, zone preference and priority failover with a panic threshold, and external backends reached by DNS name, IP or unix socket (`kind: Backend`, ExternalName Services). New flags `--load-balancer`, `--zone`, `--dns-ttl-min`, `--dns-ttl-max`; lint rules `SET050` to `SET053`. See `docs/load-balancing.md`.
 - **OIDC login and authorization.** The gateway runs the OIDC authorization-code flow with PKCE (sessions in an encrypted cookie, refresh, logout, silent deny for API calls), plus allow and deny rules by claim, scope, key, certificate, CIDR, method, path and header, CSRF checks, credential injection, `{claim:NAME}` header variables, and `--tls-cipher-suites` and `--tls-session-resumption`. Lint rules `SET060` to `SET065`. See `docs/oidc.md`, `docs/authorization.md`.
 - **Traffic shaping.** Shared rate limits across replicas through Redis (hand-written client, no Lua, with an outage fallback), gzip and deflate compression, per-listener and per-IP connection limits, TCP keepalive, HTTP/2 settings, bandwidth limits, `--request-id`, and a gRPC-web bridge. Lint rules `SET070` to `SET076`. See `docs/shared-rate-limits.md`, `docs/traffic-shaping.md`. HTTP/3, brotli and zstd are still not included.
 - **Envoy Gateway compatibility.** With `--envoy-compat`, the controller reads `BackendTrafficPolicy`, `ClientTrafficPolicy`, `SecurityPolicy`, `HTTPRouteFilter` and `Backend`, applies Envoy Gateway precedence and merge rules, translates what Setura can enforce, and writes `Accepted`, `Conflicted` and `Overridden` conditions that list every ignored field. A security policy with a field Setura cannot enforce refuses the targeted traffic instead of serving it open. `setura migrate convert --compat-report` and the generated `docs/envoy-gateway-compat.md` list every field. Lint rules `SET080` to `SET083`. See `docs/envoy-compat.md`.
 
-## 0.8.0-rc1
+### Found by converting about 40 repositories
 
-Release candidate for 0.8.0: the same changes as the 0.8.0 section below.
-
-## 0.8.0
-
-Everything here comes from converting about 40 repositories from Envoy and ingress controllers to Setura and testing the result on a real K3s cluster.
+Everything in this part comes from converting about 40 repositories from Envoy and ingress controllers to Setura and testing the result on a real K3s cluster. It was prepared as 0.8.0 and ships as part of 0.9.0.
 
 - **Responses and limits.** A rule can answer with a fixed status, body and headers (`setura.zyvor.dev/direct-response`), carry its own token bucket (`setura.zyvor.dev/rate-limit`, key route, client-ip or header), and override request body and stream idle limits. New flags: `--max-request-body`, `--max-header-bytes`, `--header-read-timeout`, `--idle-timeout`, `--stream-idle-timeout`, `--normalize-path`, `--merge-slashes`, `--reject-escaped-slashes`, `--tls-min-version`, `--tls-max-version`. Lint rule `SET030`. See `docs/direct-response.md`, `docs/limits.md`.
 - **Identity, headers and logs.** Client certificates can be restricted by SAN or CN (`--client-allow-san`, `--client-allow-cn`, exact or `*.suffix`), `--client-cert-xfcc` adds `X-Forwarded-Client-Cert`, header modifiers accept `{client_ip}`, `{request_id}`, `{host}`, `{scheme}` and `{listener}`, `--access-log-exclude` and `--access-log-sample` trim the log, and GRPCRoute gets the same JWT, API key and address policy as HTTPRoute. See `docs/client-cert-authz.md`, `docs/headers-and-logs.md`.
