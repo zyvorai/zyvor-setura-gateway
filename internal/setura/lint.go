@@ -57,6 +57,13 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET081", SeverityWarning, "Envoy Gateway policy targets a Gateway or route that is not in the snapshot"},
 	{"SET082", SeverityWarning, "two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins and the others are Conflicted"},
 	{"SET083", SeverityWarning, "Envoy Gateway security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules): the controller refuses the targeted traffic"},
+	{"SET070", SeverityError, "compress, grpc-web or bandwidth block (rule extension or annotation) is invalid or targets no rule: unknown field, unsupported encoding (brotli, zstd), bad size or rate"},
+	{"SET071", SeverityWarning, "shared rate limit fails closed (failOpen false) or has no fallback, so a Redis outage refuses all traffic or lifts the limit"},
+	{"SET072", SeverityWarning, "shared rate limit counts per a request header the client sets itself, on a rule without an auth policy"},
+	{"SET073", SeverityWarning, "compress block lists a content type that is already compressed (images, video, archives, PDF)"},
+	{"SET074", SeverityWarning, "gRPC-web rule has neither allowOrigins nor a CORS filter, so browsers cannot call it cross-origin"},
+	{"SET075", SeverityWarning, "gRPC-web rule also has retries or a mirror, which do not apply to bridged calls"},
+	{"SET076", SeverityWarning, "listener maxConnectionsPerIP is above maxConnections, so the per-IP limit can never be reached"},
 }
 
 func ruleSeverity(id string) string {
@@ -246,6 +253,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, aiRules(specs, ns)...)
 	findings = append(findings, lbRules(snapshot, specs, ns)...)
 	findings = append(findings, envoyRules(specs, ns)...)
+	findings = append(findings, shapingRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

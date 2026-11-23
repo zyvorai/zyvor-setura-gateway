@@ -77,7 +77,12 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A",
 	"--plans", "--plans-interval", "--usage-state", "--usage-interval", "--usage-max-series", "--usage-retention-days",
 	"--ai-prices", "--ai-max-key-labels", "ai-usage", "--route", "--key",
-	"--load-balancer", "--zone", "--dns-ttl-min", "--dns-ttl-max", "--envoy-compat"}
+	"--load-balancer", "--zone", "--dns-ttl-min", "--dns-ttl-max", "--envoy-compat",
+	"--redis", "--redis-password-file", "--redis-tls", "--redis-ca", "--redis-timeout", "--redis-dial-timeout", "--redis-pool",
+	"--compress", "--compress-types", "--compress-encodings", "--compress-min-size", "--compress-level",
+	"--max-connections", "--max-connections-per-ip", "--tcp-keepalive-idle", "--tcp-keepalive-interval", "--tcp-keepalive-count", "--tcp-keepalive-off",
+	"--h2-max-streams", "--h2-initial-window", "--h2-max-frame-size", "--h2-max-conn-window",
+	"--bandwidth-request", "--bandwidth-response", "--request-id"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

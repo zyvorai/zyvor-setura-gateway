@@ -266,10 +266,13 @@ without touching what the client sees: see [shadow.md](shadow.md), the
   client-certificate headers but no auth policy; there is no OIDC login flow, no JWT
   encryption (JWE), no token introspection and no revocation list beyond OCSP stapling.
   The admin endpoint is unauthenticated on loopback, and needs `--admin-token` to bind
-  anywhere else. Rate limits are per replica:
-  `--rate-limit-share N` divides them by the declared replica count as an approximation,
-  because exact sharing would need a shared store the gateway does not have (see
-  [observability](observability.md)). Circuit breaker, ejection and health state is per
+  anywhere else. Rate limits are per replica by default:
+  `--rate-limit-share N` divides them by the declared replica count as an approximation, and a
+  rule can count in Redis for an exact shared limit (see
+  [shared-rate-limits](shared-rate-limits.md) and [observability](observability.md)).
+  Response compression (gzip and deflate; no brotli or zstd), connection and HTTP/2 limits,
+  bandwidth limits and the gRPC-web bridge are described in [traffic-shaping](traffic-shaping.md);
+  HTTP/3 is not served ([http3](http3.md)). Circuit breaker, ejection and health state is per
   process (it survives reloads for endpoints that still exist, not restarts). Cross-backend
   retries are opt-in and HTTPRoute only. Prometheus metrics are served on the admin `/metrics`
   endpoint. The admin `/stats` endpoint is simple JSON counters per route and backend, resets

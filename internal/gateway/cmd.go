@@ -107,6 +107,23 @@ Flags for run and up:
   --reject-escaped-slashes   answer 400 to paths containing %2F or %5C (default off)
   --tls-min-version 1.2|1.3, --tls-max-version 1.2|1.3   TLS version bounds of HTTPS and terminating TLS
                         listeners (default 1.2 to 1.3; a listener's tls.options override them)
+  --redis [NAME=]ADDR   Redis server for shared rate limits: HOST:PORT or redis[s]://[user:password@]HOST:PORT[/DB]; repeatable
+                        (a rate-limit block's shared.redis picks one by NAME, default "default"; docs/shared-rate-limits.md)
+  --redis-password-file F, --redis-tls, --redis-ca FILE   Redis password (or SETURA_REDIS_PASSWORD), TLS and its CA bundle
+  --redis-timeout DUR, --redis-dial-timeout DUR, --redis-pool N   round trip deadline (250ms), connect deadline (1s), connections (16)
+  --compress            compress responses with gzip or deflate on every route (default off; brotli and zstd are not available);
+                        a rule or listener "setura.zyvor.dev/compress" block overrides it
+  --compress-types T[,..]   content types (text/*, application/json, */*+json; default text, JSON, XML, JavaScript, SVG)
+  --compress-encodings E[,..]   gzip,deflate in order of preference (default both)
+  --compress-min-size SIZE, --compress-level 1-9   smallest body worth compressing (1KB) and the level (6)
+  --max-connections N, --max-connections-per-ip N   most client connections per listener port, in total and per peer IP;
+                        extra connections are closed (default no limit; a listener limits block overrides them)
+  --tcp-keepalive-idle DUR, --tcp-keepalive-interval DUR, --tcp-keepalive-count N, --tcp-keepalive-off   TCP keepalive of client connections
+  --h2-max-streams N, --h2-initial-window SIZE, --h2-max-frame-size SIZE, --h2-max-conn-window SIZE   HTTP/2 server settings
+  --bandwidth-request RATE, --bandwidth-response RATE   pace each request and response body to RATE bytes per second
+                        (1MB/s, 256k; a rule "setura.zyvor.dev/bandwidth" block overrides it; docs/traffic-shaping.md)
+  --request-id preserve|generate|trust-upstream   X-Request-Id policy: keep a valid client id (default), always generate
+                        one (the client's travels as X-Client-Request-Id), or let a valid backend id win on the response
   --otlp-retries N, --otlp-backoff DUR, --otlp-queue N   OTLP export retry count (default 4, -1 = none),
                         first backoff (250ms, doubling) and bounded span queue (2048)
   --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)
@@ -197,6 +214,7 @@ type runFlags struct {
 	uiToken    string
 	cert       certFlags
 	limits     limitFlags
+	shape      shapeFlags
 	allowSAN   stringList
 	allowCN    stringList
 	xfcc       bool
@@ -244,6 +262,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.BoolVar(&f.opts.OCSPStaple, "ocsp-staple", false, "staple OCSP responses to listener certificates")
 	addCertFlags(fs, &f.cert)
 	addLimitFlags(fs, &f.limits)
+	addShapeFlags(fs, &f.shape)
 	fs.Var(&f.allowSAN, "client-allow-san", "accept only client certificates with a SAN matching PATTERN[,..] (exact or *.suffix; dns:/uri:/email: prefix optional); repeatable")
 	fs.Var(&f.allowCN, "client-allow-cn", "accept only client certificates whose subject CN matches PATTERN[,..] (exact or *.suffix); repeatable")
 	fs.BoolVar(&f.xfcc, "client-cert-xfcc", false, "also forward the verified client certificate as X-Forwarded-Client-Cert")
@@ -372,6 +391,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 		return nil, err
 	}
 	if err := f.limits.apply(&f.opts); err != nil {
+		return nil, err
+	}
+	if err := f.shape.apply(&f.opts); err != nil {
 		return nil, err
 	}
 	if err := f.obs.apply(&f.opts); err != nil {

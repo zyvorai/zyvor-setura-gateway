@@ -93,6 +93,7 @@ Or the annotation `setura.zyvor.dev/rate-limit` / `.rule-N`.
 | `rate` | Required: `N/s`, `N/m`, `N/h`, or a bare number per second. |
 | `burst` | Bucket size; default the per-second rate (at least 1). |
 | `key` | `client-ip` (default), `route` (one bucket for the rule) or `header:NAME` (a bucket per header value; requests without the header use their client address). |
+| `shared` | Count in Redis instead of in this process, for an exact limit across replicas: `{redis, keyPrefix, failOpen, fallback, fallbackReplicas}` (see [shared-rate-limits.md](shared-rate-limits.md)). |
 
 The client address honours `--trusted-proxies`, exactly as the global limiter.
 A refused request gets `429` with `Retry-After`, is marked rate limited in the
@@ -134,3 +135,6 @@ SET030 (error) reports an invalid `direct-response`, `rate-limit` or `limits`
 block, an annotation naming a rule that does not exist, a direct-response
 rule that also has backendRefs or a redirect, mirror or ExternalAuth filter,
 and a listener with an invalid TLS version option or limits block.
+
+See also [traffic-shaping.md](traffic-shaping.md) for connection limits, HTTP/2 settings,
+bandwidth limits and response compression.

@@ -69,11 +69,15 @@ type RTListener struct {
 	// TLSMin and TLSMax are the listener's own TLS version bounds, MaxBody its request body limit.
 	TLSMin, TLSMax uint16
 	MaxBody        *int64
-	Attached       int
-	Serving        bool
-	Accepted       fact
-	Resolved       fact
-	Conflicted     fact
+	// MaxConns and MaxConnsPerIP are the listener's connection limits (0 = inherit),
+	// Compress its response compression defaults.
+	MaxConns, MaxConnsPerIP int
+	Compress                *CompressConfig
+	Attached                int
+	Serving                 bool
+	Accepted                fact
+	Resolved                fact
+	Conflicted              fact
 }
 
 // Entry is one (route, rule, match) on one listener.
@@ -112,6 +116,10 @@ type CRule struct {
 	Limit      *limiter
 	MaxBody    *int64
 	StreamIdle *time.Duration
+	// Compress, GRPCWeb and BW are the compiled traffic shaping extensions.
+	Compress *CompressConfig
+	GRPCWeb  *GRPCWebConfig
+	BW       *bwSpec
 	// Fault is the compiled fault of the rule (chaos.go), armed by Apply.
 	Fault *CFault
 	// LB is the rule's load-balancer block (lb.go), nil when it has none.

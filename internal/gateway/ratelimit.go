@@ -24,6 +24,11 @@ type RateLimitConfig struct {
 	// its 1/Share of the budget, which is exact only when traffic is spread
 	// evenly. 0 or 1 means a single replica.
 	Share int
+	// Shared keeps the count in Redis, for every replica (shared.go); Scope
+	// (route and rule) is part of its keys. Rate and Per then give requests
+	// per window, Burst does not apply, and Share divides only the local fallback.
+	Shared *SharedLimit
+	Scope  string
 }
 
 // ParseRate parses "100/s", "30/m", "5000/h" or a bare number (per second).
@@ -57,6 +62,14 @@ func (c *RateLimitConfig) validate() error {
 	if c.Share < 0 {
 		return errors.New("share must not be negative")
 	}
+	if c.Shared != nil {
+		if c.Burst != 0 {
+			return errors.New("burst does not apply to a shared limit (it counts requests per window); remove it")
+		}
+		if err := c.Shared.validate(); err != nil {
+			return err
+		}
+	}
 	switch k := c.Key; {
 	case k == "" || k == "ip" || k == "route":
 	case strings.HasPrefix(k, "header:") && len(k) > len("header:"):
@@ -87,6 +100,7 @@ type limiter struct {
 	buckets map[string]*bucket
 	limited map[string]int64 // per route
 	allowed int64
+	sh      *sharedState // non-nil: the count lives in Redis and the bucket is the outage fallback
 }
 
 func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
@@ -100,6 +114,9 @@ func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
 		now = time.Now
 	}
 	share := c.Share
+	if c.Shared != nil {
+		share = c.Shared.FallbackReplicas
+	}
 	if share < 1 {
 		share = 1
 	}
@@ -120,6 +137,9 @@ func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
 	}
 	if h, ok := strings.CutPrefix(l.key, "header:"); ok {
 		l.header = h
+	}
+	if c.Shared != nil {
+		l.sh = newSharedState(c)
 	}
 	return l
 }
@@ -233,6 +253,9 @@ func (s *Server) ruleRateLimited(w http.ResponseWriter, r *http.Request, st *req
 	if l == nil {
 		return false
 	}
+	if l.sh != nil {
+		return s.sharedRateLimited(w, r, st, l)
+	}
 	ok, wait := l.allow(st.route, r)
 	if ok {
 		return false
@@ -280,7 +303,7 @@ func (t *Table) ruleLimiters() []ruleLimiter {
 // prepareLimiters gives the per-rule limiters of a new table the gateway's
 // clock and trusted proxies, and carries the buckets of an unchanged limiter
 // over from the table it replaces so a reload does not refill them.
-func (s *Server) prepareLimiters(old, next *Table) {
+func (s *Server) prepareLimiters(old, next *Table) error {
 	prev := map[[2]string]*limiter{}
 	for _, rl := range old.ruleLimiters() {
 		prev[[2]string{rl.route, strconv.Itoa(rl.rule)}] = rl.l
@@ -301,9 +324,24 @@ func (s *Server) prepareLimiters(old, next *Table) {
 			rl.l.now = s.opts.Obs.Now
 		}
 	}
+	for _, rl := range next.ruleLimiters() {
+		if rl.l.sh == nil || rl.l.sh.cl != nil {
+			continue
+		}
+		cl := s.redis[rl.l.sh.cfg.redisName()]
+		if cl == nil {
+			return fmt.Errorf("route %s rule %d: %s: shared.redis %q is not configured (start the gateway with --redis %s=HOST:PORT)",
+				rl.route, rl.rule, RateLimitKey, rl.l.sh.cfg.redisName(), rl.l.sh.cfg.redisName())
+		}
+		rl.l.sh.cl = cl
+	}
+	return nil
 }
 
 func (l *limiter) sameAs(o *limiter) bool {
+	if (l.sh == nil) != (o.sh == nil) || (l.sh != nil && (l.sh.cfg != o.sh.cfg || l.sh.limit != o.sh.limit || l.sh.windowMs != o.sh.windowMs || l.sh.scope != o.sh.scope)) {
+		return false
+	}
 	return l.perSec == o.perSec && l.burst == o.burst && l.key == o.key && l.header == o.header
 }
 

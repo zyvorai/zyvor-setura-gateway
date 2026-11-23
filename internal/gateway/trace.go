@@ -83,9 +83,10 @@ func validRequestID(s string) bool {
 // beginTrace assigns trace context and request id and echoes the id.
 func (s *Server) beginTrace(w http.ResponseWriter, r *http.Request, st *reqState) {
 	st.trace = newTrace(r.Header)
-	st.reqID = r.Header.Get(RequestIDHeader)
-	if !validRequestID(st.reqID) {
-		st.reqID = randHex(16)
+	var client string
+	st.reqID, client = s.requestID(r.Header)
+	if client != "" {
+		r.Header.Set("X-Client-Request-Id", client)
 	}
 	w.Header().Set(RequestIDHeader, st.reqID)
 }

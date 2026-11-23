@@ -91,6 +91,11 @@ type Options struct {
 	LoadBalancer *LBConfig
 	Zone         string
 	DNS          DNSOptions
+	// Shape holds connection limits, TCP keepalive, HTTP/2 settings, bandwidth
+	// limits, the X-Request-Id policy and compression defaults (shaping.go); Redis
+	// the servers shared rate limits count in (redis.go, sharedlimit.go).
+	Shape ShapeOptions
+	Redis []RedisOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -117,6 +122,7 @@ type boundPort struct {
 	raw  *rawListener // TLS passthrough or TCP listener; srv is nil then
 	udp  *udpProxy    // UDP listener; ln and srv are nil then
 	kind string
+	cl   *connLimiter // connection limits of a TCP port
 }
 
 // Server is the built-in gateway data plane.
@@ -172,6 +178,8 @@ type Server struct {
 	lbDefault *CLB
 	lbErr     error
 	dns       *dnsCache
+	redis     map[string]*RedisClient // shared rate limit servers by name
+	shape     shapeStats              // compression, bandwidth and gRPC-web counters
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -198,6 +206,14 @@ func New(opts Options) *Server {
 		s.lbDefault, s.lbErr = opts.LoadBalancer.Compile()
 	}
 	s.ai.init(opts.AI)
+	s.redis = map[string]*RedisClient{}
+	for _, ro := range opts.Redis {
+		if c, err := NewRedisClient(ro); err == nil {
+			s.redis[c.Name()] = c
+		} else {
+			s.diag("redis %s: %v", ro.Name, err)
+		}
+	}
 	s.shadowP = s.startShadowPersist()
 	s.initContract()
 	s.initCert()
@@ -271,17 +287,17 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		s.ports[spec] = &boundPort{udp: s.startUDP(pc, spec), kind: pg.kind()}
 		return nil
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, cl, err := s.listenTCP(addr, spec)
 	if err != nil {
 		return err
 	}
 	ln = s.wrapProxyProtocol(spec, ln)
 	if pg.L4 == "TCP" {
-		s.ports[spec] = &boundPort{ln: ln, raw: s.startTCP(ln, spec), kind: pg.kind()}
+		s.ports[spec] = &boundPort{ln: ln, raw: s.startTCP(ln, spec), kind: pg.kind(), cl: cl}
 		return nil
 	}
 	if pg.Passthrough {
-		s.ports[spec] = &boundPort{ln: ln, raw: s.startPassthrough(ln, spec)}
+		s.ports[spec] = &boundPort{ln: ln, raw: s.startPassthrough(ln, spec), cl: cl}
 		return nil
 	}
 	hrt := DefaultHeaderReadTimeout
@@ -299,7 +315,10 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 			s.serveHTTP(w, r, spec)
 		})}
 	enableH2C(srv, pg.TLS)
-	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS}
+	if h := s.opts.Shape.H2; h.active() {
+		srv.HTTP2 = h.config()
+	}
+	bp := &boundPort{ln: ln, srv: srv, tls: pg.TLS, cl: cl}
 	s.ports[spec] = bp
 	if pg.TLS {
 		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: s.httpProtos(),
@@ -393,7 +412,9 @@ func (s *Server) Apply(ld *Loaded) error {
 	}
 	t := BuildTable(cfg)
 	s.carryState(s.table.Load(), t)
-	s.prepareLimiters(s.table.Load(), t)
+	if err := s.prepareLimiters(s.table.Load(), t); err != nil {
+		return err
+	}
 	armFaults(s.table.Load(), t, s.res.now())
 	bindErr := map[string]string{}
 	specPorts := make([]int, 0, len(t.Ports))
@@ -416,6 +437,7 @@ func (s *Server) Apply(ld *Loaded) error {
 		}
 	}
 	s.table.Store(t)
+	s.applyConnLimits(t)
 	s.postApply(t)
 	for p, bp := range s.ports {
 		if t.Ports[p] == nil {
@@ -657,6 +679,9 @@ func (s *Server) Close() {
 	s.shadowP.close()
 	s.closeMeter()
 	s.closeContract()
+	for _, c := range s.redis {
+		c.Close()
+	}
 	s.tr.CloseIdleConnections()
 	s.trInsecure.CloseIdleConnections()
 	s.obs.close()

@@ -45,6 +45,13 @@
 | SET081 | warning | Envoy Gateway policy targets a Gateway or route that is not in the snapshot |
 | SET082 | warning | two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins, the others are Conflicted |
 | SET083 | warning | Envoy Gateway SecurityPolicy has a field Setura cannot enforce (`basicAuth`, `oidc`, JWT or header authorization rules): the controller refuses the targeted traffic (see [envoy-compat.md](envoy-compat.md)) |
+| SET070 | error | `setura.zyvor.dev/compress`, `grpc-web` or `bandwidth` block or annotation is invalid (brotli/zstd, bad size or rate, unknown field) or names no rule (see [traffic-shaping.md](traffic-shaping.md)) |
+| SET071 | warning | shared rate limit fails closed (`failOpen: false`) or has `fallback: none`: a Redis outage refuses all traffic or lifts the limit (see [shared-rate-limits.md](shared-rate-limits.md)) |
+| SET072 | warning | shared rate limit counts per a request header the client sets, on a rule without an auth policy |
+| SET073 | warning | compress block lists a content type that is already compressed |
+| SET074 | warning | gRPC-web rule has neither `allowOrigins` nor a CORS filter |
+| SET075 | warning | gRPC-web rule also has retries or a mirror, which do not apply to bridged calls |
+| SET076 | warning | listener `maxConnectionsPerIP` is above `maxConnections` |
 
 ## ReferenceGrants (SET004, SET012)
 

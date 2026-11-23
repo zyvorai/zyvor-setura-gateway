@@ -298,7 +298,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, LoadBalancerKey, len(spec.Rules)) {
 			k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, LoadBalancerKey, len(spec.Rules))
 		}
-		for _, base := range RuleExtKeys {
+		for _, base := range append(append([]string(nil), RuleExtKeys...), ShapingKeys...) {
 			for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, base, len(spec.Rules)) {
 				k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, base, len(spec.Rules))
 			}
