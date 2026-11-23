@@ -144,7 +144,7 @@ func TestTCPKeepaliveSettings(t *testing.T) {
 	}
 	got := map[string]int{}
 	raw.Control(func(fd uintptr) {
-		for name, opt := range map[string]int{"idle": keepIdleOpt, "interval": syscall.TCP_KEEPINTVL, "count": syscall.TCP_KEEPCNT} {
+		for name, opt := range map[string]int{"idle": keepIdleOpt, "interval": keepIntvlOpt, "count": keepCntOpt} {
 			got[name], _ = syscall.GetsockoptInt(int(fd), syscall.IPPROTO_TCP, opt)
 		}
 	})
