@@ -4,6 +4,7 @@ Plans, not promises. Dates are intentionally absent.
 
 ## Released
 
+- **0.9.0.** Load balancing algorithms and external backends, OIDC login and authorization rules, Redis-backed shared rate limits, compression, connection limits, gRPC-web, and Envoy Gateway policy compatibility.
 - **0.8.0.** Direct responses and per-route limits, client-certificate authorisation, install options and cluster status, an AI gateway, API metering and plans, shadow-API discovery with contract enforcement, game-day chaos and pull-request traffic checks.
 - **0.7.0.** Gateway API 1.5 features, traffic security, ACME and certificate reload, PROXY
   protocol, operator UX (`top`, `init`, `doctor gateway`, dashboard Changes page and command

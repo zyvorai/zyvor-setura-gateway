@@ -26,6 +26,10 @@
 - [Metering and plans](metering-plans.md): per-key quotas, usage export and invoices.
 - [API contract](contract.md): learn the endpoints served, find shadow and drifting APIs, enforce a spec.
 - [Chaos](chaos.md) and [pull-request check](pr-check.md): game-day faults with a safety guard, traffic impact of a config change.
+- [Envoy Gateway parity](envoy-gateway-parity.md), [compatibility table](envoy-gateway-compat.md) and [switching guide](envoy-compat.md): what matches, what does not, how to move over.
+- [Load balancing](load-balancing.md): algorithms, zones, priority, DNS and external backends.
+- [OIDC](oidc.md) and [authorization](authorization.md): login at the gateway, allow and deny rules.
+- [Shared rate limits](shared-rate-limits.md) and [traffic shaping](traffic-shaping.md): Redis limits, compression, connection limits, gRPC-web.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
 - [Performance](performance.md): measured throughput, latency and soak numbers, the load and fuzz tools, and how to compare with Envoy.
