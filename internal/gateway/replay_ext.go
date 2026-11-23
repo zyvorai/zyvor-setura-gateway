@@ -150,6 +150,9 @@ func ruleExtras(rule *CRule, r *http.Request, m *CMatch) (rewrite string, filter
 		if p.JWT != nil {
 			kinds = append(kinds, "jwt")
 		}
+		if p.OIDC != nil {
+			kinds = append(kinds, "oidc")
+		}
 		if p.APIKey != nil {
 			kinds = append(kinds, "apiKey")
 		}
@@ -164,6 +167,15 @@ func ruleExtras(rule *CRule, r *http.Request, m *CMatch) (rewrite string, filter
 		}
 		if p.RequireClientCert {
 			kinds = append(kinds, "clientCert")
+		}
+		if p.Authorization != nil {
+			kinds = append(kinds, "authorization")
+		}
+		if p.CSRF != nil {
+			kinds = append(kinds, "csrf")
+		}
+		if len(p.Inject) > 0 {
+			kinds = append(kinds, "inject")
 		}
 	}
 	for _, f := range rule.Rule.Filters {

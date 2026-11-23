@@ -54,9 +54,14 @@ Checks run in this order and the first failure answers:
 
 1. `ipAllow` / `ipDeny`: 403. The deny list wins; a non-empty allow list admits only its members.
 2. `requireClientCert`: 403 unless a client certificate verified against the listener's CA bundle.
-3. Credentials, when `jwt`, `apiKey` or `basic` is configured: any one valid credential admits.
-   No credential or none valid is 401 with one `WWW-Authenticate` challenge per method; a valid
+3. `csrf`: a state changing request from another origin is 403 (see [authorization.md](authorization.md)).
+4. Credentials, when `jwt`, `apiKey`, `basic` or `oidc` is configured: any one valid credential admits.
+   No credential or none valid is 401 with one `WWW-Authenticate` challenge per method (or, for a
+   browser with `oidc`, a redirect to the identity provider, see [oidc.md](oidc.md)); a valid
    JWT that lacks a required claim is 403.
+5. `authorization`: the first matching allow or deny rule decides, otherwise the default action
+   (403, see [authorization.md](authorization.md)). `inject` then puts upstream credentials on the
+   request that is proxied.
 
 The client address is the TCP peer, or the `X-Forwarded-For` client when the peer is in
 `--trusted-proxies` (the same address rate limits and access logs use).

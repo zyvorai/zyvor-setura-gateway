@@ -324,7 +324,9 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: s.httpProtos(),
 			GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.acmeHello(spec, h) }}
 		base.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) { return s.clientTLSConfig(base, spec, h) }
-		s.opts.TLS.apply(base)
+		bo := s.opts.TLS
+		bo.Ciphers, bo.Resumption = nil, "" // applied per handshake, see clientTLSConfig
+		bo.apply(base)
 		srv.TLSConfig = base
 		go srv.ServeTLS(ln, "", "")
 	} else {

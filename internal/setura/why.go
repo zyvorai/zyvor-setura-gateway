@@ -486,6 +486,9 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 		switch a.Decision {
 		case "deny":
 			verdict = u.red(fmt.Sprintf("refused with %d", a.Status))
+			if a.Status == 302 {
+				verdict = u.gray("redirected to the identity provider to log in (302)")
+			}
 		case "unknown":
 			verdict = u.gray("undetermined here")
 		}
@@ -500,6 +503,16 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 		fmt.Fprintf(b, "        this request would be %s%s\n", verdict, by)
 		for _, ln := range wrap(a.Reason, "        ", width) {
 			fmt.Fprintln(b, u.gray(ln))
+		}
+		if a.AuthzRule != "" {
+			msg := fmt.Sprintf("        authorization: rule %s matched, action %s", a.AuthzRule, a.AuthzAction)
+			if a.AuthzRule == "default" {
+				msg = "        authorization: no rule matched, the default action is " + a.AuthzAction
+			}
+			fmt.Fprintln(b, u.gray(msg))
+		}
+		if len(a.Secrets) > 0 {
+			fmt.Fprintln(b, u.gray("        secrets read from: "+strings.Join(a.Secrets, "; ")))
 		}
 		for _, c := range a.Challenge {
 			fmt.Fprintln(b, u.gray("        WWW-Authenticate: "+c))

@@ -21,6 +21,10 @@ import (
 const (
 	TLSMinVersionOption = "setura.zyvor.dev/tls-min-version"
 	TLSMaxVersionOption = "setura.zyvor.dev/tls-max-version"
+	// TLSCipherSuitesOption is a comma separated list of TLS 1.2 cipher suite
+	// names; TLSSessionResumptionOption is "on" or "off" (session tickets).
+	TLSCipherSuitesOption      = "setura.zyvor.dev/tls-cipher-suites"
+	TLSSessionResumptionOption = "setura.zyvor.dev/tls-session-resumption"
 )
 
 // DefaultHeaderReadTimeout is how long a client may take to send request headers.
@@ -47,8 +51,64 @@ type PathOptions struct {
 func (p PathOptions) active() bool { return p.Normalize || p.MergeSlashes || p.RejectEscapedSlashes }
 
 // TLSOptions bound the TLS version of HTTPS and terminating TLS listeners
-// (0 = Go's default floor of 1.2, and no ceiling).
-type TLSOptions struct{ Min, Max uint16 }
+// (0 = Go's default floor of 1.2, and no ceiling), restrict the TLS 1.2
+// cipher suites (empty: Go's secure defaults; TLS 1.3 suites are not
+// configurable) and switch session resumption (session tickets) on or off
+// ("" keeps Go's default, which is on).
+type TLSOptions struct {
+	Min, Max   uint16
+	Ciphers    []uint16
+	Resumption string
+}
+
+// ParseCipherSuites reads a comma separated list of cipher suite names as Go
+// spells them (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256). Insecure suites and
+// the TLS 1.3 suites (which Go does not let you choose) are refused.
+func ParseCipherSuites(list string) ([]uint16, error) {
+	secure := map[string]uint16{}
+	for _, c := range tls.CipherSuites() {
+		secure[c.Name] = c.ID
+	}
+	var out []uint16
+	seen := map[uint16]bool{}
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		id, ok := secure[name]
+		switch {
+		case !ok:
+			for _, c := range tls.InsecureCipherSuites() {
+				if c.Name == name {
+					return nil, fmt.Errorf("cipher suite %s is insecure and not allowed", name)
+				}
+			}
+			return nil, fmt.Errorf("unknown cipher suite %q (use a name from Go's crypto/tls, such as TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384)", name)
+		case strings.HasPrefix(name, "TLS_AES_") || strings.HasPrefix(name, "TLS_CHACHA20_"):
+			return nil, fmt.Errorf("cipher suite %s is a TLS 1.3 suite; Go does not let you choose those (they are always enabled)", name)
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no cipher suite named")
+	}
+	return out, nil
+}
+
+// ParseResumption reads "on" or "off".
+func ParseResumption(v string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "true", "enabled":
+		return "on", nil
+	case "off", "false", "disabled":
+		return "off", nil
+	}
+	return "", fmt.Errorf("session resumption %q: want on or off", v)
+}
 
 // ListenerLimits is the limits block of a listener in a snapshot.
 type ListenerLimits struct {
@@ -85,6 +145,20 @@ func (o TLSOptions) apply(cfg *tls.Config) {
 	if o.Max != 0 {
 		cfg.MaxVersion = o.Max
 	}
+	if len(o.Ciphers) > 0 {
+		cfg.CipherSuites = append([]uint16(nil), o.Ciphers...)
+	}
+	switch o.Resumption {
+	case "off":
+		cfg.SessionTicketsDisabled = true
+	case "on":
+		cfg.SessionTicketsDisabled = false
+	}
+}
+
+// custom reports whether the options change anything from Go's defaults.
+func (o TLSOptions) custom() bool {
+	return o.Min != 0 || o.Max != 0 || len(o.Ciphers) > 0 || o.Resumption != ""
 }
 
 // tlsFor returns the TLS bounds of a listener: its own options over the gateway's.
@@ -96,6 +170,12 @@ func (s *Server) tlsFor(l *RTListener) TLSOptions {
 		}
 		if l.TLSMax != 0 {
 			o.Max = l.TLSMax
+		}
+		if len(l.TLSCiphers) > 0 {
+			o.Ciphers = l.TLSCiphers
+		}
+		if l.TLSResumption != "" {
+			o.Resumption = l.TLSResumption
 		}
 	}
 	return o
@@ -119,7 +199,21 @@ func (l *RTListener) resolveLimits() error {
 			}
 			l.TLSMax = n
 		}
-		if err := (TLSOptions{l.TLSMin, l.TLSMax}).validate(); err != nil {
+		if v := o.Options[TLSCipherSuitesOption]; v != "" {
+			ids, err := ParseCipherSuites(v)
+			if err != nil {
+				return fmt.Errorf("tls.options %s: %w", TLSCipherSuitesOption, err)
+			}
+			l.TLSCiphers = ids
+		}
+		if v := o.Options[TLSSessionResumptionOption]; v != "" {
+			r, err := ParseResumption(v)
+			if err != nil {
+				return fmt.Errorf("tls.options %s: %w", TLSSessionResumptionOption, err)
+			}
+			l.TLSResumption = r
+		}
+		if err := (TLSOptions{Min: l.TLSMin, Max: l.TLSMax}).validate(); err != nil {
 			return fmt.Errorf("tls.options: %w", err)
 		}
 	}
@@ -345,6 +439,7 @@ type limitFlags struct {
 	headerRead, idle, streamIdle       time.Duration
 	normalize, mergeSlashes, rejectEsc bool
 	tlsMin, tlsMax                     string
+	tlsCiphers, tlsResumption          string
 }
 
 func addLimitFlags(fs *flag.FlagSet, f *limitFlags) {
@@ -358,6 +453,8 @@ func addLimitFlags(fs *flag.FlagSet, f *limitFlags) {
 	fs.BoolVar(&f.rejectEsc, "reject-escaped-slashes", false, "answer 400 to request paths containing %2F or %5C (default off)")
 	fs.StringVar(&f.tlsMin, "tls-min-version", "", "lowest TLS version of HTTPS listeners: 1.2 or 1.3 (default 1.2)")
 	fs.StringVar(&f.tlsMax, "tls-max-version", "", "highest TLS version of HTTPS listeners: 1.2 or 1.3 (default 1.3)")
+	fs.StringVar(&f.tlsCiphers, "tls-cipher-suites", "", "comma separated TLS 1.2 cipher suites HTTPS listeners accept, Go names (default Go's secure set; TLS 1.3 suites are not configurable)")
+	fs.StringVar(&f.tlsResumption, "tls-session-resumption", "", "TLS session resumption (session tickets) of HTTPS listeners: on or off (default on)")
 }
 
 func (f *limitFlags) apply(o *Options) error {
@@ -391,6 +488,16 @@ func (f *limitFlags) apply(o *Options) error {
 	if f.tlsMax != "" {
 		if o.TLS.Max, err = ParseTLSVersion(f.tlsMax); err != nil {
 			return fmt.Errorf("--tls-max-version: %w", err)
+		}
+	}
+	if f.tlsCiphers != "" {
+		if o.TLS.Ciphers, err = ParseCipherSuites(f.tlsCiphers); err != nil {
+			return fmt.Errorf("--tls-cipher-suites: %w", err)
+		}
+	}
+	if f.tlsResumption != "" {
+		if o.TLS.Resumption, err = ParseResumption(f.tlsResumption); err != nil {
+			return fmt.Errorf("--tls-session-resumption: %w", err)
 		}
 	}
 	if err := o.TLS.validate(); err != nil {

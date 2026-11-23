@@ -197,13 +197,18 @@ func (s *Server) clientTLSConfig(base *tls.Config, port int, h *tls.ClientHelloI
 		return nil, nil
 	}
 	l := t.Ports[port].listenerForTLS(h.ServerName)
-	if l == nil || (l.Client == nil && l.TLSMin == 0 && l.TLSMax == 0) {
+	own := l != nil && (l.TLSMin != 0 || l.TLSMax != 0 || len(l.TLSCiphers) > 0 || l.TLSResumption != "")
+	// The gateway-wide cipher list and resumption switch are applied here, not
+	// on the base configuration: net/http refuses to serve a base
+	// configuration whose list lacks the suite HTTP/2 requires, and a base
+	// with tickets off next to a clone with tickets on breaks the handshake.
+	if (l == nil || l.Client == nil) && !own && len(s.opts.TLS.Ciphers) == 0 && s.opts.TLS.Resumption == "" {
 		return nil, nil
 	}
 	c := base.Clone()
 	c.GetConfigForClient = nil
 	s.tlsFor(l).apply(c)
-	if l.Client == nil {
+	if l == nil || l.Client == nil {
 		return c, nil
 	}
 	c.ClientCAs = l.Client.Pool

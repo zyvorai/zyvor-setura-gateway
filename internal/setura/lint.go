@@ -41,6 +41,12 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET020", SeverityError, "API plan file (--plans) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method"},
 	{"SET021", SeverityWarning, "API plan file names a route (plan routes or unmeteredRoutes) that no HTTPRoute in the snapshot has"},
 	{"SET022", SeverityWarning, "API plan file maps an API key name that no route's apiKey policy declares"},
+	{"SET060", SeverityWarning, "auth OIDC policy is weak: plain http issuer, insecure or SameSite None session cookie, or a public client without a client secret"},
+	{"SET061", SeverityWarning, "auth authorization rules cannot work as written: no rules, allow rules under a default allow, or a rule that matches everything and shadows the ones after it"},
+	{"SET062", SeverityWarning, "auth OIDC policy authenticates by cookie but the rule has no csrf block"},
+	{"SET063", SeverityError, "header modifier uses {claim:NAME} on a rule without a jwt or oidc policy, so the claim is never available"},
+	{"SET064", SeverityError, "listener tls.options cipher suites or session resumption are invalid (unknown, insecure or TLS 1.3 suite, or not on/off)"},
+	{"SET065", SeverityWarning, "auth policy injects a credential into the upstream request but nobody has to authenticate to use it"},
 	{"SET040", SeverityError, "AI block (rule extension or setura.zyvor.dev/ai annotation) is invalid or targets no rule"},
 	{"SET041", SeverityError, "AI token budget has no identity to count against: the identity (apikey, subject or claim) needs an auth policy on the rule that provides it"},
 	{"SET042", SeverityWarning, "AI budget or cache identity is a request header the client sets itself, so a client can pick another tenant's identity"},
@@ -248,6 +254,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, shadowRules(specs, ns)...)
 	findings = append(findings, gw15Rules(specs, ns)...)
 	findings = append(findings, authRules(specs, ns)...)
+	findings = append(findings, edgeSecRules(specs, ns)...)
 	findings = append(findings, limitsRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)

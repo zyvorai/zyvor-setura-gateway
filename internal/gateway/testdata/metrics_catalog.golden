@@ -33,6 +33,8 @@ setura_gateway_listener_connections gauge port
 setura_gateway_grpcweb_requests_total counter route,mode,result
 setura_gateway_shadow_total counter route,result
 setura_gateway_auth_requests_total counter route,decision,reason
+setura_gateway_oidc_events_total counter route,event
+setura_gateway_authz_decisions_total counter route,action,source
 setura_gateway_accesslog_skipped_total counter reason
 setura_gateway_client_cert_rejected_total counter listener
 setura_gateway_contract_unknown_total counter route,reason,mode

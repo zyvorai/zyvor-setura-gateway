@@ -70,7 +70,7 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--shadow-diff", "--shadow-state", "--learn", "--learn-max", "--contract-spec", "--contract-enforce", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
 	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
 	"--max-request-body", "--max-header-bytes", "--header-read-timeout", "--idle-timeout", "--stream-idle-timeout",
-	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version",
+	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version", "--tls-cipher-suites", "--tls-session-resumption",
 	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample",
 	"install", "status", "--service-type", "--node-port", "--listener-port", "--external-traffic-policy", "--host-network", "--arg", "--resources",
 	"--node-selector", "--admin-token-secret", "--no-admin-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",

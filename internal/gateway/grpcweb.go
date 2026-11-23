@@ -352,7 +352,7 @@ func (s *Server) serveGRPCWeb(rec *recorder, r *http.Request, st *reqState, rule
 	} else {
 		out.ContentLength = r.ContentLength
 	}
-	shapeUpstream(out, r, remoteIP(r), pg.TLS, requestFilters(rule, ref), e.Match, true, st.reqID, st.listener)
+	shapeUpstream(out, r, remoteIP(r), pg.TLS, requestFilters(rule, ref), e.Match, true, st.reqID, st.listener, st.claims())
 	out.Header.Set("Te", "trailers")
 	s.chainForwardedFor(r, out)
 	injectTrace(out, st)

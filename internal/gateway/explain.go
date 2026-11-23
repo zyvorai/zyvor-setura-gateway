@@ -904,7 +904,7 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 	}
 	for i := range w.Backends {
 		if w.Backends[i].Status == "ok" || w.Backends[i].Status == "unavailable" {
-			w.Backends[i].Request = upstreamRequest(tr.Request, r, e, rule.Refs[i], w.Backends[i].Endpoints, pg.TLS, tr.chosen.Key)
+			w.Backends[i].Request = upstreamRequest(tr.Request, r, e, rule.Refs[i], w.Backends[i].Endpoints, pg.TLS, tr.chosen.Key, tr.claims())
 		}
 	}
 	tr.explainExtras(w, e, r)
@@ -1071,7 +1071,7 @@ func describeHeaderMod(h *HeaderMod) string {
 // upstreamRequest applies the winning rule's filters and the backendRef's own
 // filters to the request, through the same shapeUpstream the proxy runs, and
 // returns what the backend would receive.
-func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, eps []TraceEndpoint, tlsPort bool, listener string) *TraceUpstream {
+func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, eps []TraceEndpoint, tlsPort bool, listener string, claims map[string]any) *TraceUpstream {
 	out := &http.Request{Method: in.Method, URL: &url.URL{}, Header: in.Header.Clone()}
 	if out.Header == nil {
 		out.Header = http.Header{}
@@ -1083,7 +1083,7 @@ func upstreamRequest(q ExplainRequest, in *http.Request, e *Entry, ref *CRef, ep
 	if !validRequestID(reqID) {
 		reqID = "<generated>"
 	}
-	shapeUpstream(out, in, remoteIP(in), tlsPort, requestFilters(e.Rule, ref), e.Match, e.GRPC, reqID, listener)
+	shapeUpstream(out, in, remoteIP(in), tlsPort, requestFilters(e.Rule, ref), e.Match, e.GRPC, reqID, listener, claims)
 	if !e.GRPC {
 		previewTrace(out, in.Header)
 	}

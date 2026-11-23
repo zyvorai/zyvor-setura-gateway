@@ -124,6 +124,13 @@ Flags for run and up:
                         (1MB/s, 256k; a rule "setura.zyvor.dev/bandwidth" block overrides it; docs/traffic-shaping.md)
   --request-id preserve|generate|trust-upstream   X-Request-Id policy: keep a valid client id (default), always generate
                         one (the client's travels as X-Client-Request-Id), or let a valid backend id win on the response
+  --tls-cipher-suites NAME[,..]   TLS 1.2 cipher suites HTTPS listeners accept, as Go names them (default Go's
+                        secure set; insecure and TLS 1.3 suites are refused; listener option
+                        setura.zyvor.dev/tls-cipher-suites overrides; include an AES_128_GCM suite for HTTP/2)
+  --tls-session-resumption on|off   session tickets on HTTPS listeners (default on; listener option
+                        setura.zyvor.dev/tls-session-resumption overrides)
+  (route auth, per rule: jwt, apiKey, basic, oidc login, authorization rules, csrf and credential injection,
+                        see docs/security.md, docs/oidc.md and docs/authorization.md; secrets come from env, file or Secret)
   --otlp-retries N, --otlp-backoff DUR, --otlp-queue N   OTLP export retry count (default 4, -1 = none),
                         first backoff (250ms, doubling) and bounded span queue (2048)
   --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)

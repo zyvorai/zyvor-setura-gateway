@@ -23,6 +23,12 @@ type TraceAuth struct {
 	Challenge []string `json:"www_authenticate,omitempty"`
 	// Headers are the identity headers the backend would receive.
 	Headers []string `json:"upstream_headers,omitempty"`
+	// AuthzRule is the authorization rule that decided ("default" when no rule
+	// matched), AuthzAction what it does (allow or deny).
+	AuthzRule   string `json:"authz_rule,omitempty"`
+	AuthzAction string `json:"authz_action,omitempty"`
+	// Secrets names where the policy reads its secrets from, never the values.
+	Secrets []string `json:"secret_sources,omitempty"`
 	Note    string   `json:"note,omitempty"`
 }
 
@@ -43,6 +49,13 @@ func (p *AuthPolicy) describe() string {
 			d += " keys from " + redactURL(p.JWT.JWKSURI)
 		} else {
 			d += " inline keys"
+		}
+		parts = append(parts, d)
+	}
+	if o := p.OIDC; o != nil {
+		d := "oidc login with " + o.ClientID + " at " + redactURL(o.Issuer)
+		if o.DenyRedirect == "never" {
+			d += " (401 instead of a redirect)"
 		}
 		parts = append(parts, d)
 	}
@@ -71,6 +84,19 @@ func (p *AuthPolicy) describe() string {
 	if p.RequireClientCert {
 		parts = append(parts, "verified client certificate")
 	}
+	if a := p.Authorization; a != nil {
+		def := a.DefaultAction
+		if def == "" {
+			def = "deny"
+		}
+		parts = append(parts, fmt.Sprintf("authorization (%d rules, default %s)", len(a.Rules), def))
+	}
+	if p.CSRF != nil {
+		parts = append(parts, "csrf origin check")
+	}
+	if n := len(p.Inject); n > 0 {
+		parts = append(parts, fmt.Sprintf("credential injection (%d)", n))
+	}
 	if len(parts) == 0 {
 		return "empty policy"
 	}
@@ -88,6 +114,17 @@ func (p *AuthPolicy) credentialNames() (headers, query []string) {
 		}
 		if p.APIKey.Query != "" {
 			query = append(query, p.APIKey.Query)
+		}
+	}
+	for _, in := range p.Inject {
+		headers = append(headers, in.Header)
+	}
+	if o := p.OIDC; o != nil {
+		headers = append(headers, "Cookie")
+		for _, h := range []string{o.AccessTokenHeader, o.IDTokenHeader} {
+			if h != "" {
+				headers = append(headers, h)
+			}
 		}
 	}
 	return
@@ -121,7 +158,11 @@ func (tr *Trace) explainAuth(w *TraceWinner, e *Entry, q ExplainRequest, r *http
 		now = time.Now()
 	}
 	ip, _ := netip.ParseAddr(q.Remote)
-	res := p.c.evaluate(authInput{r: r, clientIP: ip, now: now, offline: !q.Live})
+	res := p.c.evaluate(authInput{r: r, clientIP: ip, now: now, offline: !q.Live, https: q.Scheme == "https"})
+	ta.Secrets = p.describeSecrets()
+	if res.authz != nil {
+		ta.AuthzRule, ta.AuthzAction = res.authz.Rule, res.authz.Action
+	}
 	tr.authRes = &res
 	ta.Decision, ta.Status, ta.Method, ta.Subject, ta.Reason, ta.Challenge = res.Decision, res.Status, res.Method, res.Subject, res.Reason, res.Challenges
 	switch res.Decision {
@@ -135,6 +176,9 @@ func (tr *Trace) explainAuth(w *TraceWinner, e *Entry, q ExplainRequest, r *http
 		for hname := range res.headers {
 			ta.Headers = append(ta.Headers, http.CanonicalHeaderKey(hname))
 		}
+		for _, in := range res.inject {
+			ta.Headers = append(ta.Headers, http.CanonicalHeaderKey(in.name))
+		}
 		sort.Strings(ta.Headers)
 		ta.Note = "the request is admitted and the headers above are set for the backend"
 	case "deny":
@@ -142,6 +186,14 @@ func (tr *Trace) explainAuth(w *TraceWinner, e *Entry, q ExplainRequest, r *http
 	default:
 		ta.Note = "the outcome depends on what this offline view cannot see"
 	}
+}
+
+// claims are the verified claims of the explained request, if its policy admits it.
+func (tr *Trace) claims() map[string]any {
+	if tr.authRes != nil && tr.authRes.allowed() {
+		return tr.authRes.claims
+	}
+	return nil
 }
 
 // redactRequest hides credentials in the echoed request. It runs when Explain
