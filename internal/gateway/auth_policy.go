@@ -240,6 +240,8 @@ type authResult struct {
 	Challenges []string
 	headers    map[string]string
 	strip      func(*http.Request)
+	// claims are the verified JWT claims (method jwt only); AI budgets read them.
+	claims jwtClaims
 }
 
 func (a authResult) allowed() bool { return a.Decision == "allow" }
@@ -293,7 +295,7 @@ func (c *compiledAuth) credentials(in authInput) authResult {
 			claims, je := c.jwt.verify(tok, in.now, in.offline)
 			switch {
 			case je == nil:
-				res := authResult{Decision: "allow", Method: "jwt", Reason: "JWT verified", headers: map[string]string{}, strip: c.jwt.strip}
+				res := authResult{Decision: "allow", Method: "jwt", Reason: "JWT verified", headers: map[string]string{}, strip: c.jwt.strip, claims: claims}
 				if sub, ok := claims["sub"].(string); ok {
 					res.Subject = sub
 				}
@@ -430,6 +432,7 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 	res := c.evaluate(authInput{r: r, clientIP: ip, cert: cert, certKnown: true, now: s.authNow()})
 	if res.allowed() {
 		s.ext.authOutcome(st.route, "allowed", "")
+		st.authRes = &res
 		res.apply(r)
 		return false
 	}
@@ -460,6 +463,9 @@ func (s *Server) authNow() time.Time {
 // postApply runs after a table is swapped in: OCSP tracking of the listener
 // certificates and the list of query parameters that carry credentials.
 func (s *Server) postApply(t *Table) {
+	if err := s.ai.prices.reload(false); err != nil {
+		s.diag("AI price table: %v", err)
+	}
 	s.ocspSync(t)
 	s.acmeSync(t)
 	s.proxySync(t)

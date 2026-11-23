@@ -71,6 +71,8 @@ type reqState struct {
 	in          *countReader
 	open        *openConn
 	up          upInfo
+	authRes     *authResult // the verified identity of an allowed request, when a policy ran
+	ai          *aiReq      // AI route accounting (ai_serve.go)
 }
 
 // countBody makes the request body count the bytes it delivers.
@@ -196,6 +198,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 	if s.authDenied(rec, r, st, l, rule.Rule) {
+		return
+	}
+	if rule.AI != nil {
+		s.serveAI(rec, r, st, rule)
 		return
 	}
 

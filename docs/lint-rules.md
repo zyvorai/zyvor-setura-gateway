@@ -25,6 +25,14 @@
 | SET017 | warning | `setura.zyvor.dev/auth` API key or basic auth password stored in clear text instead of a hash |
 | SET018 | error | `setura.zyvor.dev/auth` block or annotation is invalid, or names a rule that does not exist |
 | SET019 | error | Gateway API 1.5 setting the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, `backendRequest` longer than `request`, BackendTLSPolicy without hostname or CA source (see [gateway-api-1-5.md](gateway-api-1-5.md)) |
+| SET020 | error | `setura.zyvor.dev/ai` block or annotation is invalid, or names a rule that does not exist (see [ai-gateway.md](ai-gateway.md)) |
+| SET021 | error | AI token budget counts per an identity (`apikey`, `subject`, `claim:NAME`) the rule's auth policy cannot provide |
+| SET022 | warning | AI budget or cache identity is a request header the client sets itself, on a rule without an auth policy |
+| SET023 | warning | AI provider with an API key is called over plain `http://` outside loopback, private addresses and in-cluster names |
+| SET024 | warning | AI rule has no auth policy: everyone who can reach the gateway spends the provider keys |
+| SET025 | warning | AI prompt cache scope `route` on a rule that authenticates: one client's cached answer can be served to another |
+| SET026 | warning | AI `monthlyCost` budget with no `prices` on the route (only `--ai-prices` on the gateway could price it) |
+| SET027 | warning | AI rule also has `backendRefs`, which are ignored |
 
 ## ReferenceGrants (SET004, SET012)
 

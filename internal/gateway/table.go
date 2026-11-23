@@ -95,6 +95,8 @@ type CRule struct {
 	BackendTimeout time.Duration
 	// Session is the compiled session persistence policy, if any.
 	Session *CSession
+	// AI is the compiled AI gateway policy; such a rule serves its providers, not backendRefs.
+	AI *compiledAI
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -173,6 +175,7 @@ type Backend struct {
 	CB         *CircuitOptions
 	H2C        bool   // HTTP/2 prior knowledge to http:// endpoints
 	ProxyProto string // "v1", "v2" or "": PROXY protocol header on upstream connections
+	noProbe    bool   // never actively health checked (AI providers: probing a paid API would cost money)
 }
 
 // pick returns the next healthy endpoint, or any endpoint when none is.
@@ -577,6 +580,12 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 	}
 	if err := compileAuth(rule.Auth); err != nil {
 		return nil, nil, err
+	}
+	if rule.AI.active() || (rule.AI != nil && rule.AI.annErr != nil) {
+		var err error
+		if cr.AI, err = t.compileAI(r, idx, rule.AI); err != nil {
+			return nil, nil, err
+		}
 	}
 	if rule.Timeouts != nil {
 		var err error

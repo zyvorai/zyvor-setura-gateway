@@ -50,7 +50,7 @@ var helpGroups = []helpGroup{
 		{"ai", "REPORT [--model NAME]", "explain saved evidence, optionally with local Ollama"},
 	}},
 	{"Publish", []helpEntry{
-		{"gateway", "run|up|install|rollout|history|rollback", "built-in Gateway API data plane, no Envoy needed; guarded config rollout"},
+		{"gateway", "run|up|install|rollout|history|rollback|ai-usage", "built-in Gateway API data plane, no Envoy needed; guarded config rollout; AI gateway routes (providers, token budgets, cache, PII) and `gateway ai-usage`"},
 		{"shadow", "[--admin ADDR] [--follow] [--fail-under PCT]", "compare mirrored HTTP and gRPC responses with the primary (built-in gateway /shadow); exit 1 under the threshold"},
 		{"init", "[--route host=upstream | --openapi FILE]", "scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI JSON file"},
 		{"publish", "GATEWAY --listener NAME", "forward an Envoy Gateway listener to IPv4 loopback"},
@@ -79,7 +79,7 @@ var cmdExamples = map[string][]string{
 	"check":     {"setura check examples/checks.json --junit results.xml", "setura check examples/checks.json --context prod-eu,prod-us"},
 	"inspect":   {"setura inspect orders -n demo"},
 	"listeners": {"setura listeners dev -n demo"},
-	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json [--steps 10,50,100|--no-steps] [--max-error-rate 0.01 --max-p95 300ms]", "setura gateway run --config routes.json --shadow-diff 10 --shadow-state shadow.json", "setura gateway history --config live.json", "setura gateway rollback --config live.json"},
+	"gateway":   {"setura gateway rollout --config live.json --new candidate.json --checks checks.json [--steps 10,50,100|--no-steps] [--max-error-rate 0.01 --max-p95 300ms]", "setura gateway run --config routes.json --shadow-diff 10 --shadow-state shadow.json", "setura gateway history --config live.json", "setura gateway rollback --config live.json", "setura gateway run --config routes.json --ai-prices prices.json", "setura gateway ai-usage --admin 127.0.0.1:19000 --route shop/llm"},
 	"gate":      {"setura gate orders http://127.0.0.1:8080/ --gateway dev --backend orders-v2 -n demo"},
 	"compare":   {"setura compare https://orders.example.test/ --target dns --target 10.0.0.5"},
 	"snapshot":  {"setura snapshot -n demo > before.json", "setura --context prod-eu,prod-us snapshot -n demo"},

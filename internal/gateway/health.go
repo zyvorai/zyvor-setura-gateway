@@ -291,7 +291,7 @@ type healthConfig struct {
 
 func (s *Server) healthConfigFor(b *Backend) *healthConfig {
 	hc := b.Health
-	if hc == nil && s.res.opt().HealthPath == "" {
+	if b.noProbe || (hc == nil && s.res.opt().HealthPath == "") {
 		return nil
 	}
 	c := &healthConfig{path: s.res.opt().HealthPath, interval: s.res.opt().HealthInterval, timeout: s.res.opt().HealthTimeout, unhealthy: 1, healthy: 1}

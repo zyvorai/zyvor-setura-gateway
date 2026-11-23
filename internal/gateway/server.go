@@ -58,6 +58,8 @@ type Options struct {
 	AuthClock func() time.Time
 	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
 	Cert CertOptions
+	// AI holds the gateway wide settings of AI routes (price table, label limits).
+	AI AIOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -128,6 +130,7 @@ type Server struct {
 	proxyOut atomic.Bool              // some backend sends PROXY headers
 	acme     *acmeManager             // nil without --acme-dir
 	acmeErr  error                    // reported by the first Apply
+	ai       aiRuntime                // AI route budgets, caches and counters (ai_runtime.go)
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -146,6 +149,7 @@ func New(opts Options) *Server {
 	}
 	s := &Server{opts: opts, stats: newStats(), conns: newConnTable(hist), obs: newObs(&opts), res: newResilience(opts.Resilience), ports: map[int]*boundPort{}, tr: mk(false), trInsecure: mk(true),
 		hist: newRateHistory(), trusted: trustedNets(opts.Obs.TrustedProxies)}
+	s.ai.init(opts.AI)
 	s.shadowP = s.startShadowPersist()
 	s.initCert()
 	return s
@@ -642,6 +646,7 @@ func (s *Server) startAdmin() error {
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
 	mux.HandleFunc("/acme", jsonOut(func() any { return s.ACMEInfo() }))
+	mux.HandleFunc("/ai/usage", jsonOut(func() any { return s.Usage() }))
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)

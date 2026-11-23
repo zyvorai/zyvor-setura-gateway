@@ -137,6 +137,8 @@ type Rule struct {
 	} `json:"timeouts,omitempty"`
 	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth).
 	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
+	// AI turns the rule into an AI gateway route (setura.zyvor.dev/ai, ai_config.go).
+	AI *AIPolicy `json:"setura.zyvor.dev/ai,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -381,6 +383,9 @@ type Config struct {
 	ListenerSets []*ListenerSet
 	TCPRoutes    []*L4Route
 	UDPRoutes    []*L4Route
+	// AIKeys are the Kubernetes Secret values AI provider apiKey.secret refs
+	// name ("namespace/name#key"), read by the Kubernetes source.
+	AIKeys map[string]string
 
 	skipCerts bool // offline replay: do not load listener certificates
 }
@@ -481,6 +486,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			}
 			annotateHTTP(spec.Rules, spec.Annotations)
 			annotateAuth(spec.Rules, spec.Annotations)
+			annotateAI(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

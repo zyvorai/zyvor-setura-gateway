@@ -446,6 +446,9 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 			fmt.Fprintln(b, u.gray("        headers set for the backend: "+strings.Join(a.Headers, ", ")))
 		}
 	}
+	if a := win.AI; a != nil {
+		u.whyAI(b, a, width)
+	}
 	if rl := win.RateLimit; rl != nil {
 		switch {
 		case !rl.Enabled:
@@ -485,6 +488,69 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 	}
 	for _, n := range win.Notes {
 		for _, ln := range wrap(n, "    ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+	}
+}
+
+// whyAI prints the AI gateway explanation: the provider a request goes to and
+// why, what happens when it fails, and the policies in force.
+func (u *ui) whyAI(b *strings.Builder, a *builtin.TraceAI, width int) {
+	api := a.API
+	if api == "" {
+		api = "AI"
+	}
+	fmt.Fprintf(b, "    %s AI route (%s API)\n", u.arrow(), api)
+	for _, ln := range wrap(a.Why, "        ", width) {
+		fmt.Fprintln(b, ln)
+	}
+	for _, p := range a.Providers {
+		line := fmt.Sprintf("%s  %s  priority %d, weight %d", p.Name, p.Type, p.Priority, p.Weight)
+		if p.Percent > 0 {
+			line += fmt.Sprintf(", %.0f%% of first choices", p.Percent)
+		}
+		sym := u.okSym()
+		switch {
+		case p.Role == "excluded":
+			sym, line = u.idleSym(), u.gray(line+" (excluded: "+p.Reason+")")
+		case p.State != "healthy":
+			sym = u.failSym()
+			line += " " + u.red(p.State)
+			if p.Until != "" {
+				line += u.gray(" until " + p.Until)
+			}
+		}
+		fmt.Fprintf(b, "        %s %s\n", sym, line)
+		fmt.Fprintln(b, u.gray("            key: "+p.Key))
+	}
+	if len(a.Failover) > 0 {
+		fmt.Fprintln(b, u.gray("        failover order after the first choice: "+strings.Join(a.Failover, ", ")))
+	}
+	if a.Credentials != "" {
+		for _, ln := range wrap(a.Credentials, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+	}
+	if a.Identity != "" {
+		fmt.Fprintln(b, u.gray("        identity: "+a.Identity))
+	}
+	for _, x := range a.Budget {
+		for _, ln := range wrap(x, "        ", width) {
+			fmt.Fprintln(b, u.gray(ln))
+		}
+	}
+	for _, w := range a.Usage {
+		fmt.Fprintf(b, "        %s %s of %s used now, resets in %s\n", w.Limit, trimNum(w.Used), trimNum(w.Max), humanDur(w.ResetsInSec))
+	}
+	for _, x := range []string{a.Cache, a.PII} {
+		if x != "" {
+			for _, ln := range wrap(x, "        ", width) {
+				fmt.Fprintln(b, u.gray(ln))
+			}
+		}
+	}
+	for _, n := range a.Notes {
+		for _, ln := range wrap(n, "        ", width) {
 			fmt.Fprintln(b, u.gray(ln))
 		}
 	}

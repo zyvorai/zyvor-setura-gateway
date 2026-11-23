@@ -25,6 +25,8 @@ func runGateway(args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "rollout", "history", "rollback":
 			return runRolloutCommand(args[0], args[1:], stdout, stderr)
+		case "ai-usage":
+			return runAIUsage(args[1:], stdout, stderr)
 		}
 	}
 	builtin.DefaultImage = "ghcr.io/zyvorai/zyvor-setura-gateway:" + Version

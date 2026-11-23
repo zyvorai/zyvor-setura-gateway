@@ -69,6 +69,7 @@ func (s *Server) writeMetrics(w io.Writer, om bool) {
 	s.writeShadowMetrics(w)
 	s.latency.write(w, om)
 	s.writeExtMetrics(w)
+	s.writeAIMetrics(w)
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {

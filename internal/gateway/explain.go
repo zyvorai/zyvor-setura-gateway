@@ -262,6 +262,7 @@ type TraceWinner struct {
 	Retry         *TraceRetry     `json:"retry,omitempty"`
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
 	Auth          *TraceAuth      `json:"auth,omitempty"`
+	AI            *TraceAI        `json:"ai,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 
 	// Gateway API 1.5 additions (explain_ext.go).
@@ -837,6 +838,13 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 		w.Redirect = &TraceRedirect{Status: code, Location: redirectURL(r, rule.Redirect, e.Match, pg.TLS)}
 		tr.explainExtras(w, e, r)
 		tr.finishBackends(w)
+		return
+	}
+	if rule.AI != nil {
+		tr.Verdict, tr.Reason = VerdictRouted, fmt.Sprintf("rule %d of %s won: an AI route", w.Rule, w.Route)
+		if len(w.AI.Providers) == 0 || w.AI.Primary == "" {
+			tr.Verdict, tr.Reason = VerdictNoBackend, fmt.Sprintf("rule %d of %s won, but %s", w.Rule, w.Route, w.AI.Why)
+		}
 		return
 	}
 	defs := t.refDefs(e)
