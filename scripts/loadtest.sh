@@ -57,7 +57,7 @@ trap cleanup EXIT
 free_port() {
   local p
   while :; do
-    p=$((20000 + RANDOM % 40000))
+    p=$((20000 + RANDOM % 12000))
     (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; return; }
   done
 }
@@ -91,7 +91,7 @@ for _ in $(seq 1 50); do
   (exec 3<>"/dev/tcp/127.0.0.1/$GWPORT") 2>/dev/null && break
   sleep 0.2
 done
-(exec 3<>"/dev/tcp/127.0.0.1/$GWPORT") 2>/dev/null || { cat "$tmp/gateway.log" >&2; echo "gateway port $GWPORT not accepting connections" >&2; exit 1; }
+(exec 3<>"/dev/tcp/127.0.0.1/$GWPORT") 2>/dev/null || { cat "$tmp/gateway.log" >&2; curl -s "http://127.0.0.1:$ADMIN/status" >&2 || true; echo "gateway port $GWPORT not accepting connections" >&2; exit 1; }
 
 # RSS of the gateway process once a second (ps works on Linux and macOS).
 ( while kill -0 "$GW" 2>/dev/null; do echo "$(date +%s) $(ps -o rss= -p "$GW" | tr -d ' ')" >>"$OUT/rss.txt"; sleep 1; done ) &
