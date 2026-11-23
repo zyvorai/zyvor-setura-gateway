@@ -177,6 +177,11 @@ func (d gwDelta) rate() float64 {
 // p95 estimates the 95th percentile of the observations added between two
 // cumulative bucket readings, interpolating inside the bucket.
 func p95Between(before, after []gwBucket) (ms float64, ok bool) {
+	return quantileBetween(before, after, 0.95)
+}
+
+// quantileBetween is p95Between for any quantile q in (0, 1).
+func quantileBetween(before, after []gwBucket, q float64) (ms float64, ok bool) {
 	if len(after) == 0 {
 		return 0, false
 	}
@@ -192,7 +197,7 @@ func p95Between(before, after []gwBucket) (ms float64, ok bool) {
 	if total <= 0 {
 		return 0, false
 	}
-	target := 0.95 * float64(total)
+	target := q * float64(total)
 	lo, below := 0.0, int64(0)
 	for _, b := range delta {
 		if float64(b.cum) >= target {

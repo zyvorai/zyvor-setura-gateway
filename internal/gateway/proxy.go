@@ -199,6 +199,16 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		return
 	}
 
+	if p := s.planFaults(t, rule, r); p != nil {
+		done, after := s.applyFaults(rec, r, st, p)
+		if done {
+			return
+		}
+		if after != nil {
+			defer after()
+		}
+	}
+
 	if rule.Redirect != nil {
 		shapeResponse(rec.Header(), r, rule.Rule.Filters)
 		rec.Header().Set("Location", redirectURL(r, rule.Redirect, e.Match, pg.TLS))

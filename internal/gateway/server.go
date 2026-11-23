@@ -128,6 +128,7 @@ type Server struct {
 	proxyOut atomic.Bool              // some backend sends PROXY headers
 	acme     *acmeManager             // nil without --acme-dir
 	acmeErr  error                    // reported by the first Apply
+	chaos    chaosState               // run-time fault injection (chaos.go)
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -327,6 +328,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	}
 	t := BuildTable(cfg)
 	s.carryState(s.table.Load(), t)
+	armFaults(s.table.Load(), t, s.res.now())
 	bindErr := map[string]string{}
 	specPorts := make([]int, 0, len(t.Ports))
 	for p := range t.Ports {
@@ -630,7 +632,9 @@ func (s *Server) startAdmin() error {
 	mux.HandleFunc("/stats", jsonOut(func() any { return s.stats.Snapshot() }))
 	mux.HandleFunc("/status", jsonOut(func() any {
 		if d := s.Status(); d != nil {
-			return d
+			cp := *d
+			cp.Chaos = s.chaosForStatus()
+			return &cp
 		}
 		return nil
 	}))
@@ -641,6 +645,7 @@ func (s *Server) startAdmin() error {
 		return nil
 	}))
 	mux.HandleFunc("/why", s.handleWhy)
+	mux.HandleFunc("/chaos", s.chaosHandler)
 	mux.HandleFunc("/acme", jsonOut(func() any { return s.ACMEInfo() }))
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}

@@ -365,3 +365,12 @@ func TestConnectionsEndpointAndBroadcast(t *testing.T) {
 		t.Error("broadcast events must not enter the replay buffer")
 	}
 }
+
+func TestPageHasFaultInjectionBanner(t *testing.T) {
+	s := string(page)
+	for _, want := range []string{`id="chaosb"`, `S.chaos`, `setura chaos stop`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}

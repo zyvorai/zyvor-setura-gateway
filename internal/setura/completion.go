@@ -18,6 +18,8 @@ var commandNames = []string{
 	"diff",
 	"migrate",
 	"replay",
+	"pr-check",
+	"chaos",
 	"map",
 	"ui",
 	"connections",
@@ -52,6 +54,13 @@ var migrateFlags = []string{"--ingress", "--routes", "--services", "--objects", 
 
 // replayFlags are offered after "setura replay".
 var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit", "--ignore-weights", "--fail-on", "--default-host", "--before-rate-limit", "--after-rate-limit"}
+
+// chaosFlags are offered after "setura chaos".
+var chaosFlags = []string{"run", "stop", "status", "--plan", "--admin", "--report", "--format", "--dry-run", "--takeover"}
+
+// prCheckFlags are offered after "setura pr-check".
+var prCheckFlags = []string{"--base", "--head", "--traffic", "--format", "--fail-if-changed-over", "--limit", "--default-host",
+	"--base-rate-limit", "--head-rate-limit"}
 
 // gatewayFlags are offered after "setura gateway".
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
@@ -90,6 +99,8 @@ var flagSets = []struct {
 }{
 	{"migrate", migrateFlags},
 	{"replay", replayFlags},
+	{"pr-check", prCheckFlags},
+	{"chaos", chaosFlags},
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
 	{"why", whyFlags},

@@ -137,6 +137,9 @@ type Rule struct {
 	} `json:"timeouts,omitempty"`
 	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth).
 	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
+	// Fault injects latency, errors and other failures for game days. It must
+	// carry a ttl or an expiry (setura.zyvor.dev/fault, chaos.go).
+	Fault *Fault `json:"setura.zyvor.dev/fault,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -481,6 +484,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			}
 			annotateHTTP(spec.Rules, spec.Annotations)
 			annotateAuth(spec.Rules, spec.Annotations)
+			annotateFault(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

@@ -95,6 +95,8 @@ type CRule struct {
 	BackendTimeout time.Duration
 	// Session is the compiled session persistence policy, if any.
 	Session *CSession
+	// Fault is the compiled fault of the rule (chaos.go), armed by Apply.
+	Fault *CFault
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -577,6 +579,12 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 	}
 	if err := compileAuth(rule.Auth); err != nil {
 		return nil, nil, err
+	}
+	if rule.Fault != nil {
+		var err error
+		if cr.Fault, err = CompileFault(rule.Fault); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", FaultKey, err)
+		}
 	}
 	if rule.Timeouts != nil {
 		var err error

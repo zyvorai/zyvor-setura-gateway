@@ -21,7 +21,7 @@ func withShadowAnnotations(object obj) any {
 	}
 	keep := obj{}
 	for k, v := range asMap(asMap(object["metadata"])["annotations"]) {
-		if strings.HasPrefix(k, builtin.ShadowDiffKey) || strings.HasPrefix(k, builtin.AuthKey) {
+		if strings.HasPrefix(k, builtin.ShadowDiffKey) || strings.HasPrefix(k, builtin.AuthKey) || strings.HasPrefix(k, builtin.FaultKey) {
 			keep[k] = v
 		}
 	}

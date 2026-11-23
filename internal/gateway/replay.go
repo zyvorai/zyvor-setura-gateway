@@ -56,6 +56,24 @@ type Decision struct {
 	// the true outcome is unknown; the fields above describe the no-header case.
 	HeaderDependent bool     `json:"header_dependent,omitempty"`
 	HeaderRoutes    []string `json:"header_routes,omitempty"`
+	// Rewrite, Filters and Auth describe what the rule does to this request
+	// besides routing it: the URLRewrite result, the other filters, and the
+	// kinds of auth policy that gate it. They are for setura pr-check and are
+	// kept out of the replay JSON.
+	Rewrite string   `json:"-"`
+	Filters []string `json:"-"`
+	Auth    string   `json:"-"`
+}
+
+// RouteKeys lists the routes the table attached, as status keys
+// (namespace/name, or Kind/namespace/name for gRPC and TLS routes).
+func (t *Table) RouteKeys() []string {
+	var out []string
+	for _, r := range t.routes {
+		out = append(out, r.Route.StatusKey())
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ParseReplayConfig parses a snapshot for offline replay and builds its
@@ -150,6 +168,7 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 	d.Route, d.Rule = rule.RouteKey, rule.Index
 	if !e.GRPC {
 		d.Retry, d.Timeout, d.Mirrors = rulePolicy(rule)
+		d.Rewrite, d.Filters, d.Auth = ruleExtras(rule, r, e.Match)
 	}
 	if rule.Redirect != nil {
 		d.Outcome = OutcomeRedirect
