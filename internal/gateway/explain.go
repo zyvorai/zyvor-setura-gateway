@@ -153,6 +153,7 @@ type Trace struct {
 	// credHeaders and credQuery name where the winning rule's auth policy reads
 	// credentials, so the echoed request can hide them.
 	credHeaders, credQuery []string
+	authRes                *authResult // outcome of the winning rule's policy, for plan resolution
 	erec                   []entryRec
 	trec                   []tlsRec
 }
@@ -276,6 +277,7 @@ type TraceWinner struct {
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
 	RouteLimit    *TraceRateLimit `json:"route_rate_limit,omitempty"` // the rule's own limiter
 	Auth          *TraceAuth      `json:"auth,omitempty"`
+	Plan          *TracePlan      `json:"plan,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 	Faults        []TraceFault    `json:"faults,omitempty"`
 

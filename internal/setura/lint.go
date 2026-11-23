@@ -38,6 +38,9 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET030", SeverityError, "direct-response, rate-limit or limits block (rule extension or annotation) is invalid or targets no rule, a direct-response rule also names backends, a redirect, a mirror or ExternalAuth, or a listener has invalid TLS version or limits settings"},
 	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
 	{"SET031", SeverityError, "fault block (rule extension or setura.zyvor.dev/fault annotation) is invalid, has no ttl or expires, or targets no rule"},
+	{"SET020", SeverityError, "API plan file (--plans) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method"},
+	{"SET021", SeverityWarning, "API plan file names a route (plan routes or unmeteredRoutes) that no HTTPRoute in the snapshot has"},
+	{"SET022", SeverityWarning, "API plan file maps an API key name that no route's apiKey policy declares"},
 }
 
 func ruleSeverity(id string) string {

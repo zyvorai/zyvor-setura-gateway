@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -565,6 +566,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		snap := fs.String("snapshot", "", "read a Setura snapshot instead of querying Kubernetes")
 		strict := fs.Bool("strict", false, "exit 1 on warnings as well as errors")
 		rules := fs.Bool("rules", false, "list the lint rules and exit")
+		plansFile := fs.String("plans", "", "also check this gateway API plan file against the snapshot's routes (SET020-SET022)")
 		nsFlag()
 		if _, err := parse(fs, rest); err != nil {
 			return 2, err
@@ -616,6 +618,13 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err != nil {
 			return 0, err
 		}
+		if *plansFile != "" {
+			raw, err := os.ReadFile(*plansFile)
+			if err != nil {
+				return 0, err
+			}
+			report = LintPlans(report, raw, "PlanFile/"+filepath.Base(*plansFile), snapshot)
+		}
 		if *writeBaseline != "" {
 			all := ApplyLintOptions(report, LintOptions{Disable: lopts.Disable, Override: lopts.Override})
 			if err := WriteBaseline(all, *writeBaseline); err != nil {
@@ -664,6 +673,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 
 	case "shadow":
 		return runShadow(fs, rest, stdout, stderr, u)
+
+	case "usage":
+		return runUsage(fs, rest, stdout, stderr, u)
 
 	case "replay":
 		return runReplay(fs, rest, u, stdoutTTY, os.Stdin, stdout, stderr)

@@ -38,6 +38,7 @@ var commandNames = []string{
 	"exposure",
 	"gateway",
 	"shadow",
+	"usage",
 	"completion",
 	"watch",
 	"history",
@@ -72,7 +73,8 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample",
 	"install", "status", "--service-type", "--node-port", "--listener-port", "--external-traffic-policy", "--host-network", "--arg", "--resources",
 	"--node-selector", "--admin-token-secret", "--no-admin-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
-	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A"}
+	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A",
+	"--plans", "--plans-interval", "--usage-state", "--usage-interval", "--usage-max-series", "--usage-retention-days"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
@@ -89,7 +91,13 @@ var uiFlags = []string{"--listen", "--snapshot", "--kube", "--token", "--redact"
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
-var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff", "--normalize-path", "--merge-slashes", "--reject-escaped-slashes"}
+var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff", "--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--plans"}
+
+// usageFlags are offered after "setura usage".
+var usageFlags = []string{"invoice", "--admin", "--format", "--since", "--until", "--by", "--identity", "--route", "--plan", "--period", "--plans"}
+
+// lintFlags are offered after "setura lint".
+var lintFlags = []string{"--format", "--manifest-dir", "--baseline", "--write-baseline", "--disable", "--severity-override", "--snapshot", "--strict", "--rules", "--namespace", "--plans"}
 
 // initFlags are offered after "setura init".
 var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}
@@ -109,6 +117,8 @@ var flagSets = []struct {
 	{"chaos", chaosFlags},
 	{"gateway", gatewayFlags},
 	{"shadow", shadowFlags},
+	{"usage", usageFlags},
+	{"lint", lintFlags},
 	{"why", whyFlags},
 	{"connections", connectionsFlags},
 	{"top", topFlags},

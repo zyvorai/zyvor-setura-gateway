@@ -97,6 +97,9 @@ compare mirrored HTTP and gRPC responses with the primary (built\-in gateway /sh
 .B chaos run \-\-plan F | stop | status [\-\-admin ADDR]
 game\-day fault injection (latency, abort, reset, truncate, throttle) with a safety guard on the gateway's own SLO signals; every fault expires, `chaos stop` kills them all
 .TP
+.B usage [invoice \-\-period YYYY\-MM] [\-\-by key|route|plan] [\-\-since 7d]
+API usage per key, route or plan from the gateway's metering (table, JSON or CSV); invoice prices a month from the plan prices
+.TP
 .B init [\-\-route host=upstream | \-\-openapi FILE]
 scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI JSON file
 .TP
@@ -142,6 +145,8 @@ The built\-in gateway can protect an HTTPRoute rule with an \fBsetura.zyvor.dev/
 GRPCRoute rules take the same auth block; rejections are Trailers\-Only gRPC statuses (UNAUTHENTICATED, PERMISSION_DENIED, RESOURCE_EXHAUSTED). \fB\-\-client\-allow\-san\fR and \fB\-\-client\-allow\-cn\fR (or a Gateway's \fBsetura.zyvor.dev/client\-allow\fR annotation) restrict validated client certificates to named SANs or subject CNs, exact or *.suffix; refusals are logged and counted. \fB\-\-client\-cert\-xfcc\fR adds an Envoy\-style X\-Forwarded\-Client\-Cert header. A RequestHeaderModifier value may use {client_ip}, {request_id}, {host}, {scheme} and {listener}. \fB\-\-access\-log\-exclude\fR PATTERN and \fB\-\-access\-log\-sample\fR N keep requests out of the access log while they still count in metrics. See docs/client\-cert\-authz.md and docs/headers\-and\-logs.md.
 .SH GATEWAY LIMITS AND RESPONSES
 A rule can answer without a backend with a \fBsetura.zyvor.dev/direct\-response\fR block (status, body, headers), carry its own token bucket with \fBsetura.zyvor.dev/rate\-limit\fR (rate, burst, key route|client\-ip|header:NAME; the gateway\-wide \fB\-\-rate\-limit\fR still applies) and override the gateway limits with \fBsetura.zyvor.dev/limits\fR. \fBsetura gateway run\fR limits requests with \fB\-\-max\-request\-body\fR (413), \fB\-\-max\-header\-bytes\fR (431), \fB\-\-header\-read\-timeout\fR, \fB\-\-idle\-timeout\fR and \fB\-\-stream\-idle\-timeout\fR, normalises paths before routing with \fB\-\-normalize\-path\fR, \fB\-\-merge\-slashes\fR and \fB\-\-reject\-escaped\-slashes\fR (all off by default) and bounds TLS with \fB\-\-tls\-min\-version\fR and \fB\-\-tls\-max\-version\fR. See docs/direct\-response.md and docs/limits.md.
+.SH API PLANS AND USAGE
+\fBsetura gateway run \-\-plans\fR FILE turns on API monetisation in the built\-in gateway: a hot\-reloaded JSON plan file defines named plans (requests per minute, day and month, a body byte quota, burst, allowed routes and methods, an optional price per 1000 requests, hard or soft enforcement) and maps API keys, JWT subjects, tenants or a trusted upstream header to a plan. Requests over a hard quota get 429 with Retry\-After, a JSON body naming the quota and X\-Quota\-Limit, X\-Quota\-Remaining and X\-Quota\-Reset headers. Usage is metered per identity, route and plan, bounded in memory and persisted atomically with \fB\-\-usage\-state\fR. \fBsetura usage\fR prints it (\fB\-\-by\fR key|route|plan|day, \fB\-\-since\fR, \fB\-\-format\fR table|json|csv); \fBsetura usage invoice \-\-period\fR YYYY\-MM prices a month. \fBsetura why \-\-plans\fR FILE explains which plan and quota apply to a request and \fBsetura lint \-\-plans\fR FILE checks the file against the routes (SET020 to SET022). The gateway admin endpoint serves /usage, /usage.csv and /plans. Counters and quotas are per gateway replica: nothing is shared between replicas; see docs/metering-plans.md.
 .SH EXIT STATUS
 .TP
 .B 0

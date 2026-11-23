@@ -71,6 +71,8 @@ type reqState struct {
 	in          *countReader
 	open        *openConn
 	up          upInfo
+	auth        *authResult // verified identity of an allowed request
+	meter       *meterCtx   // set once the request was admitted by a plan
 }
 
 // countBody makes the request body count the bytes it delivers.
@@ -123,6 +125,7 @@ func (s *Server) logRequest(rec *recorder, r *http.Request, st *reqState, start 
 	s.hist.observe(st.route, status, d)
 	s.latency.observeTrace(st.route, st.backend, d, st.trace.TraceID)
 	s.observe(rec, r, st, start, end, status)
+	s.meterDone(rec, st, status, d)
 }
 
 func (s *Server) intn(n int) int {
@@ -224,6 +227,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		if after != nil {
 			defer after()
 		}
+	}
+	if s.planDenied(rec, r, st) {
+		return
 	}
 
 	if rule.Redirect != nil {
@@ -357,6 +363,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			if idleCancel != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 				resp.Body = newIdleBody(resp.Body, idle, idleCancel)
 			}
+			stripQuotaHeaders(resp.Header, st)
 			shapeResponse(resp.Header, r, requestFilters(rule, ref))
 			if len(rule.sessionPolicies()) > 0 && resp.Request != nil {
 				var served *Endpoint

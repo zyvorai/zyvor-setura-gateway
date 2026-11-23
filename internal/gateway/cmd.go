@@ -123,6 +123,13 @@ Flags for run and up:
                         a setura.zyvor.dev/shadow-diff block on the filter overrides it (default 0, see /shadow)
   --shadow-state FILE   snapshot shadow results (counters, recent mismatches) to FILE every 10s and
                         reload them at start (default off)
+  --plans FILE          API plans (JSON, hot-reloaded): quotas, routes, prices and the identity to plan mapping; turns on
+                        usage metering and quota enforcement (docs/metering-plans.md)
+  --plans-interval DUR  how often the plan file is re-read (default 1s)
+  --usage-state FILE    persist usage counters to FILE (atomic snapshots, reloaded at start) so a restart keeps the month
+  --usage-interval DUR  usage snapshot period (default 30s; a final snapshot is written at shutdown)
+  --usage-max-series N  cap on distinct day+identity+route+plan counters; more fold into an _overflow series (default 10000)
+  --usage-retention-days N   days of counters kept (default 100)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -214,6 +221,12 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.Var(&f.allowSAN, "client-allow-san", "accept only client certificates with a SAN matching PATTERN[,..] (exact or *.suffix; dns:/uri:/email: prefix optional); repeatable")
 	fs.Var(&f.allowCN, "client-allow-cn", "accept only client certificates whose subject CN matches PATTERN[,..] (exact or *.suffix); repeatable")
 	fs.BoolVar(&f.xfcc, "client-cert-xfcc", false, "also forward the verified client certificate as X-Forwarded-Client-Cert")
+	fs.StringVar(&f.opts.Meter.PlansFile, "plans", "", "API plan file (JSON, hot-reloaded); enables usage metering and quotas")
+	fs.DurationVar(&f.opts.Meter.PlansInterval, "plans-interval", 0, "plan file poll interval (default 1s)")
+	fs.StringVar(&f.opts.Meter.StateFile, "usage-state", "", "persist usage counters to FILE (atomic snapshots, reloaded at start)")
+	fs.DurationVar(&f.opts.Meter.StateInterval, "usage-interval", 0, "usage snapshot period (default 30s)")
+	fs.IntVar(&f.opts.Meter.MaxSeries, "usage-max-series", 0, "cap on distinct usage counters before folding into _overflow (default 10000)")
+	fs.IntVar(&f.opts.Meter.RetentionDays, "usage-retention-days", 0, "days of usage counters kept (default 100)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -264,6 +277,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	f.opts.ConnHistory = f.connHist
 	if f.connHist == 0 {
 		f.opts.ConnHistory = -1
+	}
+	if err := f.checkMeter(); err != nil {
+		return nil, err
 	}
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
@@ -614,4 +630,22 @@ func demoHint(s *Server) string {
 		return cmd
 	}
 	return ""
+}
+
+// checkMeter validates the metering flags.
+func (f *runFlags) checkMeter() error {
+	m := &f.opts.Meter
+	switch {
+	case m.PlansFile == "" && (m.StateFile != "" || m.StateInterval != 0 || m.MaxSeries != 0 || m.RetentionDays != 0 || m.PlansInterval != 0):
+		return errors.New("--usage-state, --usage-interval, --usage-max-series, --usage-retention-days and --plans-interval need --plans FILE")
+	case m.PlansInterval < 0:
+		return fmt.Errorf("--plans-interval %s: want a positive duration", m.PlansInterval)
+	case m.StateInterval < 0:
+		return fmt.Errorf("--usage-interval %s: want a positive duration", m.StateInterval)
+	case m.MaxSeries < 0:
+		return fmt.Errorf("--usage-max-series %d: want 1 or more", m.MaxSeries)
+	case m.RetentionDays < 0:
+		return fmt.Errorf("--usage-retention-days %d: want 1 or more", m.RetentionDays)
+	}
+	return nil
 }

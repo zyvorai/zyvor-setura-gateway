@@ -26,6 +26,9 @@
 | SET018 | error | `setura.zyvor.dev/auth` block or annotation is invalid, or names a rule that does not exist |
 | SET031 | error | `setura.zyvor.dev/fault` block or annotation is invalid, has no `ttl` or `expires` (a fault must always end), or names a rule that does not exist (see [chaos.md](chaos.md)) |
 | SET019 | error | Gateway API 1.5 setting the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, `backendRequest` longer than `request`, BackendTLSPolicy without hostname or CA source (see [gateway-api-1-5.md](gateway-api-1-5.md)) |
+| SET020 | error | API plan file (`setura lint --plans FILE`) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method (see [metering-plans.md](metering-plans.md)) |
+| SET021 | warning | API plan file names a route (plan `routes` or `unmeteredRoutes`) that no HTTPRoute in the snapshot has |
+| SET022 | warning | API plan file maps `apikey:NAME` for a key that no route's apiKey policy declares |
 
 ## ReferenceGrants (SET004, SET012)
 
