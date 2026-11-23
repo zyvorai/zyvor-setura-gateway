@@ -286,6 +286,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			annotateHTTP(spec.Rules, r.Metadata.Annotations)
 			annotateAuth(spec.Rules, r.Metadata.Annotations)
 			annotateExt(spec.Rules, r.Metadata.Annotations)
+			annotateFault(spec.Rules, r.Metadata.Annotations)
 		})
 		for _, base := range RuleExtKeys {
 			for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, base, len(spec.Rules)) {

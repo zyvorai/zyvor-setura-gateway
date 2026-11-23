@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -95,4 +96,81 @@ func (t *Table) resolveTLS(spec ReqSpec) Decision {
 		d.Outcome, d.Status = OutcomeRouted, http.StatusOK
 	}
 	return d
+}
+
+// ruleExtras describes the rewrite, the other filters and the auth policy of
+// the rule that serves a request, in a form that compares equal exactly when
+// the data path behaves the same.
+func ruleExtras(rule *CRule, r *http.Request, m *CMatch) (rewrite string, filters []string, auth string) {
+	var rw []string
+	scan := func(scope string, fs []Filter) {
+		for _, f := range fs {
+			switch f.Type {
+			case "URLRewrite":
+				if f.URLRewrite == nil {
+					continue
+				}
+				var p []string
+				if h := f.URLRewrite.Hostname; h != "" {
+					p = append(p, "host "+h)
+				}
+				if pm := f.URLRewrite.Path; pm != nil {
+					p = append(p, fmt.Sprintf("path %s -> %s", r.URL.Path, rewritePath(r.URL.Path, pm, m)))
+				}
+				rw = append(rw, scope+strings.Join(p, ", "))
+			case "RequestHeaderModifier", "ResponseHeaderModifier", "CORS", "ExternalAuth":
+				var v any
+				switch f.Type {
+				case "RequestHeaderModifier":
+					v = f.RequestHeaderModifier
+				case "ResponseHeaderModifier":
+					v = f.ResponseHeaderModifier
+				case "CORS":
+					v = f.CORS
+				default:
+					v = f.ExternalAuth
+				}
+				b, _ := json.Marshal(v)
+				if len(b) > 200 {
+					b = append(b[:200], "..."...)
+				}
+				filters = append(filters, scope+f.Type+" "+string(b))
+			}
+		}
+	}
+	scan("", rule.Rule.Filters)
+	for _, ref := range rule.Refs {
+		scan("backendRef "+ref.Name+": ", ref.Filters)
+	}
+	sort.Strings(rw)
+	sort.Strings(filters)
+	rewrite = strings.Join(rw, "; ")
+	var kinds []string
+	if p := rule.Rule.Auth; p != nil && (p.Enabled == nil || *p.Enabled) {
+		if p.JWT != nil {
+			kinds = append(kinds, "jwt")
+		}
+		if p.APIKey != nil {
+			kinds = append(kinds, "apiKey")
+		}
+		if p.Basic != nil {
+			kinds = append(kinds, "basic")
+		}
+		if len(p.IPAllow) > 0 {
+			kinds = append(kinds, "ipAllow")
+		}
+		if len(p.IPDeny) > 0 {
+			kinds = append(kinds, "ipDeny")
+		}
+		if p.RequireClientCert {
+			kinds = append(kinds, "clientCert")
+		}
+	}
+	for _, f := range rule.Rule.Filters {
+		if f.Type == "ExternalAuth" {
+			kinds = append(kinds, "externalAuth")
+			break
+		}
+	}
+	return rewrite, filters, strings.Join(kinds, ",")
 }

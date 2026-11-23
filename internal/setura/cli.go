@@ -668,6 +668,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "replay":
 		return runReplay(fs, rest, u, stdoutTTY, os.Stdin, stdout, stderr)
 
+	case "pr-check":
+		return runPRCheck(fs, rest, u, stdoutTTY, os.Stdin, stdout, stderr)
+
+	case "chaos":
+		return runChaos(fs, rest, stdout, stderr, u, stdoutTTY)
+
 	case "echo":
 		return runEcho(fs, rest, stdout, stderr)
 

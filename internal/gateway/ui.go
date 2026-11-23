@@ -109,6 +109,9 @@ func (s *Server) UIState() any {
 		if s.opts.ShadowDiff > 0 || s.shadow.active() {
 			m["shadow"] = s.shadow.Summary()
 		}
+		if c := s.chaosForStatus(); c != nil {
+			m["chaos"] = c
+		}
 		s.hist.start(s.opts.HistoryInterval)
 		if hs := s.hist.series(); len(hs) > 0 {
 			m["history"] = map[string]any{"series": hs}

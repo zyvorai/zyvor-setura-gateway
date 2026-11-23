@@ -404,6 +404,7 @@ html[data-still] *,html[data-still] *::before,html[data-still] *::after{animatio
     <p class="detail" id="detail">Reading the current configuration.</p>
     <div class="banner hide" id="err" role="alert"><div><b id="errt"></b><p id="errm"></p></div><button class="btn" id="retry" type="button">Try again</button></div>
     <div class="banner hide" id="reloadbad" role="alert"><div><b>The last reload was rejected</b><p id="reloadm">The previous configuration is still serving.</p></div></div>
+    <div class="banner hide" id="chaosb" role="alert"><div><b id="chaost">Fault injection is on</b><p id="chaosm"></p></div></div>
     <div class="stats" id="stats" aria-label="Overview"></div>
   </section>
 
@@ -609,6 +610,8 @@ function renderError(){
   if(e){$('errt').textContent='Showing the last good data';$('errm').textContent=(e.message||'')+(e.hint?' '+e.hint:'')}
   var rl=S.reload;var bad=rl&&rl.ok===false;$('reloadbad').classList.toggle('hide',!bad);
   if(bad)$('reloadm').textContent='The previous configuration is still serving. '+(rl.error||'').split('\n')[0];
+  var ch=S.chaos,on=!!(ch&&ch.active);$('chaosb').classList.toggle('hide',!on);
+  if(on){var fs=ch.faults||[];$('chaosm').textContent=fs.length+(fs.length===1?' fault is':' faults are')+' injecting failures: '+fs.slice(0,3).map(function(f){return f.route+' ('+f.effect+')'}).join(', ')+(fs.length>3?', and more':'')+'. Each expires on its own; setura chaos stop removes them now.'}
 }
 function renderStats(sm){
   var box=clear($('stats')),items=[];

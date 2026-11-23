@@ -22,13 +22,14 @@ type ExplainServer struct {
 	Limits     LimitsOptions     // --max-request-body and the other limits, for the notes
 	AuthClock  func() time.Time  // clock of token validation (the running gateway's)
 
-	limiter *limiter // live limiter of a running gateway (admin endpoint)
+	limiter *limiter    // live limiter of a running gateway (admin endpoint)
+	chaos   *chaosState // live run-time faults of a running gateway
 }
 
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter, chaos: &s.chaos}
 }
 
 // TraceMirror is one mirror target of the winning rule.

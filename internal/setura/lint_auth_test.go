@@ -146,3 +146,39 @@ func TestAuthRulesCoverGRPCRoute(t *testing.T) {
 		t.Errorf("findings %v, want %v", ids, want)
 	}
 }
+
+func TestLintSET031FaultWithoutTTL(t *testing.T) {
+	find := func(rule obj, spec obj) []string {
+		rt := obj{"parentRefs": []any{obj{"name": "gw"}}, "rules": []any{rule}}
+		for k, v := range spec {
+			rt[k] = v
+		}
+		rep, err := Lint(obj{"schema": snapshotSchema, "namespace": "t", "resources": obj{
+			gateway + "/gw": obj{"gatewayClassName": "x", "listeners": []any{obj{"name": "web", "protocol": "HTTP", "port": 80}}},
+			route + "/r":    rt}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range asList(rep["findings"]) {
+			if m := asMap(f); asStr(m["id"]) == "SET031" {
+				out = append(out, asStr(m["message"]))
+			}
+		}
+		return out
+	}
+	be := []any{obj{"name": "a", "port": 80}}
+	good := obj{builtin.FaultKey: obj{"percent": 5, "abort": obj{"status": 503}, "ttl": "10m"}, "backendRefs": be}
+	if got := find(good, nil); len(got) != 0 {
+		t.Errorf("valid fault flagged: %v", got)
+	}
+	bad := obj{builtin.FaultKey: obj{"percent": 5, "abort": obj{"status": 503}}, "backendRefs": be}
+	if got := find(bad, nil); len(got) != 1 || !strings.Contains(got[0], "no ttl or expires") {
+		t.Errorf("fault without ttl: %v", got)
+	}
+	ann := obj{builtin.SeturaAnnotationsKey: obj{builtin.FaultKey: `{"percent":5,"abort":{"status":503}}`, builtin.FaultKey + ".rule-4": `{}`}}
+	got := find(obj{"backendRefs": be}, ann)
+	if len(got) != 3 || !strings.Contains(strings.Join(got, "\n"), "names no rule") {
+		t.Errorf("annotation without ttl, an empty fault and an orphan annotation: %v", got)
+	}
+}

@@ -464,6 +464,18 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 			fmt.Fprintln(b, u.gray("        headers set for the backend: "+strings.Join(a.Headers, ", ")))
 		}
 	}
+	for _, f := range win.Faults {
+		left := "not armed yet"
+		if f.Armed {
+			left = fmt.Sprintf("%ds left", f.RemainingSeconds)
+		}
+		fmt.Fprintf(b, "    %s %s: %s on %s (%s)\n", u.arrow(), u.red("FAULT INJECTION"), f.Effect, f.Selector, left)
+		if f.Note != "" {
+			for _, ln := range wrap(f.Note, "        ", width) {
+				fmt.Fprintln(b, u.gray(ln))
+			}
+		}
+	}
 	if rl := win.RateLimit; rl != nil {
 		switch {
 		case !rl.Enabled:

@@ -277,6 +277,7 @@ type TraceWinner struct {
 	RouteLimit    *TraceRateLimit `json:"route_rate_limit,omitempty"` // the rule's own limiter
 	Auth          *TraceAuth      `json:"auth,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
+	Faults        []TraceFault    `json:"faults,omitempty"`
 
 	// Gateway API 1.5 additions (explain_ext.go).
 	RuleName        string            `json:"rule_name,omitempty"`
@@ -853,6 +854,9 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 	}
 	tr.Winner = w
 	tr.explainPolicy(w, e, tr.Request, r)
+	if !e.GRPC {
+		w.Faults = tr.Request.Server.describeFaults(t, rule, now)
+	}
 	if rule.Redirect != nil {
 		code := rule.Redirect.StatusCode
 		if code == 0 {

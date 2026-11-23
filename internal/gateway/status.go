@@ -75,6 +75,9 @@ type StatusDoc struct {
 	// ListenerSets and Policies are keyed namespace/name (status_ext.go).
 	ListenerSets map[string]*ListenerSetStatus `json:"listenerSets,omitempty"`
 	Policies     map[string]*PolicyStatus      `json:"backendTLSPolicies,omitempty"`
+	// Chaos lists the faults that are on right now (chaos.go). Served live by
+	// the admin /status; absent when nothing is injected.
+	Chaos *ChaosStatus `json:"chaos,omitempty"`
 }
 
 func mkCond(prev []Condition, typ string, f fact, gen int64, now time.Time) Condition {

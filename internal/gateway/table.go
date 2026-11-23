@@ -112,6 +112,8 @@ type CRule struct {
 	Limit      *limiter
 	MaxBody    *int64
 	StreamIdle *time.Duration
+	// Fault is the compiled fault of the rule (chaos.go), armed by Apply.
+	Fault *CFault
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -605,6 +607,12 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 	}
 	if err := cr.compileExt(rule); err != nil {
 		return nil, nil, err
+	}
+	if rule.Fault != nil {
+		var err error
+		if cr.Fault, err = CompileFault(rule.Fault); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", FaultKey, err)
+		}
 	}
 	if rule.Timeouts != nil {
 		var err error
