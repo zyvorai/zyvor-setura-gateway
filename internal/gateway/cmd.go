@@ -66,6 +66,10 @@ Flags for run and up:
   --lease-retry-period D (2s), --lease-identity ID   Lease settings for --leader-elect
   --service-name N, --service-namespace NS   Service whose address becomes Gateway status.addresses
   --expose-gateway-ports   with --kubernetes: add a Service port for every Gateway listener port
+  --envoy-compat        with --kubernetes: also read Envoy Gateway's optional policy CRDs (BackendTrafficPolicy, ClientTrafficPolicy,
+                        SecurityPolicy, HTTPRouteFilter, Backend), apply what Setura can express with Envoy Gateway's precedence and
+                        write Accepted, Conflicted and Overridden conditions with an Unsupported reason listing ignored fields
+                        (docs/envoy-compat.md, docs/envoy-gateway-compat.md)
   --force               apply configurations that have lint errors
   --udp-idle-timeout DUR   close a UDP session after DUR without client datagrams (default 30s)
   --access-log FILE|-|off   access log (default "-", stdout)
@@ -156,6 +160,7 @@ Flags for run and up:
 
 Flags for install (output is plain YAML; docs/install-options.md):
   --namespace NS, --image IMG, --class NAME, --replicas N, --with-monitoring, --expose-gateway-ports
+  --envoy-compat        run the controller with --envoy-compat and grant it read and status access to the Envoy Gateway policy CRDs only
   --service-type ClusterIP|NodePort|LoadBalancer
   --node-port HTTP=30080,HTTPS=30443   map Service ports to node ports (names or numbers); repeatable
   --listener-port N     add a Service port for a Gateway listener port (7443, 8443, ...); repeatable
@@ -498,6 +503,7 @@ func Main(args []string, stdout, stderr io.Writer, lint func([]byte) (bool, stri
 		fs.StringVar(&io.ClassName, "class", "setura", "GatewayClass name")
 		fs.IntVar(&io.Replicas, "replicas", 1, "controller replicas")
 		fs.BoolVar(&io.ExposePorts, "expose-gateway-ports", false, "run the controller with --expose-gateway-ports and grant it patch on its own Service")
+		fs.BoolVar(&io.EnvoyCompat, "envoy-compat", false, "run the controller with --envoy-compat and grant it read and status access to the Envoy Gateway policy CRDs (docs/envoy-compat.md)")
 		fs.BoolVar(&io.WithMonitoring, "with-monitoring", false, "also print an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard ConfigMap")
 		fs.StringVar(&io.ServiceType, "service-type", "", "Service type: ClusterIP (default), NodePort or LoadBalancer")
 		fs.Func("node-port", "map Service ports to node ports, HTTP=30080,HTTPS=30443 or 7443=30743; repeatable (NodePort and LoadBalancer)", func(v string) (err error) {

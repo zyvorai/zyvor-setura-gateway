@@ -1,21 +1,19 @@
 package setura
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	builtin "github.com/zyvorai/zyvor-setura-gateway/internal/gateway"
 )
 
 // Envoy Gateway to Setura. The Gateway API objects (Gateways, HTTPRoutes,
 // GRPCRoutes) are carried over; the Envoy policies attached to them are
-// translated onto the route rules they target:
-//
-//	BackendTrafficPolicy  timeout.http.requestTimeout -> timeouts.request, retry -> retry,
-//	                      rateLimit and the rest -> TODO
-//	SecurityPolicy        cors -> CORS filter, jwt -> auth jwt, authorization CIDR rules -> ipAllow/ipDeny,
-//	                      basicAuth -> auth basic (users are a TODO), extAuth -> ExternalAuth filter
-//	ClientTrafficPolicy   every field is a TODO (client-side connection settings are not route fields)
+// translated onto the route rules (and Gateway listeners) they target by
+// builtin.TranslateEnvoyPolicy, the same translation the controller runs with
+// --envoy-compat, so the two cannot drift. What a manifest cannot hold
+// (backend settings, gateway flags) and what Setura ignores become TODOs.
 
 func envoySrc(p obj) string {
 	n, ns := metaOf(p)
@@ -79,6 +77,7 @@ func (c *converter) convertEnvoy(objs []obj) error {
 	if len(routes) == 0 {
 		return userError("no HTTPRoute or GRPCRoute objects found; nothing to convert")
 	}
+	c.envoyRouteFilters(objs, routes)
 	for _, p := range ofKind(objs, "BackendTrafficPolicy", "SecurityPolicy", "ClientTrafficPolicy") {
 		c.envoyPolicy(p, routes)
 	}
@@ -87,6 +86,70 @@ func (c *converter) convertEnvoy(objs []obj) error {
 		c.envoyFinishAuth(r)
 	}
 	return nil
+}
+
+// envoyRouteFilters resolves ExtensionRef filters that name an HTTPRouteFilter:
+// a direct response becomes the rule's direct-response annotation; anything
+// else stays as it is (Setura refuses the route) with a TODO.
+func (c *converter) envoyRouteFilters(objs []obj, routes []*convRes) {
+	filters := map[string]obj{}
+	for _, o := range ofKind(objs, "HTTPRouteFilter") {
+		name, ns := metaOf(o)
+		if ns == "" {
+			ns = c.ns
+		}
+		filters[ns+"/"+name] = o
+	}
+	for _, r := range routes {
+		if r.Kind != kindHTTPRoute {
+			continue
+		}
+		for _, rl := range asList(dig(r.Obj, "spec", "rules")) {
+			rule := asMap(rl)
+			var keep []any
+			for _, f := range asList(rule["filters"]) {
+				fm := asMap(f)
+				ref := asMap(fm["extensionRef"])
+				if asStr(fm["type"]) != "ExtensionRef" || asStr(ref["kind"]) != "HTTPRouteFilter" || asStr(ref["group"]) != builtin.EnvoyGroup {
+					keep = append(keep, f)
+					continue
+				}
+				fo := filters[r.NS+"/"+asStr(ref["name"])]
+				if fo == nil {
+					r.Comments = append(r.Comments, c.todo("HTTPRoute "+r.NS+"/"+r.Name, "extensionRef", asStr(ref["name"]), "the HTTPRouteFilter is not among the input objects"))
+					keep = append(keep, f)
+					continue
+				}
+				src := envoySrc(fo)
+				tr := builtin.TranslateHTTPRouteFilter(asMap(fo["spec"]))
+				clean := tr.Block != nil
+				for _, n := range tr.Notes {
+					clean = clean && !n.Ignored
+				}
+				for _, n := range tr.Notes {
+					if n.Ignored || !n.Applied() {
+						reason := n.Reason
+						if reason == "" {
+							reason = "no Setura equivalent"
+						}
+						r.Comments = append(r.Comments, c.todo(src, n.Field, n.Value, reason))
+					}
+				}
+				if !clean {
+					keep = append(keep, f) // Setura refuses the ExtensionRef: serving without it would change the route
+					continue
+				}
+				rule["#ext"] = mergeObj(asMap(rule["#ext"]), obj{builtin.DirectResponseKey: deepCopy(tr.Block)})
+				delete(rule, "backendRefs")
+				c.done(src, "directResponse", "", envoyTargetText("directResponse", ""))
+			}
+			if len(keep) == 0 {
+				delete(rule, "filters")
+			} else {
+				rule["filters"] = keep
+			}
+		}
+	}
 }
 
 func routeSig(rr *routeRule) string {
@@ -149,31 +212,70 @@ func (c *converter) envoyMatching(p obj, routes []*convRes, t envoyTarget) []*co
 func (c *converter) envoyPolicy(p obj, routes []*convRes) {
 	src := envoySrc(p)
 	spec := asMap(p["spec"])
-	var targets []*convRes
-	var sections []string
+	kind := asStr(p["kind"])
+	pname, _ := metaOf(p)
+	type target struct {
+		res     *convRes
+		section string
+	}
+	var targets []target
+	var gateways []*convRes
 	for _, t := range envoyTargets(p) {
 		ms := c.envoyMatching(p, routes, t)
-		if len(ms) == 0 {
+		if t.kind == "Gateway" {
+			_, pns := metaOf(p)
+			for _, g := range c.res {
+				if g.Kind == "Gateway" && g.Name == t.name && (g.NS == pns || pns == "") {
+					gateways = append(gateways, g)
+				}
+			}
+		}
+		if len(ms) == 0 && !(t.kind == "Gateway" && len(gateways) > 0) {
 			c.record(convItem{Source: src, Key: "targetRefs", Value: t.kind + " " + t.name, Status: convTodo,
 				Reason: "the target is not among the converted routes or their Gateways; nothing was changed for it"})
 			continue
 		}
 		for _, m := range ms {
-			targets = append(targets, m)
-			sections = append(sections, t.section)
+			targets = append(targets, target{m, t.section})
 		}
 	}
-	if len(targets) == 0 {
+	if len(targets) == 0 && len(gateways) == 0 {
 		return
 	}
+	// One translation per kind of route: GRPCRoute rules take auth only.
+	for _, tk := range []string{kindHTTPRoute, kindGRPCRoute} {
+		var res []*convRes
+		var sections []string
+		for _, t := range targets {
+			if t.res.Kind == tk {
+				res = append(res, t.res)
+				sections = append(sections, t.section)
+			}
+		}
+		if len(res) == 0 || kind == "ClientTrafficPolicy" {
+			continue
+		}
+		tr := builtin.TranslateEnvoyPolicy(kind, spec, builtin.EnvoyOptions{TargetKind: tk, Name: "envoy-" + pname,
+			FaultTTL: asStr(asMap(asMap(p["metadata"])["annotations"])[builtin.EnvoyFaultTTLAnnotation])})
+		c.envoyApply(src, tr, res, sections)
+	}
+	if kind == "ClientTrafficPolicy" {
+		tr := builtin.TranslateEnvoyPolicy(kind, spec, builtin.EnvoyOptions{TargetKind: "Gateway"})
+		c.envoyListeners(src, tr, p, gateways)
+	}
+}
+
+// envoyApply writes a translation into the targeted route rules (and the
+// comments of the routes) and records what happened to every field.
+func (c *converter) envoyApply(src string, tr *builtin.EnvoyTranslation, targets []*convRes, sections []string) {
 	todo := func(key, value, reason string) {
 		line := c.todo(src, key, value, reason)
 		for _, t := range targets {
 			t.Comments = append(t.Comments, line)
 		}
 	}
-	// applyRules runs fn for every rule the policy applies to, on every target.
-	applyRules := func(fn func(route *convRes, rule obj, idx int)) {
+	// apply runs fn for every rule the policy applies to, on every target.
+	apply := func(fn func(route *convRes, rule obj, idx int)) {
 		for i, t := range targets {
 			rules := asList(dig(t.Obj, "spec", "rules"))
 			any := false
@@ -191,117 +293,146 @@ func (c *converter) envoyPolicy(p obj, routes []*convRes) {
 			}
 		}
 	}
-	httpOnly := func(key, value string) bool {
-		for _, t := range targets {
-			if t.Kind != kindHTTPRoute {
-				todo(key, value, "this setting converts to an HTTPRoute field or filter and "+t.Kind+" "+t.Name+" is a "+t.Kind)
-				return false
-			}
-		}
-		return true
-	}
-	switch asStr(p["kind"]) {
-	case "BackendTrafficPolicy":
-		c.envoyBackendTraffic(src, spec, applyRules, todo, httpOnly)
-	case "SecurityPolicy":
-		c.envoySecurity(src, spec, applyRules, todo, httpOnly)
-	case "ClientTrafficPolicy":
-		for _, k := range sortedKeys(spec) {
-			switch k {
-			case "targetRef", "targetRefs", "targetSelectors":
-				continue
-			case "clientIPDetection":
-				todo(k, "", "client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted")
-			case "tls":
-				todo(k, "", "listener TLS options belong on the Gateway listener (tls.options) or in the gateway's TLS flags")
-			case "timeout":
-				todo(k, "", "client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts")
-			default:
-				todo(k, "", "client connection settings have no Gateway API equivalent")
-			}
-		}
-	}
-}
-
-type envoyApply func(fn func(route *convRes, rule obj, idx int))
-
-func envoyDuration(v any) (string, bool) {
-	s := fmt.Sprint(v)
-	if s == "" || s == "<nil>" {
-		return "", false
-	}
-	return durationOf(s)
-}
-
-func (c *converter) envoyBackendTraffic(src string, spec obj, apply envoyApply, todo func(k, v, r string), httpOnly func(k, v string) bool) {
-	for _, k := range sortedKeys(spec) {
+	for _, k := range sortedKeys(tr.Rule) {
+		v := tr.Rule[k]
 		switch k {
-		case "targetRef", "targetRefs", "targetSelectors":
-		case "timeout":
-			t := asMap(spec[k])
-			for _, tk := range sortedKeys(t) {
-				for _, f := range sortedKeys(asMap(t[tk])) {
-					path := "timeout." + tk + "." + f
-					v := fmt.Sprint(asMap(t[tk])[f])
-					if tk == "http" && f == "requestTimeout" {
-						d, ok := envoyDuration(v)
-						if !ok {
-							todo(path, v, "the value is not a duration Setura can read")
-						} else if httpOnly(path, v) {
-							apply(func(r *convRes, rule obj, _ int) {
-								rule["timeouts"] = mergeObj(asMap(rule["timeouts"]), obj{"request": d})
-							})
-							c.done(src, path, v, "rule timeouts.request")
-						}
-						continue
-					}
-					todo(path, v, "HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings")
+		case "timeouts", "retry":
+			apply(func(r *convRes, rule obj, _ int) {
+				if k == "timeouts" {
+					rule[k] = mergeObj(asMap(rule[k]), deepCopy(v).(obj))
+				} else {
+					rule[k] = deepCopy(v)
+				}
+			})
+		default: // setura.zyvor.dev/rate-limit, fault, direct-response: route annotations, one per rule
+			apply(func(r *convRes, rule obj, _ int) {
+				rule["#ext"] = mergeObj(asMap(rule["#ext"]), obj{k: deepCopy(v)})
+			})
+		}
+	}
+	if len(tr.Filters) > 0 {
+		apply(func(r *convRes, rule obj, _ int) {
+			for _, f := range tr.Filters {
+				rule["filters"] = append(asList(rule["filters"]), deepCopy(f))
+			}
+		})
+	}
+	for _, k := range sortedKeys(tr.Auth) {
+		v := tr.Auth[k]
+		apply(func(r *convRes, rule obj, _ int) {
+			rule["#auth"] = mergeObj(asMap(rule["#auth"]), obj{k: deepCopy(v)})
+		})
+	}
+	if tr.APIKey != nil {
+		todo("apiKeyAuth", "", "the converter cannot read the Secret: store each key as a hash with `setura gateway hash --kind apikey` in an auth apiKey block (the controller with --envoy-compat does this from the Secret)")
+	}
+	if len(tr.FailClosed) > 0 {
+		todo("security", strings.Join(tr.FailClosed, ", "), "these guards cannot be translated: the converted routes are NOT protected by them; the controller with --envoy-compat refuses the traffic instead")
+	}
+	c.envoyNotes(src, tr.Notes, todo)
+}
+
+// envoyNotes turns the field notes into report items: one converted line per
+// top-level field, a TODO for everything ignored or without a manifest field.
+func (c *converter) envoyNotes(src string, notes []builtin.FieldNote, todo func(key, value, reason string)) {
+	doneKeys := map[string]bool{}
+	for _, n := range notes {
+		top, _, _ := strings.Cut(n.Field, ".")
+		switch {
+		case n.Ignored:
+			reason := n.Reason
+			if reason == "" {
+				reason = "no Setura equivalent"
+			}
+			todo(n.Field, n.Value, reason)
+		case n.Where == "backend" || n.Where == "listener" || n.Where == "frontend":
+			todo(n.Field, n.Value, "has no field in a manifest: the controller (--envoy-compat) translates it to "+n.Setura+"; offline set it in a config file or with the gateway flags (see docs/envoy-compat.md)")
+		case !doneKeys[top]:
+			doneKeys[top] = true
+			c.done(src, top, "", envoyTargetText(top, n.Setura))
+		}
+	}
+}
+
+// envoyTargetText names what a converted top-level field became.
+func envoyTargetText(top, fallback string) string {
+	if t, ok := map[string]string{
+		"retry":          "rule retry (attempts, codes, backoff, perTryTimeout)",
+		"timeout":        "rule timeouts.request",
+		"rateLimit":      "rule setura.zyvor.dev/rate-limit (route annotation)",
+		"faultInjection": "rule setura.zyvor.dev/fault (route annotation, ttl 24h)",
+		"mirrors":        "RequestMirror filter on every targeted rule",
+		"cors":           "CORS filter on every targeted rule",
+		"jwt":            "setura.zyvor.dev/auth jwt",
+		"extAuth":        "ExternalAuth filter",
+		"authorization":  "setura.zyvor.dev/auth ipAllow / ipDeny",
+		"directResponse": "rule setura.zyvor.dev/direct-response (route annotation)",
+		"tls":            "Gateway listener tls.options and spec.tls.frontend",
+	}[top]; ok {
+		return t
+	}
+	return fallback
+}
+
+// envoyListeners applies a ClientTrafficPolicy to the Gateways it targets:
+// listener TLS version bounds and client certificate validation.
+func (c *converter) envoyListeners(src string, tr *builtin.EnvoyTranslation, p obj, gateways []*convRes) {
+	todo := func(key, value, reason string) {
+		line := c.todo(src, key, value, reason)
+		for _, g := range gateways {
+			g.Comments = append(g.Comments, line)
+		}
+	}
+	section := ""
+	if ts := envoyTargets(p); len(ts) > 0 {
+		section = ts[0].section
+	}
+	for _, g := range gateways {
+		for _, l := range asList(dig(g.Obj, "spec", "listeners")) {
+			lm := asMap(l)
+			if section != "" && asStr(lm["name"]) != section {
+				continue
+			}
+			if asMap(lm["tls"]) != nil && len(tr.Listener) > 0 {
+				tls := asMap(lm["tls"])
+				opts := asMap(tls["options"])
+				if opts == nil {
+					opts = obj{}
+					tls["options"] = opts
+				}
+				if v, ok := tr.Listener["tlsMinVersion"].(string); ok {
+					opts[builtin.TLSMinVersionOption] = v
+				}
+				if v, ok := tr.Listener["tlsMaxVersion"].(string); ok {
+					opts[builtin.TLSMaxVersionOption] = v
 				}
 			}
-		case "retry":
-			rt := asMap(spec[k])
-			retry := obj{}
-			attempts := 2
-			if n, ok := num(rt["numRetries"]); ok {
-				attempts = int(n)
+		}
+		if len(tr.Frontend) > 0 {
+			spec := asMap(g.Obj["spec"])
+			tls := asMap(spec["tls"])
+			if tls == nil {
+				tls = obj{}
+				spec["tls"] = tls
 			}
-			retry["attempts"] = attempts
-			if codes := asList(dig(rt, "retryOn", "httpStatusCodes")); len(codes) > 0 {
-				retry["codes"] = codes
+			tls["frontend"] = obj{"default": obj{"validation": deepCopy(tr.Frontend)}}
+		}
+	}
+	done := map[string]bool{}
+	for _, n := range tr.Notes {
+		top, _, _ := strings.Cut(n.Field, ".")
+		switch {
+		case n.Ignored && n.Applied():
+			todo(n.Field, n.Value, n.Reason)
+		case n.Ignored:
+			reason := n.Reason
+			if reason == "" {
+				reason = "no Setura equivalent"
 			}
-			if d, ok := envoyDuration(dig(rt, "perRetry", "timeout")); ok {
-				retry["perTryTimeout"] = d
-			}
-			if d, ok := envoyDuration(dig(rt, "perRetry", "backOff", "baseInterval")); ok {
-				retry["backoff"] = d
-			}
-			if httpOnly(k, "") {
-				apply(func(r *convRes, rule obj, _ int) { rule["retry"] = deepCopy(retry) })
-				c.done(src, k, fmt.Sprintf("numRetries=%d", attempts), "rule retry (attempts, codes, backoff, perTryTimeout)")
-				for _, trig := range asList(dig(rt, "retryOn", "triggers")) {
-					if t := fmt.Sprint(trig); t != "connect-failure" && t != "retriable-status-codes" && t != "5xx" {
-						todo(k+".retryOn.triggers", t, "the gateway retries connection failures and the listed status codes only; this trigger has no equivalent")
-					}
-				}
-			}
-		case "rateLimit":
-			hint := "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s|m|h), not per route"
-			for _, rl := range asList(dig(asMap(spec[k]), "local", "rules")) {
-				if n, ok := num(dig(rl, "limit", "requests")); ok {
-					unit := map[string]string{"Second": "s", "Minute": "m", "Hour": "h"}[asStr(dig(rl, "limit", "unit"))]
-					if unit != "" {
-						hint += "; this policy allows " + strconv.Itoa(int(n)) + "/" + unit + " (--rate-limit " + strconv.Itoa(int(n)) + "/" + unit + ")"
-					}
-					break
-				}
-			}
-			todo(k, "", hint)
-		case "circuitBreaker", "healthCheck":
-			todo(k, "", "configured with gateway flags, not per route; see docs/resilience.md")
-		case "loadBalancer":
-			todo(k, "", "the Setura gateway balances weighted backendRefs itself; consistent hash, least request and similar have no field")
-		default:
-			todo(k, "", "no per-policy equivalent in Gateway API or the Setura gateway")
+			todo(n.Field, n.Value, reason)
+		case !done[top]:
+			done[top] = true
+			c.done(src, top, "", envoyTargetText(top, n.Setura))
 		}
 	}
 }
@@ -316,169 +447,12 @@ func mergeObj(a, b obj) obj {
 	return a
 }
 
-func (c *converter) envoySecurity(src string, spec obj, apply envoyApply, todo func(k, v, r string), httpOnly func(k, v string) bool) {
-	addFilter := func(f obj) {
-		apply(func(r *convRes, rule obj, _ int) {
-			rule["filters"] = append(asList(rule["filters"]), deepCopy(f))
-		})
-	}
-	setAuth := func(field string, v any) {
-		apply(func(r *convRes, rule obj, _ int) {
-			rule["#auth"] = mergeObj(asMap(rule["#auth"]), obj{field: deepCopy(v)})
-		})
-	}
-	for _, k := range sortedKeys(spec) {
-		sp := asMap(spec[k])
-		switch k {
-		case "targetRef", "targetRefs", "targetSelectors":
-		case "cors":
-			if !httpOnly(k, "") {
-				continue
-			}
-			cors := obj{}
-			var origins []any
-			for _, o := range asList(sp["allowOrigins"]) {
-				origins = append(origins, fmt.Sprint(o))
-			}
-			cors["allowOrigins"] = origins
-			for _, f := range []string{"allowMethods", "allowHeaders", "exposeHeaders", "allowCredentials"} {
-				if v, ok := sp[f]; ok {
-					cors[f] = v
-				}
-			}
-			if v, ok := sp["maxAge"]; ok {
-				if d, ok := durationOf(fmt.Sprint(v)); ok {
-					cors["maxAge"] = int(durationSeconds(d))
-				}
-			}
-			addFilter(obj{"type": "CORS", "cors": cors})
-			c.done(src, k, "", "CORS filter on every targeted rule")
-		case "jwt":
-			if !httpOnly(k, "") {
-				continue
-			}
-			provs := asList(sp["providers"])
-			for i, pv := range provs {
-				pm := asMap(pv)
-				if i > 0 {
-					todo("jwt.providers["+strconv.Itoa(i)+"]", asStr(pm["name"]), "an auth block accepts one JWT issuer; add this provider by splitting the rules or merging issuers by hand")
-					continue
-				}
-				jwt := obj{}
-				if v := asStr(pm["issuer"]); v != "" {
-					jwt["issuer"] = v
-				}
-				if a := asList(pm["audiences"]); len(a) > 0 {
-					jwt["audience"] = a
-				}
-				if v := asStr(dig(pm, "remoteJWKS", "uri")); v != "" {
-					jwt["jwksUri"] = v
-				}
-				ch := obj{}
-				for _, m := range asList(pm["claimToHeaders"]) {
-					mm := asMap(m)
-					ch[asStr(mm["header"])] = asStr(mm["claim"])
-				}
-				if len(ch) > 0 {
-					jwt["claimHeaders"] = ch
-				}
-				setAuth("jwt", jwt)
-				c.done(src, "jwt.providers["+asStr(pm["name"])+"]", asStr(pm["issuer"]), "setura.zyvor.dev/auth jwt")
-				for _, f := range []string{"extractFrom", "recomputeRoute", "localJWKS", "audiences"} {
-					if _, ok := pm[f]; ok && f != "audiences" {
-						todo("jwt.providers."+f, asStr(pm["name"]), "no equivalent: the gateway reads the token from Authorization: Bearer and fetches the JWKS from the URL")
-					}
-				}
-				if len(asList(pm["audiences"])) == 0 {
-					todo("jwt.providers.audiences", asStr(pm["name"]), "no audience is set; always set one (lint rule SET016)")
-				}
-			}
-		case "basicAuth":
-			if !httpOnly(k, "") {
-				continue
-			}
-			setAuth("basic", obj{"users": []any{}})
-			todo(k, asStr(dig(sp, "users", "name")), "the basic auth block has no users: Envoy reads htpasswd entries from a Secret, Setura stores pbkdf2-sha256 hashes; create each user with `setura gateway hash --kind password`")
-		case "authorization":
-			allow, deny := []any{}, []any{}
-			ok := true
-			for _, r := range asList(sp["rules"]) {
-				rm := asMap(r)
-				cidrs := asList(dig(rm, "principal", "clientCIDRs"))
-				if len(cidrs) == 0 || len(asMap(rm["principal"])) != 1 {
-					ok = false
-					break
-				}
-				if strings.EqualFold(asStr(rm["action"]), "Allow") {
-					allow = append(allow, cidrs...)
-				} else {
-					deny = append(deny, cidrs...)
-				}
-			}
-			if !ok || !httpOnly(k, "") {
-				todo(k, "", "only rules on principal.clientCIDRs convert (to ipAllow and ipDeny); JWT claim and scope rules need a policy engine")
-				continue
-			}
-			if len(allow) > 0 && strings.EqualFold(asStr(sp["defaultAction"]), "Deny") {
-				setAuth("ipAllow", allow)
-			} else if len(allow) > 0 {
-				todo(k, "", "an Allow rule with defaultAction Allow permits everyone; there is nothing to enforce")
-			}
-			if len(deny) > 0 {
-				setAuth("ipDeny", deny)
-			}
-			c.done(src, k, "", "setura.zyvor.dev/auth ipAllow / ipDeny")
-		case "extAuth":
-			if !httpOnly(k, "") {
-				continue
-			}
-			proto, body := "HTTP", asMap(sp["http"])
-			if g := asMap(sp["grpc"]); g != nil {
-				proto, body = "GRPC", g
-			}
-			refs := asList(body["backendRefs"])
-			if len(refs) == 0 {
-				refs = []any{body["backendRef"]}
-			}
-			bm := asMap(refs[0])
-			if bm == nil {
-				todo(k, "", "the policy has no backendRef (a Service is required by ExternalAuth)")
-				continue
-			}
-			port, _ := num(bm["port"])
-			ea := obj{"protocol": proto, "backendRef": backendRef(asStr(bm["name"]), asStr(bm["namespace"]), int(port), -1)}
-			if proto == "HTTP" {
-				h := obj{}
-				if p := asStr(body["path"]); p != "" {
-					h["path"] = p
-				}
-				if hs := asList(body["headersToBackend"]); len(hs) > 0 {
-					h["allowedResponseHeaders"] = hs
-				}
-				if len(h) > 0 {
-					ea["http"] = h
-				}
-			}
-			addFilter(obj{"type": "ExternalAuth", "externalAuth": ea})
-			c.done(src, k, proto, "ExternalAuth filter")
-		default:
-			todo(k, "", "no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and similar are not converted)")
-		}
-	}
-}
-
 // envoyFinishAuth moves the temporary "#auth" rule markers into route
 // annotations, as the gateway reads them.
 func (c *converter) envoyFinishAuth(r *convRes) {
 	rules := asList(dig(r.Obj, "spec", "rules"))
 	var ann map[string]any
-	for i, rl := range rules {
-		rm := asMap(rl)
-		a, ok := rm["#auth"]
-		if !ok {
-			continue
-		}
-		delete(rm, "#auth")
+	annotations := func() map[string]any {
 		if ann == nil {
 			meta := asMap(r.Obj["metadata"])
 			if asMap(meta["annotations"]) == nil {
@@ -486,7 +460,20 @@ func (c *converter) envoyFinishAuth(r *convRes) {
 			}
 			ann = asMap(meta["annotations"])
 		}
-		ann["setura.zyvor.dev/auth.rule-"+strconv.Itoa(i+1)] = string(jsonCompact(a))
+		return ann
+	}
+	for i, rl := range rules {
+		rm := asMap(rl)
+		if a, ok := rm["#auth"]; ok {
+			delete(rm, "#auth")
+			annotations()["setura.zyvor.dev/auth.rule-"+strconv.Itoa(i+1)] = string(jsonCompact(a))
+		}
+		if e, ok := rm["#ext"]; ok {
+			delete(rm, "#ext")
+			for _, k := range sortedKeys(asMap(e)) {
+				annotations()[k+".rule-"+strconv.Itoa(i+1)] = string(jsonCompact(asMap(e)[k]))
+			}
+		}
 	}
 	// Comments that name the same line twice are noise.
 	seen := map[string]bool{}

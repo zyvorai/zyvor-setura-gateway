@@ -45,6 +45,8 @@ type Gateway struct {
 	// Annotations are the Gateway's setura.zyvor.dev/* annotations (a snapshot
 	// carries them under setura.zyvor.dev/annotations).
 	Annotations map[string]string
+	// Labels are the Gateway's labels (Envoy Gateway targetSelectors match them).
+	Labels map[string]string `json:",omitempty"`
 }
 
 // Key is namespace/name.
@@ -115,6 +117,8 @@ type Route struct {
 	Parents    []ParentRef
 	Hostnames  []string
 	Rules      []Rule
+	// Labels are the route's labels (Envoy Gateway targetSelectors match them).
+	Labels map[string]string `json:",omitempty"`
 }
 
 // Key is namespace/name.
@@ -193,6 +197,9 @@ type Filter struct {
 	RequestMirror          *Mirror       `json:"requestMirror,omitempty"`
 	CORS                   *CORS         `json:"cors,omitempty"`
 	ExternalAuth           *ExternalAuth `json:"externalAuth,omitempty"`
+	// ExtensionRef names an implementation specific filter; the Kubernetes
+	// source resolves Envoy Gateway HTTPRouteFilters with --envoy-compat.
+	ExtensionRef *ObjRef `json:"extensionRef,omitempty"`
 }
 
 // NameValue is a header name and value.

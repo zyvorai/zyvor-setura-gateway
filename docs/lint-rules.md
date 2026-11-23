@@ -41,6 +41,10 @@
 | SET051 | warning | `consistentHash` on a rule that splits traffic across several `backendRefs`, or that also has `sessionPersistence`: the hash does not pin the client |
 | SET052 | error | Backend declaration (snapshot `backends` entry or `setura.zyvor.dev/backends` annotation) is invalid: bad endpoint or unix socket path, weight, zone, priority, `dns` or `loadBalancer` block |
 | SET053 | error | `backendRef` of kind `Backend` (group `setura.zyvor.dev`) names a backend that is not declared |
+| SET080 | warning | Envoy Gateway policy sets fields Setura ignores (see [envoy-gateway-compat.md](envoy-gateway-compat.md)) |
+| SET081 | warning | Envoy Gateway policy targets a Gateway or route that is not in the snapshot |
+| SET082 | warning | two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins, the others are Conflicted |
+| SET083 | warning | Envoy Gateway SecurityPolicy has a field Setura cannot enforce (`basicAuth`, `oidc`, JWT or header authorization rules): the controller refuses the targeted traffic (see [envoy-compat.md](envoy-compat.md)) |
 
 ## ReferenceGrants (SET004, SET012)
 

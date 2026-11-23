@@ -25,7 +25,7 @@ var routeKinds = []struct{ resource, kind string }{
 // optional; "captured" lists what was read successfully so lint can tell an
 // absent grant from an unread one.
 func captureExtras(c *Cluster, namespace string, resources obj) (captured []any, foreign obj) {
-	for _, k := range append([]string{grpcRoute, tlsRoute}, gw15Kinds...) {
+	for _, k := range append(append([]string{grpcRoute, tlsRoute}, gw15Kinds...), envoyKindResources()...) {
 		list, err := c.getMap(namespace, k)
 		if err != nil {
 			continue

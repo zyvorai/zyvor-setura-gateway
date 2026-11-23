@@ -19,6 +19,7 @@ type InstallOptions struct {
 	Replicas                    int
 	ExposePorts                 bool // controller adds Service ports for Gateway listener ports
 	WithMonitoring              bool // add an admin Service port, ServiceMonitor, PrometheusRule and the Grafana dashboard
+	EnvoyCompat                 bool // run the controller with --envoy-compat and grant it read and status access to the Envoy Gateway policy CRDs
 
 	// The options below are checked by Validate; the zero value prints what
 	// earlier versions printed (apart from the admin Secret, see CreateAdminSecret).
@@ -100,7 +101,7 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
----
+ENVOY_RULES---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -216,7 +217,19 @@ SERVICE_SPEC`
 	}
 	// Every operator-supplied value goes in through the one replacer below, which
 	// never rescans what it wrote, so a value such as "NS" cannot be rewritten.
-	r := strings.NewReplacer("EXPOSE_RULES", exposeRules, "EXPOSE_ARG", exposeArg+extraArgs(o.Args),
+	envoyRules := ""
+	if o.EnvoyCompat {
+		envoyRules = `  # --envoy-compat: read Envoy Gateway's policy CRDs and report on them. Nothing else of that group.
+  - apiGroups: ["` + EnvoyGroup + `"]
+    resources: ["backendtrafficpolicies", "clienttrafficpolicies", "securitypolicies", "httproutefilters", "backends"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["` + EnvoyGroup + `"]
+    resources: ["backendtrafficpolicies/status", "clienttrafficpolicies/status", "securitypolicies/status"]
+    verbs: ["get", "patch", "update"]
+`
+		exposeArg += "            - --envoy-compat       # translate Envoy Gateway policies (docs/envoy-compat.md)\n"
+	}
+	r := strings.NewReplacer("ENVOY_RULES", envoyRules, "EXPOSE_RULES", exposeRules, "EXPOSE_ARG", exposeArg+extraArgs(o.Args),
 		"HEADER_NOTES", installHeader(o), "SECRET_DOC", adminSecretDoc(o), "STRATEGY", installStrategy(o),
 		"POD_SPEC_EXTRA", podSpecExtra(o), "EXTRA_CONTAINER_PORTS", extraContainerPorts(o),
 		"RESOURCES", resourcesYAML(o.Resources), "SERVICE_SPEC", serviceSpec(o),

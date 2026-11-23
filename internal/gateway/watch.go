@@ -34,6 +34,7 @@ type kubeCtl struct {
 	SvcName     string        // the install Service (Gateway status.addresses)
 	SvcNS       string
 	ExposePorts bool // --expose-gateway-ports
+	EnvoyCompat bool // --envoy-compat: read and translate Envoy Gateway policies (envoy_kube.go)
 	PortOffset  int
 	PortMap     map[int]int
 
@@ -64,6 +65,7 @@ type controllerFlags struct {
 	svcName      string
 	svcNS        string
 	exposePorts  bool
+	envoyCompat  bool
 	resync       time.Duration
 	portOffsetFn func() (int, map[int]int)
 }
@@ -91,6 +93,7 @@ func addControllerFlags(fs *flag.FlagSet, c *controllerFlags) {
 	fs.StringVar(&c.identity, "lease-identity", "", "holder identity (default: POD_NAME or the hostname, plus a random suffix)")
 	fs.StringVar(&c.svcName, "service-name", "setura-gateway", "Service whose address goes into Gateway status.addresses (empty: none)")
 	fs.StringVar(&c.svcNS, "service-namespace", ns, "namespace of that Service")
+	fs.BoolVar(&c.envoyCompat, "envoy-compat", false, "also read Envoy Gateway's policy CRDs (BackendTrafficPolicy, ClientTrafficPolicy, SecurityPolicy, HTTPRouteFilter, Backend; all optional) and translate them (docs/envoy-compat.md)")
 	fs.BoolVar(&c.exposePorts, "expose-gateway-ports", false, "add a port to the Service for every Gateway listener port (needs services patch RBAC)")
 }
 
@@ -98,6 +101,7 @@ func (c *controllerFlags) apply(k *KubeSource) {
 	k.Poll, k.Resync = c.poll, c.resync
 	k.SvcName, k.SvcNS = c.svcName, c.svcNS
 	k.ExposePorts = c.exposePorts
+	k.EnvoyCompat = c.envoyCompat
 	if c.portOffsetFn != nil {
 		k.PortOffset, k.PortMap = c.portOffsetFn()
 	}
@@ -152,7 +156,11 @@ func (k *KubeSource) Start(ctx context.Context, wake func()) time.Duration {
 	k.refs.ctx, k.refs.wake = ctx, wake
 	k.refs.mu.Unlock()
 	k.syncRefWatches()
-	for _, t := range watchTargets {
+	targets := watchTargets
+	if k.EnvoyCompat {
+		targets = append(targets[:len(targets):len(targets)], envoyWatchTargets...)
+	}
+	for _, t := range targets {
 		k.wg.Add(1)
 		go func(paths []string, optional bool) {
 			defer k.wg.Done()

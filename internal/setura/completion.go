@@ -52,7 +52,7 @@ var commandNames = []string{
 // migrateFlags are offered after "setura migrate".
 var migrateFlags = []string{"--ingress", "--routes", "--services", "--objects", "--ingress-class", "--namespace", "-A", "--ingress-url", "--gateway-url",
 	"--probe-extra", "--address", "--ingress-address", "--gateway-address", "--ca", "--timeout", "--header", "--format",
-	"check", "convert", "--from", "--gateway-class", "--out", "--force", "--report", "--no-check"}
+	"check", "convert", "--from", "--gateway-class", "--out", "--force", "--report", "--no-check", "--compat-report"}
 
 // replayFlags are offered after "setura replay".
 var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit", "--ignore-weights", "--fail-on", "--default-host", "--before-rate-limit", "--after-rate-limit"}
@@ -77,7 +77,7 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A",
 	"--plans", "--plans-interval", "--usage-state", "--usage-interval", "--usage-max-series", "--usage-retention-days",
 	"--ai-prices", "--ai-max-key-labels", "ai-usage", "--route", "--key",
-	"--load-balancer", "--zone", "--dns-ttl-min", "--dns-ttl-max"}
+	"--load-balancer", "--zone", "--dns-ttl-min", "--dns-ttl-max", "--envoy-compat"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}

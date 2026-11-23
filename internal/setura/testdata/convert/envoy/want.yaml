@@ -1,3 +1,5 @@
+# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- gateway wide, not per listener
+# TODO(setura) ClientTrafficPolicy demo/client timeout.http.idleTimeout: 60s -- gateway wide, not per listener
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -9,17 +11,23 @@ spec:
     - name: http
       port: 80
       protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: edge-cert
+        mode: Terminate
+        options:
+          setura.zyvor.dev/tls-min-version: "1.3"
 ---
-# TODO(setura) BackendTrafficPolicy demo/slow circuitBreaker -- configured with gateway flags, not per route; see docs/resilience.md
-# TODO(setura) BackendTrafficPolicy demo/slow loadBalancer -- the Setura gateway balances weighted backendRefs itself; consistent hash, least request and similar have no field
-# TODO(setura) BackendTrafficPolicy demo/slow rateLimit -- the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s|m|h), not per route; this policy allows 100/m (--rate-limit 100/m)
+# TODO(setura) BackendTrafficPolicy demo/slow circuitBreaker.maxConnections: 10 -- has no field in a manifest: the controller (--envoy-compat) translates it to backend circuitBreaker.maxConnections; offline set it in a config file or with the gateway flags (see docs/envoy-compat.md)
+# TODO(setura) BackendTrafficPolicy demo/slow loadBalancer -- this Setura gateway balances weighted backendRefs and has no least request, random, consistent hash or slow start policy
 # TODO(setura) BackendTrafficPolicy demo/slow retry.retryOn.triggers: reset -- the gateway retries connection failures and the listed status codes only; this trigger has no equivalent
-# TODO(setura) BackendTrafficPolicy demo/slow timeout.http.connectionIdleTimeout: 5m -- HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings
-# TODO(setura) BackendTrafficPolicy demo/slow timeout.tcp.connectTimeout: 2s -- HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings
-# TODO(setura) SecurityPolicy demo/web apiKeyAuth -- no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and similar are not converted)
-# TODO(setura) SecurityPolicy demo/web jwt.providers[1]: other -- an auth block accepts one JWT issuer; add this provider by splitting the rules or merging issuers by hand
-# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted
-# TODO(setura) ClientTrafficPolicy demo/client timeout -- client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts
+# TODO(setura) BackendTrafficPolicy demo/slow timeout.http.connectionIdleTimeout: 5m -- Setura has no per-route connection idle timeout
+# TODO(setura) BackendTrafficPolicy demo/slow timeout.tcp.connectTimeout: 2s -- the dial timeout of the proxy is fixed
+# TODO(setura) SecurityPolicy demo/web apiKeyAuth -- the converter cannot read the Secret: store each key as a hash with `setura gateway hash --kind apikey` in an auth apiKey block (the controller with --envoy-compat does this from the Secret)
+# TODO(setura) SecurityPolicy demo/web jwt.providers: other -- an auth block accepts one JWT issuer: tokens of provider other are refused
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -28,6 +36,14 @@ metadata:
   annotations:
     setura.zyvor.dev/auth.rule-1: "{\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
     setura.zyvor.dev/auth.rule-2: "{\"ipAllow\":[\"10.1.0.0/16\"],\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+    setura.zyvor.dev/auth.rule-3: "{\"jwt\":{\"audience\":[\"orders-api\"],\"claimHeaders\":{\"X-User\":\"sub\"},\"issuer\":\"https://idp.example.test\",\"jwksUri\":\"https://idp.example.test/jwks.json\"}}"
+    setura.zyvor.dev/direct-response.rule-3: "{\"body\":\"gone\",\"headers\":{\"Content-Type\":\"text/plain\"},\"status\":410}"
+    setura.zyvor.dev/fault.rule-1: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
+    setura.zyvor.dev/fault.rule-2: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
+    setura.zyvor.dev/fault.rule-3: "{\"latency\":{\"delay\":\"2s\",\"percent\":10},\"name\":\"envoy-slow\",\"percent\":100,\"ttl\":\"24h\"}"
+    setura.zyvor.dev/rate-limit.rule-1: "{\"key\":\"route\",\"rate\":\"100/m\"}"
+    setura.zyvor.dev/rate-limit.rule-2: "{\"key\":\"route\",\"rate\":\"100/m\"}"
+    setura.zyvor.dev/rate-limit.rule-3: "{\"key\":\"route\",\"rate\":\"100/m\"}"
 spec:
   hostnames:
     - orders.example.test
@@ -112,9 +128,43 @@ spec:
         perTryTimeout: 2s
       timeouts:
         request: 30s
+    - name: gone
+      filters:
+        - cors:
+            allowCredentials: true
+            allowHeaders:
+              - X-Token
+            allowMethods:
+              - GET
+              - POST
+            allowOrigins:
+              - https://app.example.test
+            maxAge: 86400
+          type: CORS
+        - externalAuth:
+            backendRef:
+              name: authz
+              port: 9000
+            http:
+              allowedResponseHeaders:
+                - X-User
+              path: /verify
+            protocol: HTTP
+          type: ExternalAuth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /old
+      retry:
+        attempts: 3
+        backoff: 100ms
+        codes:
+          - 502
+          - 503
+        perTryTimeout: 2s
+      timeouts:
+        request: 30s
 ---
-# TODO(setura) ClientTrafficPolicy demo/client clientIPDetection -- client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted
-# TODO(setura) ClientTrafficPolicy demo/client timeout -- client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts
 apiVersion: gateway.networking.k8s.io/v1
 kind: GRPCRoute
 metadata:

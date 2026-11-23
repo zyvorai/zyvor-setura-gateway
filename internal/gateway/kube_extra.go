@@ -66,7 +66,7 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 		}
 		created, _ := time.Parse(time.RFC3339, o.Metadata.CreationTimestamp)
 		r := &GRPCRoute{NS: o.Metadata.Namespace, Name: o.Metadata.Name, Generation: o.Metadata.Generation, Created: created,
-			Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules}
+			Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules, Labels: o.Metadata.Labels}
 		k.shadowAnnotations("GRPCRoute", o.Metadata, len(spec.Rules), func() {
 			annotateGRPC(r.Rules, o.Metadata.Annotations)
 			annotateAuthGRPC(r.Rules, o.Metadata.Annotations)

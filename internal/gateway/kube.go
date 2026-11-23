@@ -96,6 +96,8 @@ type KubeSource struct {
 	svcRaw  json.RawMessage     // that Service, for --expose-gateway-ports
 	gwPorts []int               // spec ports of the listeners we serve
 
+	envoyStatus []envoyStatusItem // Envoy Gateway policies and their outcomes (--envoy-compat)
+
 	kubeCtl
 }
 
@@ -253,6 +255,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 		gw := spec.gateway(g.Metadata.Namespace, g.Metadata.Name, g.Metadata.Generation)
 		gw.Annotations = g.Metadata.Annotations
+		gw.Labels = g.Metadata.Labels
 		cfg.Gateways = append(cfg.Gateways, gw)
 		mine[gw.Key()] = true
 		gwRaw[gw.Key()] = gwItems[i]
@@ -281,7 +284,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 		created, _ := time.Parse(time.RFC3339, r.Metadata.CreationTimestamp)
 		cfg.Routes = append(cfg.Routes, &Route{NS: r.Metadata.Namespace, Name: r.Metadata.Name, Generation: r.Metadata.Generation,
-			Created: created, Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules})
+			Created: created, Parents: parents, Hostnames: spec.Hostnames, Rules: spec.Rules, Labels: r.Metadata.Labels})
 		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() {
 			annotateHTTP(spec.Rules, r.Metadata.Annotations)
 			annotateAuth(spec.Rules, r.Metadata.Annotations)
@@ -434,6 +437,10 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 	}
 
+	envoyDigest, err := k.loadEnvoyCompat(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
 	k.loadAIKeys(ctx, cfg)
 	k.loadClientCAs(ctx, cfg)
 
@@ -474,7 +481,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		T []*TLSRoute
 		Y []any
 	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes,
-		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts, cfg.AIKeys}})
+		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts, cfg.AIKeys, envoyDigest}})
 	sum := sha256.Sum256(sig)
 	k.syncRefWatches()
 	return &Loaded{Config: cfg, Hash: hex.EncodeToString(sum[:])}, nil
@@ -596,6 +603,7 @@ func (k *KubeSource) WriteStatus(ctx context.Context, doc *StatusDoc) error {
 		}
 	}
 	errs = append(errs, k.writeGw15Status(ctx, doc, extra)...)
+	errs = append(errs, k.writeEnvoyStatus(ctx)...)
 	for _, x := range stale { // detached routes: drop our entries, keep other controllers'
 		if err := k.writeRouteStatus(ctx, x.base, x.plural, x.raw, &RouteStatus{}); err != nil {
 			errs = append(errs, err)

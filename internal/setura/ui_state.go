@@ -61,6 +61,10 @@ var ruleHelp = map[string]struct{ Title, Why, Fix string }{
 	"SET051": {"Hash does not pin the client", "consistentHash picks the endpoint inside one backend. The rule splits traffic across several backends, or has session persistence that overrides it, so a client is not always sent to the same endpoint.", "Use one backendRef, or drop sessionPersistence."},
 	"SET052": {"Backend declaration is invalid", "A backend has an endpoint that is not an address, a name or a unix socket, a bad weight, zone or priority, or an invalid dns or loadBalancer block.", "Fix the backend (see docs/load-balancing.md)."},
 	"SET053": {"Backend is not declared", "A backendRef of kind Backend names a backend that is not in the snapshot backends section or the setura.zyvor.dev/backends annotation.", "Declare the backend."},
+	"SET080": {"Envoy Gateway fields are ignored", "The policy sets fields Setura has no equivalent for, so they have no effect.", "See docs/envoy-gateway-compat.md for each field's Setura equivalent."},
+	"SET081": {"Envoy Gateway policy has no target", "The policy targets a Gateway or route that is not in the snapshot, so nothing is changed by it.", "Fix the targetRef, or delete the policy."},
+	"SET082": {"Envoy Gateway policies conflict", "Two policies of one kind target the same object at the same level. The oldest wins and the others are Conflicted.", "Merge them into one policy, or target different objects or sections."},
+	"SET083": {"Envoy Gateway guard is not enforced", "The security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules), so the controller refuses the targeted traffic.", "Replace the field with one Setura supports (see docs/envoy-gateway-compat.md), or opt out with the annotation setura.zyvor.dev/compat-fail-open."},
 	"SET019": {"Gateway API 1.5 setting is invalid", "A CORS or ExternalAuth filter, session persistence, a backend timeout or a BackendTLSPolicy is configured in a way the built-in gateway refuses, so the route (or policy) is not accepted.", "Fix the setting named in the message (see docs/gateway-api-1-5.md)."},
 }
 

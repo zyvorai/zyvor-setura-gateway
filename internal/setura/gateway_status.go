@@ -52,7 +52,9 @@ type statusReport struct {
 	Verdict  string   `json:"verdict"`
 	Gateways []stItem `json:"gateways"`
 	Routes   []stItem `json:"routes"`
-	Next     string   `json:"next,omitempty"`
+	// Policies are the Envoy Gateway policies of the Setura controller (--envoy-compat).
+	Policies []stPolicy `json:"envoyPolicies,omitempty"`
+	Next     string     `json:"next,omitempty"`
 }
 
 func condsOf(v any) map[string]stCond {
@@ -273,7 +275,11 @@ func clusterStatus(c *Cluster, namespace string, all bool) (*statusReport, error
 		}
 		routes[kind] = l
 	}
-	return buildStatus(classes, gws, routes, all), nil
+	rep := buildStatus(classes, gws, routes, all)
+	if lists := readEnvoyPolicies(c, namespace); len(lists) > 0 {
+		addEnvoyPolicies(rep, lists, all)
+	}
+	return rep, nil
 }
 
 func (u *ui) StatusPretty(r *statusReport) string {
@@ -311,6 +317,7 @@ func (u *ui) StatusPretty(r *statusReport) string {
 	}
 	section("Gateways", r.Gateways)
 	section("Routes", r.Routes)
+	u.policiesPretty(&b, r.Policies)
 	b.WriteString("\n")
 	sym := u.okSym()
 	if !r.OK {

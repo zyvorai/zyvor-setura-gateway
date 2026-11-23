@@ -3,53 +3,65 @@
   "verdict": "needs-review",
   "ok": false,
   "summary": {
-    "converted": 6,
+    "converted": 11,
     "ignored": 0,
     "resources": 3,
-    "todo": 11
+    "todo": 10
   },
   "resources": [
     {
       "kind": "Gateway",
       "namespace": "demo",
-      "name": "eg"
+      "name": "eg",
+      "todos": 2
     },
     {
       "kind": "HTTPRoute",
       "namespace": "demo",
       "name": "orders",
-      "todos": 10
+      "todos": 7
     },
     {
       "kind": "GRPCRoute",
       "namespace": "demo",
-      "name": "rpc",
-      "todos": 2
+      "name": "rpc"
     }
   ],
   "items": [
     {
+      "source": "HTTPRouteFilter demo/gone",
+      "key": "directResponse",
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/direct-response (route annotation)"
+    },
+    {
       "source": "BackendTrafficPolicy demo/slow",
-      "key": "circuitBreaker",
+      "key": "circuitBreaker.maxConnections",
+      "value": "10",
       "status": "todo",
-      "reason": "configured with gateway flags, not per route; see docs/resilience.md"
+      "reason": "has no field in a manifest: the controller (--envoy-compat) translates it to backend circuitBreaker.maxConnections; offline set it in a config file or with the gateway flags (see docs/envoy-compat.md)"
+    },
+    {
+      "source": "BackendTrafficPolicy demo/slow",
+      "key": "faultInjection",
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/fault (route annotation, ttl 24h)"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
       "key": "loadBalancer",
       "status": "todo",
-      "reason": "the Setura gateway balances weighted backendRefs itself; consistent hash, least request and similar have no field"
+      "reason": "this Setura gateway balances weighted backendRefs and has no least request, random, consistent hash or slow start policy"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
       "key": "rateLimit",
-      "status": "todo",
-      "reason": "the Setura gateway rate limit is gateway-wide (setura gateway run --rate-limit N/s|m|h), not per route; this policy allows 100/m (--rate-limit 100/m)"
+      "status": "converted",
+      "target": "rule setura.zyvor.dev/rate-limit (route annotation)"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
       "key": "retry",
-      "value": "numRetries=3",
       "status": "converted",
       "target": "rule retry (attempts, codes, backoff, perTryTimeout)"
     },
@@ -65,12 +77,11 @@
       "key": "timeout.http.connectionIdleTimeout",
       "value": "5m",
       "status": "todo",
-      "reason": "HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings"
+      "reason": "Setura has no per-route connection idle timeout"
     },
     {
       "source": "BackendTrafficPolicy demo/slow",
-      "key": "timeout.http.requestTimeout",
-      "value": "30s",
+      "key": "timeout",
       "status": "converted",
       "target": "rule timeouts.request"
     },
@@ -79,13 +90,19 @@
       "key": "timeout.tcp.connectTimeout",
       "value": "2s",
       "status": "todo",
-      "reason": "HTTPRoute timeouts cover the request and the backend request only; connection and idle timeouts are data plane settings"
+      "reason": "the dial timeout of the proxy is fixed"
     },
     {
       "source": "SecurityPolicy demo/web",
       "key": "apiKeyAuth",
       "status": "todo",
-      "reason": "no equivalent in Gateway API or the Setura gateway (apiKeyAuth, oidc, wasm and similar are not converted)"
+      "reason": "the converter cannot read the Secret: store each key as a hash with `setura gateway hash --kind apikey` in an auth apiKey block (the controller with --envoy-compat does this from the Secret)"
+    },
+    {
+      "source": "SecurityPolicy demo/web",
+      "key": "apiKeyAuth",
+      "status": "converted",
+      "target": "auth apiKey.keys"
     },
     {
       "source": "SecurityPolicy demo/web",
@@ -96,23 +113,21 @@
     {
       "source": "SecurityPolicy demo/web",
       "key": "extAuth",
-      "value": "HTTP",
       "status": "converted",
       "target": "ExternalAuth filter"
     },
     {
       "source": "SecurityPolicy demo/web",
-      "key": "jwt.providers[idp]",
-      "value": "https://idp.example.test",
-      "status": "converted",
-      "target": "setura.zyvor.dev/auth jwt"
+      "key": "jwt.providers",
+      "value": "other",
+      "status": "todo",
+      "reason": "an auth block accepts one JWT issuer: tokens of provider other are refused"
     },
     {
       "source": "SecurityPolicy demo/web",
-      "key": "jwt.providers[1]",
-      "value": "other",
-      "status": "todo",
-      "reason": "an auth block accepts one JWT issuer; add this provider by splitting the rules or merging issuers by hand"
+      "key": "jwt",
+      "status": "converted",
+      "target": "setura.zyvor.dev/auth jwt"
     },
     {
       "source": "SecurityPolicy demo/admin-only",
@@ -124,13 +139,20 @@
       "source": "ClientTrafficPolicy demo/client",
       "key": "clientIPDetection",
       "status": "todo",
-      "reason": "client address detection is a gateway option: setura gateway run --trusted-proxies lists the proxies whose X-Forwarded-For is trusted"
+      "reason": "gateway wide, not per listener"
     },
     {
       "source": "ClientTrafficPolicy demo/client",
-      "key": "timeout",
+      "key": "timeout.http.idleTimeout",
+      "value": "60s",
       "status": "todo",
-      "reason": "client side timeouts (idle, request received) are connection settings of the data plane, not route fields; see docs/resilience.md for the gateway's timeouts"
+      "reason": "gateway wide, not per listener"
+    },
+    {
+      "source": "ClientTrafficPolicy demo/client",
+      "key": "tls",
+      "status": "converted",
+      "target": "Gateway listener tls.options and spec.tls.frontend"
     },
     {
       "source": "SecurityPolicy demo/ghost",
@@ -143,7 +165,7 @@
   "check": {
     "ok": true,
     "summary": {
-      "equivalent": 3
+      "equivalent": 4
     }
   }
 }

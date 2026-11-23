@@ -53,6 +53,10 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET051", SeverityWarning, "consistentHash on a rule that splits traffic across several backendRefs or also has sessionPersistence, so the hash does not pin the client"},
 	{"SET052", SeverityError, "backend declaration (snapshot backends entry or setura.zyvor.dev/backends annotation) is invalid: bad endpoint, unix socket path, weight, zone, priority, dns or loadBalancer block"},
 	{"SET053", SeverityError, "backendRef of kind Backend (group setura.zyvor.dev) names a backend that is not declared"},
+	{"SET080", SeverityWarning, "Envoy Gateway policy sets fields Setura ignores (see docs/envoy-gateway-compat.md)"},
+	{"SET081", SeverityWarning, "Envoy Gateway policy targets a Gateway or route that is not in the snapshot"},
+	{"SET082", SeverityWarning, "two Envoy Gateway policies of one kind target the same object at the same level: the oldest wins and the others are Conflicted"},
+	{"SET083", SeverityWarning, "Envoy Gateway security policy has a field Setura cannot enforce (basicAuth, oidc, JWT or header authorization rules): the controller refuses the targeted traffic"},
 }
 
 func ruleSeverity(id string) string {
@@ -241,6 +245,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)
 	findings = append(findings, lbRules(snapshot, specs, ns)...)
+	findings = append(findings, envoyRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {
