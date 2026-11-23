@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0-rc1
+
+Release candidate for 0.8.0: the same changes as the 0.8.0 section below.
+
 ## 0.8.0
 
 Everything here comes from converting about 40 repositories from Envoy and ingress controllers to Setura and testing the result on a real K3s cluster.
