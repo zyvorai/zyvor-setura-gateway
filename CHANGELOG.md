@@ -8,7 +8,7 @@
 - **`setura split`.** Sends requests and checks the share each backend identity answered with against expected weights, with a per-backend binomial tolerance (3.29 sigma, about 0.1% false alarms), a minimum sample size for small shares, unexpected-identity detection and an error budget. Honest about being statistical and client-side.
 - **`setura cors`.** Sends the preflight a browser would send and judges the answer against the Fetch standard: status, `Access-Control-Allow-Origin`, credentials, methods, headers, `Max-Age`, and a `Vary: Origin` warning.
 - **Lint rule `SET090`.** Reports HTTPRoute rules whose filters a conforming controller refuses (`IncompatibleFilters`): `URLRewrite` with `RequestRedirect`, a repeated core filter, a missing or foreign filter block, `ReplacePrefixMatch` beside an `Exact` or regular-expression match, a mismatched path modifier, a redirect scheme other than http or https, a redirect port out of range. See `docs/lint-rules.md`.
-- See `docs/probe-requests.md` and `docs/RESEARCH.md`.
+- See `docs/probe-requests.md` and `docs/research.md`.
 
 ### Dependency and tooling upgrades (checked 2026-11-23)
 

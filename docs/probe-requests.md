@@ -115,6 +115,11 @@ setura cors https://api.shop.test/v1/items --origin https://app.shop.test \
 It warns, without failing, when the answer names one origin but `Vary` lacks `Origin`
 (a shared cache can then serve it to another origin) or `Max-Age` is `0`.
 
+To check that a hostile origin is refused, run `cors` with it: a refused origin makes
+the command exit 1 with "no Access-Control-Allow-Origin", which is the answer you want
+(wrap it in `!` or `|| true` in a script). Per the CORS filter GEP, a non-matching
+preflight answers 200 or 204 without CORS headers, or 403.
+
 This is the Fetch standard's rules applied to one response. It is not a browser: it does
 not model a browser's preflight cache, a `Max-Age` ceiling, private-network access
 rules, or extensions. A pass means a conforming browser would accept this answer from
