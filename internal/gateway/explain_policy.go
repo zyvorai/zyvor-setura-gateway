@@ -164,7 +164,7 @@ func (e ExplainServer) rateLimit(route string, q ExplainRequest, r *http.Request
 		return t
 	}
 	t.Enabled, t.Applies = true, true
-	t.Policy = fmt.Sprintf("%g tokens/s, burst %g, key %s", l.perSec, l.burst, l.key)
+	t.Policy = fmt.Sprintf("%s, burst %g, key %s", fmtTokenRate(l.perSec), l.burst, l.key)
 	t.Bucket = strings.ReplaceAll(l.bucketKey(route, r), "\x00", " | ")
 	if !q.Live || e.limiter == nil {
 		t.Note = "policy only: a fresh bucket starts full, so the first request for this key is admitted; live bucket state needs --admin"
@@ -191,7 +191,7 @@ func (e ExplainServer) ruleRateLimit(rule *CRule, route string, q ExplainRequest
 		return nil
 	}
 	t := &TraceRateLimit{Enabled: true, Applies: true, Source: "local"}
-	t.Policy = fmt.Sprintf("%g tokens/s, burst %g, key %s (this rule)", l.perSec, l.burst, l.key)
+	t.Policy = fmt.Sprintf("%s, burst %g, key %s (this rule)", fmtTokenRate(l.perSec), l.burst, l.key)
 	t.Bucket = strings.ReplaceAll(l.bucketKey(route, r), "\x00", " | ")
 	if l.sh != nil {
 		return e.sharedRateLimit(t, l, route, q, r)
@@ -304,4 +304,17 @@ func (e ExplainServer) bandwidthFor(rule *CRule) (in, out, burst int64) {
 		burst = sp.burst
 	}
 	return
+}
+
+// fmtTokenRate renders a refill rate readably: 5 tokens/s, 2 tokens/min,
+// 100 tokens/h (three significant digits, in the unit that keeps it at 1 or more).
+func fmtTokenRate(perSec float64) string {
+	switch {
+	case perSec >= 1:
+		return fmt.Sprintf("%.3g tokens/s", perSec)
+	case perSec*60 >= 1:
+		return fmt.Sprintf("%.3g tokens/min", perSec*60)
+	default:
+		return fmt.Sprintf("%.3g tokens/h", perSec*3600)
+	}
 }

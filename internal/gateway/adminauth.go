@@ -84,7 +84,7 @@ func adminGuard(next http.Handler, token string, openReady bool) http.Handler {
 			return
 		}
 		if !adminAuthed(r, token) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="setura-admin"`)
+			setExact(w.Header(), hdrWWWAuthenticate, `Bearer realm="setura-admin"`)
 			http.Error(w, "token required: send Authorization: Bearer TOKEN", http.StatusUnauthorized)
 			return
 		}

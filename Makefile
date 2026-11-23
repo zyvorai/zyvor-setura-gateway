@@ -2,13 +2,18 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/zyvorai/zyvor-setura-gateway/internal/setura.Version=$(VERSION)
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
-.PHONY: build test vet cover dist package social man compat sbom clean
+.PHONY: build test e2e vet cover dist package social man compat sbom clean
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/setura ./cmd/setura
 
 test:
 	go test -race -count=1 ./...
 	sh scripts/test-install.sh
+
+# End-to-end feature test with real binaries and real traffic on 127.0.0.1 (not part of `make test`).
+# Pass checks with E2E_ARGS, for example: make e2e E2E_ARGS="--only doctor".
+e2e: build
+	SETURA=bin/setura bash scripts/e2e-features.sh $(E2E_ARGS)
 
 vet:
 	go vet ./... && test -z "$$(gofmt -l .)"

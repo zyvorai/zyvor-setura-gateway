@@ -34,3 +34,20 @@ Seven feature tracks were added and merged: the built-in gateway, `watch`, `benc
 Exercised by hand with a built binary: `gateway up` served the demo config with no Envoy; `explain` passed through it; 400 requests split 367 / 33 across the 90/10 canary; unmatched paths and unknown hosts returned 404; `/status` and `/stats` reported; the config linted clean. `bench`, `watch` (with history), `echo` and the typo suggestion also ran. `explain --json` and piped `check` output keep their documented shapes.
 
 Not covered: the built-in gateway's in-cluster controller mode was only tested against a fake Kubernetes API server, never a real cluster. No load test and no run of the upstream Gateway API conformance suite. The GitHub Action, the pre-commit hook, the install-script "latest" lookup, the Homebrew formula under `brew`, and the container image workflow had not been run when this was written.
+
+## End-to-end feature test (`make e2e`)
+
+`scripts/e2e-features.sh` starts real `setura echo` backends and real `setura gateway run`
+processes on `127.0.0.1`, drives them with curl and asserts the documented behaviour of each
+feature (load balancing, auth, limits, `why`, `doctor`, lint, typo safety and more). It never
+touches a cluster or a remote host and is not part of `make test` because it needs `bash`, `curl`,
+`nc`, `openssl`, `xxd` and `gzip` and takes minutes.
+
+```
+make e2e                              # build bin/setura, run every check
+make e2e E2E_ARGS="--list"            # list the checks
+make e2e E2E_ARGS="--only doctor"     # one check, by name or number (repeatable)
+```
+
+The script exits 1 when any check fails. Each fixed behaviour has a Go regression test as well;
+the e2e run proves the same thing through the real binaries.

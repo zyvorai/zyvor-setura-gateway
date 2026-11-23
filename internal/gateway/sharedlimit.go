@@ -265,13 +265,13 @@ func setRateLimitHeaders(h http.Header, d sharedDecision) {
 	if !d.headers {
 		return
 	}
-	h.Set("X-RateLimit-Limit", strconv.FormatInt(d.limit, 10))
-	h.Set("X-RateLimit-Remaining", strconv.FormatInt(d.remaining, 10))
+	setExact(h, hdrRLLimit, strconv.FormatInt(d.limit, 10))
+	setExact(h, hdrRLRemaining, strconv.FormatInt(d.remaining, 10))
 	secs := int64(math.Ceil(d.reset.Seconds()))
 	if secs < 1 {
 		secs = 1
 	}
-	h.Set("X-RateLimit-Reset", strconv.FormatInt(secs, 10))
+	setExact(h, hdrRLReset, strconv.FormatInt(secs, 10))
 }
 
 // sharedPeek reads a client's current window without counting a request.

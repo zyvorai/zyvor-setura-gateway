@@ -542,7 +542,7 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 			return
 		}
 		for _, ch := range challenges {
-			w.Header().Add("WWW-Authenticate", ch)
+			addExact(w.Header(), hdrWWWAuthenticate, ch)
 		}
 		if status == http.StatusUnauthorized {
 			plain(w, status, "unauthorized")
@@ -647,7 +647,7 @@ func (s *Server) authCheck(w http.ResponseWriter, r *http.Request, st *reqState,
 			return true
 		case res.Status == http.StatusUnauthorized && c.oidc != nil:
 			for _, ch := range res.Challenges {
-				w.Header().Add("WWW-Authenticate", ch)
+				addExact(w.Header(), hdrWWWAuthenticate, ch)
 			}
 			noStore(w)
 			jsonError(w, http.StatusUnauthorized, "unauthenticated", "authentication is required", "code", "login_required")

@@ -74,9 +74,16 @@ Every response of a rule with a shared limit carries
 * `X-RateLimit-Remaining`: what is left in the sliding window (never negative).
 * `X-RateLimit-Reset`: seconds until the current window ends (at least 1).
 
-A refused request is `429` with `Retry-After` (the same value as `Reset`) and is logged as
-`rate limited (route, shared)`. When the local fallback answered, the headers still show the
-limit and the bucket's remaining tokens and the log says `fallback`.
+A refused request is `429` with `Retry-After` and is logged as `rate limited (route, shared)`. When
+Redis answered, `Retry-After` equals `Reset` (the seconds until the window turns over).
+
+When the local fallback answered (the log says `fallback`) the two differ: `X-RateLimit-Limit`
+is still N and `Remaining` is the bucket's remaining tokens, `X-RateLimit-Reset` is the whole
+window length (the bucket has no window), but `Retry-After` is the time until the bucket has
+one token again, which is usually shorter. Trust `Retry-After` for when to retry.
+
+Header names are case-insensitive. The gateway sends `WWW-Authenticate` and `X-RateLimit-*` with
+exactly these spellings on HTTP/1; HTTP/2 lowercases every name on the wire.
 
 ## When Redis is down
 
@@ -86,7 +93,7 @@ per second, not one per request. During that time:
 
 | `failOpen` | `fallback` | Requests are |
 |---|---|---|
-| `true` | `local` (default) | limited by a per-replica token bucket of the same rate (divide with `fallbackReplicas`) |
+| `true` | `local` (default) | limited by a per-replica token bucket of the same rate (divide with `fallbackReplicas`), with a burst of the replica's share of N, at most 100 (an `N/m` limit lets a client inside its limit send N requests at once; a bucket of one token would refuse it) |
 | `true` | `none` | not limited at all |
 | `false` | | answered `503` with `Retry-After`, `rate limit service unavailable` |
 

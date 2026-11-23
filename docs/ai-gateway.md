@@ -78,8 +78,9 @@ The API is chosen from the end of the request path, so a route may match any pre
 | `/embeddings` | OpenAI embeddings | `openai` | `usage.prompt_tokens` |
 | `/messages` | Anthropic messages | `anthropic` | `usage.input_tokens` (plus cache creation and read tokens), `output_tokens`; `message_start` and `message_delta` events when streaming |
 
-Only `POST` is accepted; anything else (`/v1/models`, images, audio, files, batches, the
-OpenAI Responses API) answers 404 with a JSON error. A request needs a JSON object body
+Only `POST` is accepted. Any other method on an AI route (a `GET` of `/v1/models`, for example) answers
+`405` with `Allow: POST` and a JSON error. A `POST` to a path that is not one of the endpoints above
+(images, audio, files, batches, the OpenAI Responses API) answers 404 with a JSON error. A request needs a JSON object body
 with a `model`. Errors use the shape the client's SDK parses: OpenAI's
 `{"error": {"message", "type", "code", "param"}}` or, on `/messages`,
 `{"type": "error", "error": {...}}`.

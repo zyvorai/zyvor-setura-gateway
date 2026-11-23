@@ -103,6 +103,9 @@ type limiter struct {
 	sh      *sharedState // non-nil: the count lives in Redis and the bucket is the outage fallback
 }
 
+// sharedFallbackBurstCap bounds the burst of the local fallback of a shared limit.
+const sharedFallbackBurstCap = 100
+
 func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
 	if c.Rate <= 0 {
 		return nil
@@ -127,6 +130,16 @@ func newLimiter(c RateLimitConfig, now func() time.Time) *limiter {
 	}
 	if burst <= 0 {
 		burst = int(math.Ceil(perSec))
+		if burst < 1 {
+			burst = 1
+		}
+	}
+	if c.Shared != nil && c.Burst == 0 {
+		// The fallback stands in for a window counter that admits N requests in any
+		// pattern within a window, so a bucket of one token (the default for N/m)
+		// would refuse a client that is well inside its limit. Hold up to the
+		// replica's share of N, capped.
+		burst = int(math.Min(math.Ceil(c.Rate/float64(share)), sharedFallbackBurstCap))
 		if burst < 1 {
 			burst = 1
 		}

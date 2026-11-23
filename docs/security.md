@@ -86,9 +86,12 @@ or from `jwksUri`. RSA keys under 2048 bits and other curves are ignored.
 Always required: a signature that verifies, an `exp` in the future (plus skew), `nbf` not in
 the future (minus skew). Tokens over 16 KB, with a `crit` header, or without `exp` are refused.
 
-Outcomes: a missing or invalid token (bad signature, expired, wrong issuer or audience) is
-`401` with `WWW-Authenticate: Bearer realm="...", error="invalid_token", error_description="..."`
-(the description never contains token content). A valid token that fails `requiredClaims` is
+Outcomes: a request with no token is `401` with `WWW-Authenticate: Bearer realm="..."` and no
+`error` (RFC 6750: nothing was presented, so nothing was invalid). A token that is present but bad
+(bad signature, expired, wrong issuer or audience) is `401` with
+`WWW-Authenticate: Bearer realm="...", error="invalid_token", error_description="..."` (the
+description never contains token content). Header names are case-insensitive; the gateway sends
+`WWW-Authenticate` with exactly this spelling on HTTP/1. A valid token that fails `requiredClaims` is
 `403` with `error="insufficient_scope"`. A JWKS that cannot be fetched and has nothing cached is
 `503`; once keys are cached, a failing refresh keeps the old keys in service (stale on error)
 and the failure is retried at most every `jwksMinRefresh`.
