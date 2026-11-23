@@ -9,7 +9,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X github.com/zyvorai/zyvor-setura-gateway/internal/setura.Version=${VERSION}" -o /setura ./cmd/setura
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 ARG VERSION=dev
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Zyvor Setura" \

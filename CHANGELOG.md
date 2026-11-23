@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Dependency and tooling upgrades (checked 2026-11-23)
+
+- Container base image moved from `gcr.io/distroless/static-debian12` to `static-debian13` (tag verified to exist). The binary is static, so nothing else changes.
+- Already current, no change: the main module has no third-party dependencies; `conformance/` modules (`sigs.k8s.io/gateway-api` v1.7.0, the latest stable) were already at the newest versions `go get -u` offers; Go 1.27 (1.27.4 is current); `golang:1.27-alpine`; every GitHub Action pin is already on the latest major listed in the release process.
+- Held back: Envoy Gateway v1.8.6 (CI helm install and docs) stays. v1.9.4 and v1.10.0 exist, but v1.10.0 has many breaking changes (session persistence cookies, health check protocol, OIDC, SecurityPolicy admission) and there is no cluster here to run the cluster smoke against it. K3s `v1.35.6-k3s1` stays for the same reason (`v1.37.2-k3s1` exists). `actions/configure-pages` v6 and `actions/attest-build-provenance` v4.1.0 were not verified against newer majors and are left alone.
+
 ## 0.9.0-rc1
 
 Release candidate for 0.9.0: the same changes as the 0.9.0 section below.
