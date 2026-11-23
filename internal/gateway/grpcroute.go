@@ -81,6 +81,7 @@ func (c *Config) parseExtraRoute(kind, ns, name string, raw json.RawMessage) err
 		}
 		annotateGRPC(spec.Rules, spec.Annotations)
 		annotateAuthGRPC(spec.Rules, spec.Annotations)
+		guardGRPCAnnotations(spec.Rules, spec.Annotations)
 		c.GRPCRoutes = append(c.GRPCRoutes, &GRPCRoute{NS: ns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 	case tlsRouteKey:
 		var spec tlsRouteSpec

@@ -24,6 +24,7 @@
 | SET016 | warning | `setura.zyvor.dev/auth` JWT policy has no `audience`, or fetches its JWKS over plain http (see [security.md](security.md)) |
 | SET017 | warning | `setura.zyvor.dev/auth` API key or basic auth password stored in clear text instead of a hash |
 | SET018 | error | `setura.zyvor.dev/auth` block or annotation is invalid, or names a rule that does not exist |
+| SET023 | error | a key under `setura.zyvor.dev/` on a rule, route, Gateway, listener, `tls.options` or an annotation is not a known Setura extension (see below) |
 | SET031 | error | `setura.zyvor.dev/fault` block or annotation is invalid, has no `ttl` or `expires` (a fault must always end), or names a rule that does not exist (see [chaos.md](chaos.md)) |
 | SET019 | error | Gateway API 1.5 setting the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, `backendRequest` longer than `request`, BackendTLSPolicy without hostname or CA source (see [gateway-api-1-5.md](gateway-api-1-5.md)) |
 | SET020 | error | API plan file (`setura lint --plans FILE`) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method (see [metering-plans.md](metering-plans.md)) |
@@ -89,3 +90,29 @@ skipped.
 
 The schema is still `setura.route-specs/v1`. `captured` and `foreign` are
 optional; snapshots without them lint as before.
+
+## Unknown extension keys (SET023)
+
+Every key under `setura.zyvor.dev/` is a Setura extension. The gateway reads only the
+keys it knows (`auth`, `direct-response`, `rate-limit`, `limits`, `compress`, `grpc-web`,
+`bandwidth`, `fault`, `contract`, `ai`, `load-balancer`, `shadow-diff`, `backends`, the
+Gateway annotation `client-allow` and the listener `tls.options` keys, plus the route wide or
+`.rule-N` forms of the route annotations). A key it does not know is never read, so a
+misspelling such as `setura.zyvor.dev/authh` or the annotation `setura.zyvor.dev/rate-limt.rule-1`
+would run the route with no auth or no rate limit. `lint` reports SET023 (error) with the
+nearest known key as a suggestion. The table the lint, the gateway and the dashboard use is
+read from the gateway's own structs, so it cannot drift from what the code understands.
+
+At run time the gateway fails closed:
+
+* A snapshot rule (or a GRPCRoute rule) with an unknown `setura.zyvor.dev/` key is invalid,
+  like a block that fails validation: the route is not served and its `Accepted` condition is
+  `False` with reason `UnsupportedValue` and a message naming the key.
+* A route annotation (snapshot or Kubernetes) within two edits of a known key (one edit for
+  the short names `auth` and `ai`) is treated as a misspelling the same way: no rule of the
+  route is served.
+* Any other unknown route annotation is ignored, the route is served, `Accepted` stays `True`
+  and its message ends with `WARNING: unknown Setura extension key ...`; Kubernetes mode also
+  logs it. `setura why` prints the warning under the matching rule.
+
+Unknown Gateway annotations, listener keys and `tls.options` keys are reported by lint only.

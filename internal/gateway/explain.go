@@ -861,6 +861,9 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 	for _, f := range rule.Rule.Filters {
 		w.Filters = append(w.Filters, describeFilter("rule", f, e.Match, r, pg.TLS))
 	}
+	for _, wn := range e.Route.Warnings {
+		w.Notes = append(w.Notes, "WARNING: "+wn)
+	}
 	tr.Winner = w
 	tr.explainPolicy(w, e, tr.Request, r)
 	if !e.GRPC {

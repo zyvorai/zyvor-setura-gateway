@@ -806,6 +806,13 @@ func (t *Table) attach(r *Route) {
 			}
 		}
 	})
+	if len(r.Warnings) > 0 {
+		for _, pr := range res.Parents {
+			if pr.Accepted.OK {
+				pr.Accepted.Message += "; WARNING: " + strings.Join(r.Warnings, "; ")
+			}
+		}
+	}
 }
 
 // attachParents resolves parentRefs for a route of any kind. add is called for

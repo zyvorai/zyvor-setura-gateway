@@ -47,6 +47,8 @@ type Gateway struct {
 	Annotations map[string]string
 	// Labels are the Gateway's labels (Envoy Gateway targetSelectors match them).
 	Labels map[string]string `json:",omitempty"`
+	// Warnings are unknown setura.zyvor.dev/ annotations that were ignored (extkeys.go).
+	Warnings []string `json:"-"`
 }
 
 // Key is namespace/name.
@@ -121,6 +123,8 @@ type Route struct {
 	Rules      []Rule
 	// Labels are the route's labels (Envoy Gateway targetSelectors match them).
 	Labels map[string]string `json:",omitempty"`
+	// Warnings are unknown setura.zyvor.dev/ annotations that were ignored (extkeys.go).
+	Warnings []string `json:"-"`
 }
 
 // Key is namespace/name.
@@ -570,7 +574,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			annotateAI(spec.Rules, spec.Annotations)
 			annotateLB(spec.Rules, spec.Annotations)
 			cfg.annotateBackends(rns, spec.Rules, spec.Annotations)
-			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
+			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules, Warnings: guardHTTPAnnotations(spec.Rules, spec.Annotations)})
 		case grantKey:
 			var spec struct {
 				From []struct{ Group, Kind, Namespace string } `json:"from"`

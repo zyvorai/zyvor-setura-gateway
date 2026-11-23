@@ -294,6 +294,10 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			annotateAI(spec.Rules, r.Metadata.Annotations)
 			annotateLB(spec.Rules, r.Metadata.Annotations)
 		})
+		for _, w := range guardHTTPAnnotations(spec.Rules, r.Metadata.Annotations) {
+			cfg.Routes[len(cfg.Routes)-1].Warnings = append(cfg.Routes[len(cfg.Routes)-1].Warnings, w)
+			k.warn("HTTPRoute %s/%s: %s", r.Metadata.Namespace, r.Metadata.Name, w)
+		}
 		cfg.annotateBackends(r.Metadata.Namespace, spec.Rules, r.Metadata.Annotations)
 		for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, LoadBalancerKey, len(spec.Rules)) {
 			k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, LoadBalancerKey, len(spec.Rules))

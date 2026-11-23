@@ -38,6 +38,7 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET030", SeverityError, "direct-response, rate-limit or limits block (rule extension or annotation) is invalid or targets no rule, a direct-response rule also names backends, a redirect, a mirror or ExternalAuth, or a listener has invalid TLS version or limits settings"},
 	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
 	{"SET031", SeverityError, "fault block (rule extension or setura.zyvor.dev/fault annotation) is invalid, has no ttl or expires, or targets no rule"},
+	{"SET023", SeverityError, "a key under setura.zyvor.dev/ on a rule, route, Gateway, listener or tls.options (or a route or Gateway annotation) is not a known Setura extension: the gateway never reads it, so a misspelling such as authh or rate-limt leaves the route unprotected; the message suggests the nearest known key"},
 	{"SET020", SeverityError, "API plan file (--plans) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method"},
 	{"SET021", SeverityWarning, "API plan file names a route (plan routes or unmeteredRoutes) that no HTTPRoute in the snapshot has"},
 	{"SET022", SeverityWarning, "API plan file maps an API key name that no route's apiKey policy declares"},
@@ -261,6 +262,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, lbRules(snapshot, specs, ns)...)
 	findings = append(findings, envoyRules(specs, ns)...)
 	findings = append(findings, shapingRules(specs, ns)...)
+	findings = append(findings, extKeyRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

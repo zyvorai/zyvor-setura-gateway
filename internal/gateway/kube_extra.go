@@ -71,6 +71,9 @@ func (k *KubeSource) loadExtraRoutes(ctx context.Context, cfg *Config, mine map[
 			annotateGRPC(r.Rules, o.Metadata.Annotations)
 			annotateAuthGRPC(r.Rules, o.Metadata.Annotations)
 		})
+		for _, w := range guardGRPCAnnotations(r.Rules, o.Metadata.Annotations) {
+			k.warn("GRPCRoute %s/%s: %s", o.Metadata.Namespace, o.Metadata.Name, w)
+		}
 		cfg.GRPCRoutes = append(cfg.GRPCRoutes, r)
 		extra[r.stub().StatusKey()] = extraRaw{base: base, plural: "grpcroutes", raw: items[i]}
 	}
