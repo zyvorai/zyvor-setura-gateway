@@ -133,7 +133,15 @@ func TestConnectionsFollow(t *testing.T) {
 	srv := connFixture(t, &calls)
 	for _, table := range []bool{false, true} {
 		calls.Store(0)
-		ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+		// Stop after the third poll (record 4 arrives on the second), not after a fixed time: a loaded
+		// machine can be slow to make the second poll, which made this test flaky.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		go func() {
+			for ctx.Err() == nil && calls.Load() < 3 {
+				time.Sleep(5 * time.Millisecond)
+			}
+			cancel()
+		}()
 		var out bytes.Buffer
 		code, err := connectionsRun(ctx, srv.Client(), strings.TrimPrefix(srv.URL, "http://"), 50, true, table, nil, 100*time.Millisecond, &out, newUI(false, termOptions{Color: "never"}, func(string) string { return "" }))
 		cancel()
