@@ -288,6 +288,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 			annotateExt(spec.Rules, r.Metadata.Annotations)
 			annotateFault(spec.Rules, r.Metadata.Annotations)
 			annotateContract(spec.Rules, r.Metadata.Annotations)
+			annotateAI(spec.Rules, r.Metadata.Annotations)
 		})
 		for _, base := range RuleExtKeys {
 			for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, base, len(spec.Rules)) {
@@ -412,6 +413,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		}
 	}
 
+	k.loadAIKeys(ctx, cfg)
 	k.loadClientCAs(ctx, cfg)
 
 	// ReferenceGrants and namespace labels are optional extras: a 403 or 404
@@ -451,7 +453,7 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		T []*TLSRoute
 		Y []any
 	}{cfg.Gateways, cfg.Routes, cfg.Backends, cfg.Secrets, cfg.Grants, cfg.Namespaces, cfg.GRPCRoutes, cfg.TLSRoutes,
-		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts}})
+		[]any{cfg.ListenerSets, cfg.TCPRoutes, cfg.UDPRoutes, cfg.BackendTLS, cfg.CACerts, cfg.AIKeys}})
 	sum := sha256.Sum256(sig)
 	k.syncRefWatches()
 	return &Loaded{Config: cfg, Hash: hex.EncodeToString(sum[:])}, nil

@@ -462,6 +462,7 @@ func (s *Server) authCheck(r *http.Request, st *reqState, l *RTListener, rule *R
 	res := c.evaluate(authInput{r: r, clientIP: ip, cert: cert, certKnown: true, now: s.authNow()})
 	if res.allowed() {
 		s.ext.authOutcome(st.route, "allowed", "")
+		st.authRes = &res
 		res.apply(r)
 		st.auth = &res
 		return false
@@ -486,6 +487,9 @@ func (s *Server) authNow() time.Time {
 // postApply runs after a table is swapped in: OCSP tracking of the listener
 // certificates and the list of query parameters that carry credentials.
 func (s *Server) postApply(t *Table) {
+	if err := s.ai.prices.reload(false); err != nil {
+		s.diag("AI price table: %v", err)
+	}
 	s.ocspSync(t)
 	s.acmeSync(t)
 	s.proxySync(t)

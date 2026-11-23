@@ -83,6 +83,8 @@ type Options struct {
 	ContractSpec     string
 	ContractEnforce  string
 	ContractInterval time.Duration // spec reload and inventory save period (default 5s)
+	// AI holds the gateway wide settings of AI routes (price table, label limits).
+	AI AIOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -159,6 +161,7 @@ type Server struct {
 	pl       *planRuntime
 	meterErr error          // plan or usage state that could not be loaded, reported by the first Apply
 	contract *contractState // endpoint learner and spec enforcement (contract.go)
+	ai       aiRuntime      // AI route budgets, caches and counters (ai_runtime.go)
 }
 
 // New creates a Server. Nothing listens until Apply or Run.
@@ -180,6 +183,7 @@ func New(opts Options) *Server {
 	if opts.ClientAllow != nil {
 		s.defaultAllow, _ = opts.ClientAllow.compile() // validated by the flags
 	}
+	s.ai.init(opts.AI)
 	s.shadowP = s.startShadowPersist()
 	s.initContract()
 	s.initCert()
@@ -703,6 +707,7 @@ func (s *Server) startAdmin() error {
 	mux.HandleFunc("/contract", jsonOut(func() any { return s.Inventory() }))
 	mux.HandleFunc("/contract/status", jsonOut(func() any { return s.ContractStatus() }))
 	mux.HandleFunc("/contract/learn", s.handleContractLearn)
+	mux.HandleFunc("/ai/usage", jsonOut(func() any { return s.Usage() }))
 	s.adminLn = ln
 	s.adminSrv = &http.Server{Handler: adminGuard(mux, s.opts.AdminToken, s.opts.AdminOpenReady), ReadHeaderTimeout: 5 * time.Second}
 	go s.adminSrv.Serve(ln)

@@ -65,6 +65,18 @@ type logLine struct {
 	TraceID           string       `json:"trace_id,omitempty"`
 	SpanID            string       `json:"span_id,omitempty"`
 	Error             string       `json:"error,omitempty"`
+
+	// AI routes (ai_serve.go). Counts and names only: never prompts, answers or credentials.
+	AIKey           string  `json:"ai_key,omitempty"`
+	Provider        string  `json:"provider,omitempty"`
+	Model           string  `json:"model,omitempty"`
+	TokensIn        int64   `json:"tokens_in,omitempty"`
+	TokensOut       int64   `json:"tokens_out,omitempty"`
+	TokensEstimated bool    `json:"tokens_estimated,omitempty"`
+	CacheHit        *bool   `json:"cache_hit,omitempty"`
+	CostEstimate    float64 `json:"cost_estimate,omitempty"`
+	PIIFindings     int     `json:"pii_findings,omitempty"`
+	PIIAction       string  `json:"pii_action,omitempty"`
 }
 
 func (l *logLine) text() []byte {
@@ -169,6 +181,18 @@ func (l *logLine) text() []byte {
 	}
 	kv("contract", l.Contract)
 	kv("contract_mode", l.ContractMode)
+	kv("ai_key", l.AIKey)
+	kv("provider", l.Provider)
+	kv("model", l.Model)
+	ki("tokens_in", l.TokensIn)
+	ki("tokens_out", l.TokensOut)
+	if l.TokensEstimated {
+		b = append(b, "tokens_estimated=true "...)
+	}
+	kb("cache_hit", l.CacheHit)
+	kf("cost_estimate", l.CostEstimate)
+	ki("pii_findings", int64(l.PIIFindings))
+	kv("pii_action", l.PIIAction)
 	kv("request_id", l.RequestID)
 	kv("trace_id", l.TraceID)
 	kv("span_id", l.SpanID)

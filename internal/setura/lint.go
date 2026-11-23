@@ -41,6 +41,14 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET020", SeverityError, "API plan file (--plans) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method"},
 	{"SET021", SeverityWarning, "API plan file names a route (plan routes or unmeteredRoutes) that no HTTPRoute in the snapshot has"},
 	{"SET022", SeverityWarning, "API plan file maps an API key name that no route's apiKey policy declares"},
+	{"SET040", SeverityError, "AI block (rule extension or setura.zyvor.dev/ai annotation) is invalid or targets no rule"},
+	{"SET041", SeverityError, "AI token budget has no identity to count against: the identity (apikey, subject or claim) needs an auth policy on the rule that provides it"},
+	{"SET042", SeverityWarning, "AI budget or cache identity is a request header the client sets itself, so a client can pick another tenant's identity"},
+	{"SET043", SeverityWarning, "AI provider is called over plain http with an API key outside the cluster or loopback, so the key crosses the network in clear text"},
+	{"SET044", SeverityWarning, "AI route has no auth policy: everyone who can reach the gateway spends the provider key"},
+	{"SET045", SeverityWarning, "AI prompt cache is shared across identities (scope route) on a route that authenticates, so one client's answer can be served to another"},
+	{"SET046", SeverityWarning, "AI monthlyCost budget has no price table on the route (prices); without --ai-prices on the gateway the cost is always 0 and the budget never fires"},
+	{"SET047", SeverityWarning, "AI rule also has backendRefs, which are ignored: an AI rule serves its providers"},
 }
 
 func ruleSeverity(id string) string {
@@ -153,7 +161,7 @@ func Lint(snapshot obj) (obj, error) {
 			if allZero {
 				add("SET002", id, where+": all backendRefs have weight 0")
 			}
-			if len(refs) == 0 {
+			if len(refs) == 0 && !hasAIBlock(spec, i, rule) {
 				redirect := ruleHasDirect(spec, rule, i)
 				for _, f := range asList(rule["filters"]) {
 					t := asStr(asMap(f)["type"])
@@ -227,6 +235,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, authRules(specs, ns)...)
 	findings = append(findings, limitsRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
+	findings = append(findings, aiRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

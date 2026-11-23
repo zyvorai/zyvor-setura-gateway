@@ -339,6 +339,7 @@ func (s *Server) buildLine(rec *recorder, r *http.Request, st *reqState, start, 
 		l.Retries = u.n - 1
 		l.Attempts = u.attempts()
 	}
+	st.ai.fill(l)
 	return l
 }
 

@@ -74,11 +74,13 @@ type reqState struct {
 	auth        *authResult // verified identity of an allowed request
 	meter       *meterCtx   // set once the request was admitted by a plan
 
-	authed          bool     // the serving rule carries an auth filter
-	contract        string   // unknown_endpoint or unknown_method when the spec does not document the request
-	contractMode    string   // monitor or block
-	contractBlocked bool     // the gateway answered 404/405 itself
-	hdrNames        []string // request header names, kept only while the learner is on
+	authed          bool        // the serving rule carries an auth filter
+	contract        string      // unknown_endpoint or unknown_method when the spec does not document the request
+	contractMode    string      // monitor or block
+	contractBlocked bool        // the gateway answered 404/405 itself
+	hdrNames        []string    // request header names, kept only while the learner is on
+	authRes         *authResult // the verified identity of an allowed request, when a policy ran
+	ai              *aiReq      // AI route accounting (ai_serve.go)
 }
 
 // countBody makes the request body count the bytes it delivers.
@@ -242,6 +244,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		}
 	}
 	if s.planDenied(rec, r, st) {
+		return
+	}
+	if rule.AI != nil {
+		s.serveAI(rec, r, st, rule)
 		return
 	}
 

@@ -26,12 +26,13 @@ type ExplainServer struct {
 	chaos   *chaosState // live run-time faults of a running gateway
 	limiter *limiter    // live limiter of a running gateway (admin endpoint)
 	meter   *meter      // live usage counters of a running gateway
+	srv     *Server     // the running gateway (admin endpoint): live AI budget state
 }
 
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter, chaos: &s.chaos, Plans: s.Plans(), meter: s.meter}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter, chaos: &s.chaos, Plans: s.Plans(), meter: s.meter, srv: s}
 }
 
 // TraceMirror is one mirror target of the winning rule.
@@ -115,6 +116,9 @@ func (tr *Trace) explainPolicy(w *TraceWinner, e *Entry, q ExplainRequest, r *ht
 	rule := e.Rule
 	srv := q.Server
 	tr.explainAuth(w, e, q, r)
+	if rule.AI != nil {
+		tr.explainAI(w, e, q, r)
+	}
 	if e.GRPC {
 		w.RateLimit = srv.rateLimit(w.Route, q, r)
 	} else {

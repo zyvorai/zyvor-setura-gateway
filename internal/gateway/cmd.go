@@ -25,6 +25,7 @@ Usage:
   setura gateway run --kubernetes [flags]      run as an in-cluster controller and data plane
   setura gateway up FILE [flags]               local demo: start demo backends and serve FILE
   setura gateway hash --kind apikey|password   read a secret on stdin, print the hash to store in a config
+  setura gateway ai-usage [--admin ADDR]       token usage, cost estimates, budgets and provider health of the AI routes of a running gateway
   setura gateway install [flags]               print Kubernetes YAML for the controller (never applies); --with-monitoring adds
                                                an admin Service port, ServiceMonitor, PrometheusRule alerts and the Grafana dashboard
   setura gateway install --check               check the cluster's Gateway API CRDs (missing or too old) through kubectl
@@ -140,6 +141,9 @@ Flags for run and up:
   --contract-enforce monitor|block   default mode for routes: monitor counts and logs requests whose method and path
                         are not in the spec, block answers 404 (unknown path) or 405 (unknown method); a route's
                         setura.zyvor.dev/contract annotation (off|monitor|block) overrides it (see docs/contract.md)
+  --ai-prices FILE      JSON price table for AI route cost estimates: {"currency":"USD","models":{"gpt-4o":{"input":2.5,"output":10}}},
+                        prices per million tokens, longest model prefix wins, "*" is the fallback; re-read when it changes (docs/ai-gateway.md)
+  --ai-max-key-labels N most identities an AI route reports per series in /metrics, the rest are folded into "_other" (default 500)
   --ui ADDR             serve the read-only live dashboard, for example 127.0.0.1:9090 or :9090
                         (loopback only unless --ui-token is set)
   --ui-token TOKEN      bearer token for the dashboard (or SETURA_UI_TOKEN); required off loopback
@@ -241,6 +245,8 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.IntVar(&f.opts.LearnMax, "learn-max", 0, "endpoints the learner keeps (default 5000)")
 	fs.StringVar(&f.opts.ContractSpec, "contract-spec", "", "OpenAPI 3.x document requests are checked against")
 	fs.StringVar(&f.opts.ContractEnforce, "contract-enforce", "", "monitor or block requests not in the contract spec (default off)")
+	fs.StringVar(&f.opts.AI.PricesFile, "ai-prices", "", "JSON price table (per million tokens) for AI route cost estimates; re-read when it changes")
+	fs.IntVar(&f.opts.AI.MaxKeyLabels, "ai-max-key-labels", 0, "most identities an AI route reports in /metrics, the rest are _other (default 500)")
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -281,6 +287,18 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 			return nil, fmt.Errorf("--access-log-max-size: %w", err)
 		}
 		f.rotate.MaxSize = n
+	}
+	if f.opts.AI.MaxKeyLabels < 0 {
+		return nil, fmt.Errorf("--ai-max-key-labels %d: want 0 (default) or a positive count", f.opts.AI.MaxKeyLabels)
+	}
+	if p := f.opts.AI.PricesFile; p != "" {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("--ai-prices: %v", err)
+		}
+		if _, err := ParseAIPrices(raw); err != nil {
+			return nil, fmt.Errorf("--ai-prices %s: %v (want {\"currency\":\"USD\",\"models\":{\"MODEL\":{\"input\":N,\"output\":N}}}, prices per million tokens)", p, err)
+		}
 	}
 	if f.rotate.Keep < 0 {
 		return nil, fmt.Errorf("--access-log-keep %d: want 0 or more", f.rotate.Keep)

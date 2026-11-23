@@ -29,6 +29,14 @@
 | SET020 | error | API plan file (`setura lint --plans FILE`) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method (see [metering-plans.md](metering-plans.md)) |
 | SET021 | warning | API plan file names a route (plan `routes` or `unmeteredRoutes`) that no HTTPRoute in the snapshot has |
 | SET022 | warning | API plan file maps `apikey:NAME` for a key that no route's apiKey policy declares |
+| SET040 | error | `setura.zyvor.dev/ai` block or annotation is invalid, or names a rule that does not exist (see [ai-gateway.md](ai-gateway.md)) |
+| SET041 | error | AI token budget counts per an identity (`apikey`, `subject`, `claim:NAME`) the rule's auth policy cannot provide |
+| SET042 | warning | AI budget or cache identity is a request header the client sets itself, on a rule without an auth policy |
+| SET043 | warning | AI provider with an API key is called over plain `http://` outside loopback, private addresses and in-cluster names |
+| SET044 | warning | AI rule has no auth policy: everyone who can reach the gateway spends the provider keys |
+| SET045 | warning | AI prompt cache scope `route` on a rule that authenticates: one client's cached answer can be served to another |
+| SET046 | warning | AI `monthlyCost` budget with no `prices` on the route (only `--ai-prices` on the gateway could price it) |
+| SET047 | warning | AI rule also has `backendRefs`, which are ignored |
 
 ## ReferenceGrants (SET004, SET012)
 

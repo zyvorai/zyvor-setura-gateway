@@ -278,6 +278,7 @@ type TraceWinner struct {
 	RouteLimit    *TraceRateLimit `json:"route_rate_limit,omitempty"` // the rule's own limiter
 	Auth          *TraceAuth      `json:"auth,omitempty"`
 	Plan          *TracePlan      `json:"plan,omitempty"`
+	AI            *TraceAI        `json:"ai,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 	Faults        []TraceFault    `json:"faults,omitempty"`
 
@@ -879,6 +880,13 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 		}
 		tr.explainExtras(w, e, r)
 		tr.finishBackends(w)
+		return
+	}
+	if rule.AI != nil {
+		tr.Verdict, tr.Reason = VerdictRouted, fmt.Sprintf("rule %d of %s won: an AI route", w.Rule, w.Route)
+		if len(w.AI.Providers) == 0 || w.AI.Primary == "" {
+			tr.Verdict, tr.Reason = VerdictNoBackend, fmt.Sprintf("rule %d of %s won, but %s", w.Rule, w.Route, w.AI.Why)
+		}
 		return
 	}
 	defs := t.refDefs(e)

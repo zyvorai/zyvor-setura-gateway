@@ -62,3 +62,15 @@ setura_gateway_usage_overflow_total counter
 setura_gateway_usage_persist_errors_total counter 
 setura_gateway_plans_reload_errors_total counter 
 setura_gateway_plans gauge 
+setura_ai_requests_total counter route,provider,model,outcome
+setura_ai_tokens_total counter route,provider,model,direction
+setura_ai_cost_estimate_total counter route,provider,model
+setura_ai_key_tokens_total counter route,key,direction
+setura_ai_key_cost_estimate_total counter route,key
+setura_ai_cache_requests_total counter route,result
+setura_ai_cache_evictions_total counter route
+setura_ai_budget_rejections_total counter route,limit
+setura_ai_provider_attempts_total counter route,provider,result
+setura_ai_failovers_total counter route,from,to
+setura_ai_pii_findings_total counter route,rule,action
+setura_ai_provider_up gauge route,provider

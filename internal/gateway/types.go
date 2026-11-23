@@ -156,6 +156,8 @@ type Rule struct {
 	// Contract is the API contract enforcement mode of the rule: off, monitor
 	// or block (setura.zyvor.dev/contract). Empty uses --contract-enforce.
 	Contract string `json:"setura.zyvor.dev/contract,omitempty"`
+	// AI turns the rule into an AI gateway route (setura.zyvor.dev/ai, ai_config.go).
+	AI *AIPolicy `json:"setura.zyvor.dev/ai,omitempty"`
 }
 
 // Match is one HTTPRouteMatch.
@@ -400,6 +402,9 @@ type Config struct {
 	ListenerSets []*ListenerSet
 	TCPRoutes    []*L4Route
 	UDPRoutes    []*L4Route
+	// AIKeys are the Kubernetes Secret values AI provider apiKey.secret refs
+	// name ("namespace/name#key"), read by the Kubernetes source.
+	AIKeys map[string]string
 
 	skipCerts bool // offline replay: do not load listener certificates
 }
@@ -505,6 +510,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			annotateExt(spec.Rules, spec.Annotations)
 			annotateFault(spec.Rules, spec.Annotations)
 			annotateContract(spec.Rules, spec.Annotations)
+			annotateAI(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {
