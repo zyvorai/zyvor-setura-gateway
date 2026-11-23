@@ -41,7 +41,7 @@ A bare string is shorthand for the algorithm: `"leastRequest"` means
 | `roundRobin` (default) | Smooth weighted round robin: exact proportions without bursts. With equal weights it is plain rotation. |
 | `leastRequest` | Power of N choices: sample `choices` endpoints (default 2, 1-16) at random and take the one with the fewest in-flight requests per unit of weight. In-flight counts are per gateway replica and cover HTTP and HTTPS routes. |
 | `random` | Weighted random. |
-| `consistentHash` | The same key always reaches the same endpoint while it is healthy; removing an endpoint only moves the keys it owned. Needs a `consistentHash` block. |
+| `consistentHash` | The same key always reaches the same endpoint while it is healthy; the ring moves only the keys of an endpoint that is removed or added (Maglev moves a small share of others, see below). Needs a `consistentHash` block. |
 
 ### consistentHash
 
@@ -54,7 +54,7 @@ A bare string is shorthand for the algorithm: `"leastRequest"` means
 | --- | --- |
 | `type` | `ring` (default, ketama style) or `maglev`. |
 | `on` | What is hashed: `header` (`name` is the header), `cookie` (`name`), `sourceIP` (the client address, trusted-proxy aware like `--trusted-proxies`), or `query` (`name` is the URL query parameter). |
-| `minRingSize` | Ring only: the ring has at least this many points (default 1024, up to 8388608), shared between endpoints by weight. More points spread keys more evenly. |
+| `minRingSize` | Ring only (default 1024, up to 8388608). Sets the points per weight unit: `ceil(minRingSize / 64)`, so a weight-1 endpoint owns 16 points by default and a weight-3 endpoint 48, whatever the number of endpoints (capped at 32768 points per endpoint). More points spread keys more evenly. |
 | `tableSize` | Maglev only: the lookup table size, a prime (default 65537). |
 | `ttl`, `path` | Cookie only: lifetime and path of the cookie the gateway sets (below). |
 
@@ -62,6 +62,7 @@ A bare string is shorthand for the algorithm: `"leastRequest"` means
   by it, and the response carries `Set-Cookie: NAME=VALUE; Path=...; HttpOnly; SameSite=Lax`
   (`Secure` on HTTPS listeners, `Max-Age` from `ttl`). Later requests bring it back and reach
   the same endpoint. A client that already has the cookie is never sent another one.
+* **Stability, ring vs Maglev.** The ring is exactly consistent: each endpoint's points depend only on its own host and weight, so removing an endpoint moves only the keys it owned (they go to the next point on the ring) and adding one only takes keys for itself. Maglev guarantees minimal but not zero disruption: when an endpoint is removed its table entries are re-filled, and a small share of the keys of the surviving endpoints (well under 1% with equal weights and the default table size, bounded by 10% in the tests) can move too. Pick `ring` when a key must never move without cause, Maglev for the most even spread.
 * **No key.** A request without the header or query parameter (or whose `sourceIP` is unknown)
   has nothing to hash, so it gets a random endpoint. `setura why` says so.
 * **Health.** An unhealthy or ejected endpoint is skipped: the key moves to the next endpoint

@@ -245,8 +245,8 @@ func TestConsistentHashRingAndMaglev(t *testing.T) {
 func TestRingMinimumSizeAndWeights(t *testing.T) {
 	b := lbBackend(t, []any{m{"address": "10.0.0.1:80", "weight": 3}, "10.0.0.2:80"}, m{"algorithm": "consistentHash", "consistentHash": m{"on": "sourceIP", "minRingSize": 4096}})
 	r := b.ringFor(4096)
-	if len(r.pts) < 4096 {
-		t.Fatalf("ring has %d points, want at least 4096", len(r.pts))
+	if want := 4 * ringPointsPerWeight(4096); len(r.pts) != want {
+		t.Fatalf("ring has %d points, want %d (weight sum 4 x points per weight)", len(r.pts), want)
 	}
 	n := map[int32]int{}
 	for _, p := range r.pts {
@@ -670,4 +670,69 @@ func newUpstreamFunc(t *testing.T, h http.HandlerFunc) string {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
+}
+
+// ringOwners maps n synthetic keys to the endpoint host that owns them.
+func ringOwners(t *testing.T, kind string, addrs []any, n int) map[int]string {
+	t.Helper()
+	ch := m{"on": "header", "name": "X-User"}
+	if kind == "maglev" {
+		ch["type"] = "maglev"
+	}
+	b := lbBackend(t, addrs, m{"algorithm": "consistentHash", "consistentHash": ch})
+	out := map[int]string{}
+	for i := 0; i < n; i++ {
+		ep, _ := b.pickLB(lbT0, nil, lbHashReq("X-User", fmt.Sprintf("user-%d", i)), false)
+		out[i] = ep.URL.Host
+	}
+	return out
+}
+
+// Removing an endpoint must not move any key the ring gave to a survivor.
+func TestRingRemovalMovesOnlyOwnedKeys(t *testing.T) {
+	for _, total := range []int{3, 5, 9} {
+		all := lbAddrs(total)
+		before := ringOwners(t, "ring", all, 3000)
+		after := ringOwners(t, "ring", all[:total-1], 3000)
+		gone := all[total-1].(string)
+		owned, moved := 0, 0
+		for k, o := range before {
+			if o == gone {
+				owned++
+				continue
+			}
+			if after[k] != o {
+				moved++
+			}
+		}
+		if owned == 0 {
+			t.Fatalf("n=%d: removed endpoint owned nothing", total)
+		}
+		if moved != 0 {
+			t.Errorf("n=%d: %d keys not owned by the removed endpoint moved", total, moved)
+		}
+	}
+}
+
+// Maglev promises minimal, not zero, disruption: bound it.
+func TestMaglevRemovalDisruptionBounded(t *testing.T) {
+	all := lbAddrs(5)
+	before := ringOwners(t, "maglev", all, 3000)
+	after := ringOwners(t, "maglev", all[:4], 3000)
+	gone := all[4].(string)
+	surv, moved := 0, 0
+	for k, o := range before {
+		if o == gone {
+			continue
+		}
+		surv++
+		if after[k] != o {
+			moved++
+		}
+	}
+	frac := float64(moved) / float64(surv)
+	t.Logf("maglev moved %.2f%% of surviving keys", frac*100)
+	if frac > 0.10 {
+		t.Errorf("maglev moved %.1f%% of surviving keys, want under 10%%", frac*100)
+	}
 }

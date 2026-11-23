@@ -817,20 +817,30 @@ type lbTables struct {
 
 func (b *Backend) epKey(i int) string { return b.Eps[i].URL.Host }
 
+// ringReferenceEndpoints is the endpoint count minRingSize is spread over to get
+// the points of one weight unit. The points of an endpoint depend only on its
+// own weight, never on how many other endpoints exist, so adding or removing an
+// endpoint moves only the keys that endpoint gains or loses.
+const (
+	ringReferenceEndpoints   = 64
+	ringMaxPointsPerEndpoint = 1 << 15
+)
+
+// ringPointsPerWeight is the ring points of one weight unit for a minRingSize.
+func ringPointsPerWeight(minSize int) int {
+	return max(1, (minSize+ringReferenceEndpoints-1)/ringReferenceEndpoints)
+}
+
 func (b *Backend) ringFor(minSize int) *lbRing {
 	b.tabs.mu.Lock()
 	defer b.tabs.mu.Unlock()
 	if r := b.tabs.rings[minSize]; r != nil {
 		return r
 	}
-	sum := 0
-	for _, e := range b.Eps {
-		sum += e.W()
-	}
-	size := max(minSize, len(b.Eps))
 	r := &lbRing{}
+	perWeight := ringPointsPerWeight(minSize)
 	for i, e := range b.Eps {
-		pts := (size*e.W() + sum - 1) / sum
+		pts := min(e.W()*perWeight, ringMaxPointsPerEndpoint)
 		for j := 0; j < pts; j++ {
 			r.pts = append(r.pts, ringPt{hash64(b.epKey(i) + "#" + strconv.Itoa(j)), int32(i)})
 		}
