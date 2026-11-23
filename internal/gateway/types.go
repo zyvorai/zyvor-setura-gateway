@@ -66,7 +66,7 @@ type Listener struct {
 type ListenerTLS struct {
 	Mode            string   `json:"mode,omitempty"`
 	CertificateRefs []ObjRef `json:"certificateRefs,omitempty"`
-	// Options are implementation specific; Setura reads TLSMinVersionOption and TLSMaxVersionOption.
+	// Options are implementation specific; Setura reads TLSMinVersionOption, TLSMaxVersionOption, TLSCipherSuitesOption and TLSSessionResumptionOption.
 	Options map[string]string `json:"options,omitempty"`
 }
 

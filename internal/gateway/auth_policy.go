@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,13 +32,21 @@ const (
 // enough; with none configured only the first two checks apply.
 type AuthPolicy struct {
 	// Enabled false switches the policy off for the rule without deleting it.
-	Enabled           *bool         `json:"enabled,omitempty"`
-	JWT               *JWTPolicy    `json:"jwt,omitempty"`
-	APIKey            *APIKeyPolicy `json:"apiKey,omitempty"`
-	Basic             *BasicPolicy  `json:"basic,omitempty"`
-	IPAllow           []string      `json:"ipAllow,omitempty"`
-	IPDeny            []string      `json:"ipDeny,omitempty"`
-	RequireClientCert bool          `json:"requireClientCert,omitempty"`
+	Enabled *bool         `json:"enabled,omitempty"`
+	JWT     *JWTPolicy    `json:"jwt,omitempty"`
+	APIKey  *APIKeyPolicy `json:"apiKey,omitempty"`
+	Basic   *BasicPolicy  `json:"basic,omitempty"`
+	// OIDC logs browsers in at the gateway (docs/oidc.md); Authorization
+	// allows or denies authenticated callers by rule (docs/authorization.md);
+	// CSRF checks the Origin of unsafe methods; Inject puts a secret into an
+	// upstream header.
+	OIDC              *OIDCPolicy  `json:"oidc,omitempty"`
+	Authorization     *AuthzPolicy `json:"authorization,omitempty"`
+	CSRF              *CSRFPolicy  `json:"csrf,omitempty"`
+	Inject            []InjectDef  `json:"inject,omitempty"`
+	IPAllow           []string     `json:"ipAllow,omitempty"`
+	IPDeny            []string     `json:"ipDeny,omitempty"`
+	RequireClientCert bool         `json:"requireClientCert,omitempty"`
 	// Realm names the protection space in WWW-Authenticate (default "setura").
 	Realm string `json:"realm,omitempty"`
 
@@ -178,6 +187,11 @@ type compiledAuth struct {
 	apikey      *apiKeyVerifier
 	basic       *basicVerifier
 	ownHeaders  []string // headers the policy sets from claims, removed from the client's request
+	oidc        *compiledOIDC
+	authz       *compiledAuthz
+	csrf        *compiledCSRF
+	inject      []*cInject
+	secrets     atomic.Pointer[authSecrets]
 }
 
 // compileAuth compiles the policy of a rule (a nil policy compiles to nothing).
@@ -212,6 +226,32 @@ func compileAuthPolicy(p *AuthPolicy) (*compiledAuth, error) {
 		}
 		c.ownHeaders = append(c.ownHeaders, c.jwt.claimHd...)
 	}
+	if p.OIDC != nil {
+		if c.oidc, err = compileOIDC(p.OIDC); err != nil {
+			return nil, err
+		}
+		for _, h := range c.oidc.own {
+			if !strings.EqualFold(h, "Authorization") { // replaced in apply: the client's bearer token is read first
+				c.ownHeaders = append(c.ownHeaders, h)
+			}
+		}
+	}
+	if p.Authorization != nil {
+		if c.authz, err = compileAuthz(p.Authorization); err != nil {
+			return nil, err
+		}
+	}
+	if p.CSRF != nil {
+		if c.csrf, err = compileCSRF(p.CSRF); err != nil {
+			return nil, err
+		}
+	}
+	for i, in := range p.Inject {
+		if err := in.validate(i); err != nil {
+			return nil, err
+		}
+		c.inject = append(c.inject, &cInject{d: in})
+	}
 	if p.APIKey != nil {
 		if c.apikey, err = compileAPIKey(p.APIKey); err != nil {
 			return nil, err
@@ -238,6 +278,7 @@ type authInput struct {
 	certKnown bool
 	now       time.Time
 	offline   bool // never fetch a JWKS (explainer)
+	https     bool // the request arrived over TLS (CSRF origin, cookie and redirect URLs)
 }
 
 // authResult is the outcome of a policy for one request.
@@ -250,8 +291,18 @@ type authResult struct {
 	Challenges []string
 	headers    map[string]string
 	strip      func(*http.Request)
-	claims     jwtClaims // verified JWT claims, for plan and tenant lookup
+	claims     jwtClaims // verified JWT or OIDC claims, for plan and tenant lookup
+	// Code names why a request was denied, for metrics and the response:
+	// unauthenticated, forbidden, authz, csrf or unavailable.
+	Code      string
+	authz     *authzMatch
+	oidcLogin bool           // the browser is to be sent to the identity provider (Status 302)
+	cookies   []*http.Cookie // session cookies to set on the response
+	event     string         // OIDC event to count
+	inject    []injected     // credentials to put on the upstream request
 }
+
+type injected struct{ name, value string }
 
 func (a authResult) allowed() bool { return a.Decision == "allow" }
 
@@ -278,18 +329,54 @@ func (c *compiledAuth) evaluate(in authInput) authResult {
 			return authResult{Decision: "deny", Status: http.StatusForbidden, Reason: "a verified client certificate is required"}
 		}
 	}
+	if c.csrf != nil {
+		if why := c.csrf.check(in.r, in.https); why != "" {
+			return authResult{Decision: "deny", Status: http.StatusForbidden, Code: "csrf", Reason: why}
+		}
+	}
 	res := authResult{Decision: "allow", Method: "none", Reason: "no credential check is configured; the address and certificate checks passed"}
 	if in.cert != nil && in.cert.Verified {
 		res.Subject = in.cert.Subject
 	}
-	if c.jwt != nil || c.apikey != nil || c.basic != nil {
+	if c.jwt != nil || c.apikey != nil || c.basic != nil || c.oidc != nil {
 		res = c.credentials(in)
+	}
+	if res.allowed() && c.authz != nil {
+		res = c.authorize(in, res)
 	}
 	if len(unknown) > 0 && res.allowed() {
 		res.Decision = "unknown"
 		res.Reason = strings.Join(unknown, "; ")
 	}
+	if res.allowed() && len(c.inject) > 0 {
+		sec := c.secrets.Load()
+		for i, in := range c.inject {
+			var s *aiSecret
+			if sec != nil && i < len(sec.inject) {
+				s = sec.inject[i]
+			}
+			res.inject = append(res.inject, injected{in.d.Header, in.value(s)})
+		}
+	}
 	return res
+}
+
+// authorize runs the authorization rules for an authenticated request.
+func (c *compiledAuth) authorize(in authInput, res authResult) authResult {
+	caller := authzCaller{claims: res.claims, method: res.Method, subject: res.Subject, cert: in.cert, certKnown: in.certKnown, ip: in.clientIP}
+	m, unknown := c.authz.decide(in.r, caller)
+	switch {
+	case unknown:
+		return authResult{Decision: "unknown", Reason: fmt.Sprintf("authorization rule %s depends on a client address or certificate that this view does not have (give --client-ip; a certificate cannot be simulated)", m.Rule)}
+	case m.Action == "allow":
+		res.authz = &m
+		return res
+	}
+	why := fmt.Sprintf("authorization rule %s denies the request", m.Rule)
+	if m.Default {
+		why = "no authorization rule matched and the default action is deny"
+	}
+	return authResult{Decision: "deny", Status: http.StatusForbidden, Code: "authz", Method: res.Method, Subject: res.Subject, Reason: why, authz: &m}
 }
 
 func (c *compiledAuth) credentials(in authInput) authResult {
@@ -360,12 +447,34 @@ func (c *compiledAuth) credentials(in authInput) authResult {
 		}
 		challenges = append(challenges, c.basic.challenge())
 	}
+	var oc oidcOutcome
+	if c.oidc != nil {
+		oc = c.oidc.session(in, c.secrets.Load())
+		switch {
+		case oc.sess != nil:
+			return authResult{Decision: "allow", Method: "oidc", Subject: oc.sess.Sub, Reason: "OIDC session verified", claims: jwtClaims(oc.sess.Claims),
+				headers: c.oidc.forwarded(oc.sess), strip: c.oidc.stripCookies, cookies: oc.cookies, event: oc.event}
+		case oc.unknown != "":
+			return authResult{Decision: "unknown", Reason: oc.unknown}
+		case oc.status != 0:
+			return authResult{Decision: "deny", Status: oc.status, Code: "unavailable", Reason: oc.reason, event: oc.event}
+		}
+		failures = append(failures, oc.reason)
+	}
 	if offline {
 		return authResult{Decision: "unknown", Reason: "jwt: " + errOfflineJWKS.Error() + "; the token cannot be verified offline (point --admin at a running gateway)"}
 	}
-	res := authResult{Decision: "deny", Status: http.StatusUnauthorized, Challenges: challenges, Reason: strings.Join(failures, "; ")}
+	res := authResult{Decision: "deny", Status: http.StatusUnauthorized, Challenges: challenges, Reason: strings.Join(failures, "; "), cookies: oc.cookies, event: oc.event}
 	if forbid != nil {
 		res.Status = http.StatusForbidden
+	}
+	if c.oidc != nil && forbid == nil {
+		if c.oidc.denySilently(in.r) {
+			res.Reason += " (answered 401: this request is not a browser navigation)"
+		} else {
+			res.Status, res.oidcLogin = http.StatusFound, true
+			res.Reason += "; the browser is redirected to the identity provider to log in"
+		}
 	}
 	return res
 }
@@ -406,6 +515,10 @@ func (res authResult) apply(r *http.Request) {
 	if res.strip != nil {
 		res.strip(r)
 	}
+	for _, in := range res.inject {
+		r.Header.Del(in.name)
+		r.Header.Set(in.name, in.value)
+	}
 }
 
 // prepareIdentity is the single place a request's identity headers are
@@ -423,7 +536,7 @@ func prepareIdentity(r *http.Request, rule *Rule, cert *ClientCert) {
 // authDenied runs the rule's policy for an HTTP request and answers it when
 // it fails. On success the identity headers are in place on r.
 func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState, l *RTListener, rule *Rule) bool {
-	return s.authCheck(r, st, l, rule, func(status int, challenges []string, certDeny bool) {
+	return s.authCheck(w, r, st, l, rule, func(status int, challenges []string, certDeny bool) {
 		if certDeny {
 			plain(w, http.StatusMisdirectedRequest, "client certificate validation is required for this host")
 			return
@@ -439,10 +552,21 @@ func (s *Server) authDenied(w http.ResponseWriter, r *http.Request, st *reqState
 	})
 }
 
+// requestHTTPS says whether the request came in over TLS: the connection,
+// the listener, or an X-Forwarded-Proto from a trusted proxy.
+func (s *Server) requestHTTPS(r *http.Request, l *RTListener) bool {
+	if r.TLS != nil || (l != nil && l.L.Protocol == "HTTPS") {
+		return true
+	}
+	return s.trusted.peerTrusted(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // authCheck is the protocol independent part of authDenied: it prepares the
 // identity headers, evaluates the policy, counts the outcome and calls reject
 // with the HTTP-equivalent status (the gRPC path maps it to a gRPC status).
-func (s *Server) authCheck(r *http.Request, st *reqState, l *RTListener, rule *Rule, reject func(status int, challenges []string, certDeny bool)) bool {
+// w is nil for gRPC: only an HTTP request can be redirected to a login, get
+// the OIDC callback or logout answered, or receive a JSON denial.
+func (s *Server) authCheck(w http.ResponseWriter, r *http.Request, st *reqState, l *RTListener, rule *Rule, reject func(status int, challenges []string, certDeny bool)) bool {
 	cert, deny := s.clientCertFor(l, r)
 	if deny != "" {
 		s.ext.authOutcome(st.route, "denied", "client_cert")
@@ -458,8 +582,37 @@ func (s *Server) authCheck(r *http.Request, st *reqState, l *RTListener, rule *R
 	if c == nil || !c.enabled {
 		return false
 	}
+	now, https := s.authNow(), s.requestHTTPS(r, l)
+	ev := func(e string) {
+		if e != "" {
+			s.ext.oidcEvent(st.route, e)
+		}
+	}
+	if o := c.oidc; o != nil && w != nil && o.ownsHost(r) {
+		switch r.URL.Path {
+		case o.cbPath:
+			o.callback(w, r, now, https, c.secrets.Load(), ev)
+			return true
+		case o.logoutPath:
+			o.logout(w, r, now, https, c.secrets.Load(), c.csrf, ev)
+			return true
+		}
+	}
 	ip, _ := netip.ParseAddr(s.trusted.clientIP(r))
-	res := c.evaluate(authInput{r: r, clientIP: ip, cert: cert, certKnown: true, now: s.authNow()})
+	res := c.evaluate(authInput{r: r, clientIP: ip, cert: cert, certKnown: true, now: now, https: https})
+	ev(res.event)
+	if res.authz != nil {
+		src := "rule"
+		if res.authz.Default {
+			src = "default"
+		}
+		s.ext.authzDecision(st.route, res.authz.Action, src)
+	}
+	if w != nil {
+		for _, ck := range res.cookies {
+			http.SetCookie(w, ck)
+		}
+	}
 	if res.allowed() {
 		s.ext.authOutcome(st.route, "allowed", "")
 		st.authRes = &res
@@ -468,11 +621,39 @@ func (s *Server) authCheck(r *http.Request, st *reqState, l *RTListener, rule *R
 		return false
 	}
 	reason := "forbidden"
-	if res.Status == http.StatusUnauthorized {
+	switch {
+	case res.Status == http.StatusUnauthorized || res.Status == http.StatusFound:
 		reason = "unauthenticated"
+	case res.Code == "authz" || res.Code == "csrf" || res.Code == "unavailable":
+		reason = res.Code
 	}
 	s.ext.authOutcome(st.route, "denied", reason)
 	st.errMsg = "auth: " + res.Reason
+	if w != nil {
+		switch {
+		case res.oidcLogin:
+			noStore(w)
+			c.oidc.startLogin(w, r, now, https, c.secrets.Load(), ev)
+			return true
+		case res.Code == "authz":
+			m := res.authz.Rule
+			jsonError(w, http.StatusForbidden, "forbidden", "the request is not authorized: "+res.Reason, "code", "authorization_denied", "rule", m)
+			return true
+		case res.Code == "csrf":
+			jsonError(w, http.StatusForbidden, "forbidden", res.Reason, "code", "csrf_rejected")
+			return true
+		case res.Code == "unavailable":
+			jsonError(w, res.Status, "unavailable", "the login service is not available right now", "code", "login_unavailable")
+			return true
+		case res.Status == http.StatusUnauthorized && c.oidc != nil:
+			for _, ch := range res.Challenges {
+				w.Header().Add("WWW-Authenticate", ch)
+			}
+			noStore(w)
+			jsonError(w, http.StatusUnauthorized, "unauthenticated", "authentication is required", "code", "login_required")
+			return true
+		}
+	}
 	reject(res.Status, res.Challenges, false)
 	return true
 }

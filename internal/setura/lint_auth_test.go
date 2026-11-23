@@ -182,3 +182,79 @@ func TestLintSET031FaultWithoutTTL(t *testing.T) {
 		t.Errorf("annotation without ttl, an empty fault and an orphan annotation: %v", got)
 	}
 }
+
+func TestLintEdgeSecurityRules(t *testing.T) {
+	filt := func(v string) []any {
+		return []any{obj{"type": "RequestHeaderModifier", "requestHeaderModifier": obj{"set": []any{obj{"name": "X-U", "value": v}}}}}
+	}
+	oidc := func(extra obj) obj {
+		o := obj{"issuer": "https://kc.example/realms/haven", "clientId": "app", "clientSecret": obj{"env": "S"}, "redirectUrl": "https://app.example/oauth2/callback",
+			"cookieKeys": []any{obj{"env": "K"}}}
+		for k, v := range extra {
+			o[k] = v
+		}
+		return o
+	}
+	cases := []struct {
+		name string
+		rule obj
+		want []string
+	}{
+		{"clean oidc", obj{AuthKeyForTest: obj{"oidc": oidc(nil), "csrf": obj{}}}, nil},
+		{"weak oidc", obj{AuthKeyForTest: obj{"oidc": oidc(obj{"issuer": "http://kc.example/realms/h", "clientSecret": nil, "cookie": obj{"secure": false, "sameSite": "None"}})}},
+			[]string{"SET018"}}, // sameSite None with insecure cookie does not compile
+		{"insecure cookie", obj{AuthKeyForTest: obj{"oidc": oidc(obj{"issuer": "http://kc.example/realms/h", "cookie": obj{"secure": false}})}}, []string{"SET060", "SET060", "SET062"}},
+		{"public client", obj{AuthKeyForTest: obj{"oidc": oidc(obj{"clientSecret": nil}), "csrf": obj{}}}, []string{"SET060"}},
+		{"loopback http issuer is fine", obj{AuthKeyForTest: obj{"oidc": oidc(obj{"issuer": "http://127.0.0.1:8080/realms/h"}), "csrf": obj{}}}, nil},
+		{"authz no rules", obj{AuthKeyForTest: obj{"ipAllow": []any{"10.0.0.0/8"}, "authorization": obj{"rules": []any{}}}}, []string{"SET061"}},
+		{"authz allow only under allow", obj{AuthKeyForTest: obj{"ipAllow": []any{"10.0.0.0/8"}, "authorization": obj{"defaultAction": "allow", "rules": []any{obj{"action": "allow"}}}}}, []string{"SET061"}},
+		{"authz shadowed", obj{AuthKeyForTest: obj{"ipAllow": []any{"10.0.0.0/8"}, "authorization": obj{"rules": []any{obj{"name": "all", "action": "allow"}, obj{"action": "deny", "operations": []any{obj{"methods": []any{"DELETE"}}}}}}}}, []string{"SET061"}},
+		{"claim var without policy", obj{"filters": filt("{claim:sub}")}, []string{"SET063"}},
+		{"claim var with apikey only", obj{"filters": filt("x-{claim:sub}"), AuthKeyForTest: obj{"apiKey": obj{"keys": []any{obj{"name": "k", "key": "kk"}}}}}, []string{"SET063"}},
+		{"claim var with jwt", obj{"filters": filt("{claim:sub}"), AuthKeyForTest: obj{"jwt": obj{"audience": []any{"a"}, "jwksUri": "https://i/jwks"}}}, nil},
+		{"inject without auth", obj{AuthKeyForTest: obj{"inject": []any{obj{"header": "X-K", "secret": obj{"env": "T"}}}}}, []string{"SET065"}},
+		{"inject behind ipAllow", obj{AuthKeyForTest: obj{"ipAllow": []any{"10.0.0.0/8"}, "inject": []any{obj{"header": "X-K", "secret": obj{"env": "T"}}}}}, nil},
+		{"inline secret", obj{AuthKeyForTest: obj{"inject": []any{obj{"header": "X-K", "secret": obj{"value": "hunter2"}}}}}, []string{"SET018"}},
+	}
+	for _, c := range cases {
+		rule := obj{"backendRefs": []any{obj{"name": "v1", "port": 80}}}
+		for k, v := range c.rule {
+			rule[k] = v
+		}
+		rep, err := Lint(obj{"schema": snapshotSchema, "namespace": "t", "resources": obj{
+			gateway + "/gw": obj{"gatewayClassName": "x", "listeners": []any{obj{"name": "web", "protocol": "HTTP", "port": 80}}},
+			route + "/r":    obj{"parentRefs": []any{obj{"name": "gw"}}, "rules": []any{rule}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, f := range asList(rep["findings"]) {
+			if id := asStr(asMap(f)["id"]); strings.HasPrefix(id, "SET06") || id == "SET018" {
+				got = append(got, id)
+			}
+		}
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// invalid listener options
+	for opt, want := range map[string]string{"TLS_RSA_WITH_RC4_128_SHA": "insecure", "NOPE": "unknown"} {
+		rep, _ := Lint(obj{"schema": snapshotSchema, "namespace": "t", "resources": obj{
+			gateway + "/gw": obj{"gatewayClassName": "x", "listeners": []any{obj{"name": "web", "protocol": "HTTPS", "port": 443,
+				"tls": obj{"options": obj{"setura.zyvor.dev/tls-cipher-suites": opt, "setura.zyvor.dev/tls-session-resumption": "maybe"}}}}}}})
+		n := 0
+		for _, f := range asList(rep["findings"]) {
+			if asStr(asMap(f)["id"]) == "SET064" {
+				n++
+				if msg := asStr(asMap(f)["message"]); !strings.Contains(msg, want) && !strings.Contains(msg, "on or off") {
+					t.Errorf("message %q", msg)
+				}
+			}
+		}
+		if n != 2 {
+			t.Errorf("%s: %d SET064 findings", opt, n)
+		}
+	}
+}
+
+const AuthKeyForTest = "setura.zyvor.dev/auth"

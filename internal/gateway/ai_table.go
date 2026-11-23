@@ -206,38 +206,48 @@ func (p *aiProv) describeKey() string {
 func (k *KubeSource) loadAIKeys(ctx context.Context, cfg *Config) {
 	cfg.AIKeys = map[string]string{}
 	fetched := map[string]map[string]string{}
+	load := func(ownerNS string, ref *AISecretKeyRef, what string) {
+		ns := ref.Namespace
+		if ns == "" {
+			ns = ownerNS
+		}
+		id := ns + "/" + ref.Name
+		data, done := fetched[id]
+		if !done {
+			b, err := k.do(ctx, http.MethodGet, "/api/v1/namespaces/"+url.PathEscape(ns)+"/secrets/"+url.PathEscape(ref.Name), nil, "")
+			if err != nil {
+				k.warn("%s secret %s: %v", what, id, err)
+			} else {
+				var sec kobj
+				if json.Unmarshal(b, &sec) == nil {
+					data = sec.Data
+				}
+			}
+			fetched[id] = data
+		}
+		if v, err := base64.StdEncoding.DecodeString(data[ref.Key]); err == nil && len(v) > 0 {
+			cfg.AIKeys[id+"#"+ref.Key] = string(v)
+		}
+	}
 	for _, r := range cfg.Routes {
 		for i := range r.Rules {
-			p := r.Rules[i].AI
-			if !p.active() {
-				continue
-			}
-			for _, pr := range p.Providers {
-				if pr.APIKey == nil || pr.APIKey.Secret == nil {
-					continue
-				}
-				ref := pr.APIKey.Secret
-				ns := ref.Namespace
-				if ns == "" {
-					ns = r.NS
-				}
-				id := ns + "/" + ref.Name
-				data, done := fetched[id]
-				if !done {
-					b, err := k.do(ctx, http.MethodGet, "/api/v1/namespaces/"+url.PathEscape(ns)+"/secrets/"+url.PathEscape(ref.Name), nil, "")
-					if err != nil {
-						k.warn("AI provider secret %s: %v", id, err)
-					} else {
-						var sec kobj
-						if json.Unmarshal(b, &sec) == nil {
-							data = sec.Data
-						}
+			if p := r.Rules[i].AI; p.active() {
+				for _, pr := range p.Providers {
+					if pr.APIKey != nil && pr.APIKey.Secret != nil {
+						load(r.NS, pr.APIKey.Secret, "AI provider")
 					}
-					fetched[id] = data
 				}
-				if v, err := base64.StdEncoding.DecodeString(data[ref.Key]); err == nil && len(v) > 0 {
-					cfg.AIKeys[id+"#"+ref.Key] = string(v)
-				}
+			}
+			// auth policy secrets (OIDC client secret and cookie keys, injected credentials)
+			for _, ref := range authSecretRefs(r.Rules[i].Auth) {
+				load(r.NS, ref, "auth policy")
+			}
+		}
+	}
+	for _, r := range cfg.GRPCRoutes {
+		for i := range r.Rules {
+			for _, ref := range authSecretRefs(r.Rules[i].Auth) {
+				load(r.NS, ref, "auth policy")
 			}
 		}
 	}

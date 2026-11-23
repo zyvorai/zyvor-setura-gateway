@@ -24,6 +24,63 @@ type extStats struct {
 	sess map[string]int64    // route
 	btls map[string]int64    // backend
 	cert map[string]int64    // listener: client certificates refused by the allow-list
+	oidc map[[2]string]int64 // route, event (login_started, login_succeeded, login_failed, refresh_succeeded, refresh_failed, session_invalid, logout)
+	az   map[[3]string]int64 // route, action (allow, deny), source (rule, default)
+}
+
+// oidcEvent counts one OIDC event. The event is one of a fixed set, so the
+// series stay bounded by routes times seven.
+func (e *extStats) oidcEvent(route, event string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.oidc == nil {
+		e.oidc = map[[2]string]int64{}
+	}
+	e.oidc[[2]string{route, event}]++
+}
+
+// authzDecision counts one authorization decision: the action taken and
+// whether a rule or the default action decided (never the rule's name).
+func (e *extStats) authzDecision(route, action, source string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.az == nil {
+		e.az = map[[3]string]int64{}
+	}
+	e.az[[3]string{route, action, source}]++
+}
+
+func (e *extStats) writeAuthExtra(w io.Writer) {
+	e.mu.Lock()
+	oidc := make(map[[2]string]int64, len(e.oidc))
+	for k, v := range e.oidc {
+		oidc[k] = v
+	}
+	az := make(map[[3]string]int64, len(e.az))
+	for k, v := range e.az {
+		az[k] = v
+	}
+	e.mu.Unlock()
+	fmt.Fprint(w, "# HELP setura_gateway_oidc_events_total OIDC login events per route: login_started, login_succeeded, login_failed, refresh_succeeded, refresh_failed, session_invalid, logout.\n# TYPE setura_gateway_oidc_events_total counter\n")
+	ok := make([][2]string, 0, len(oidc))
+	for k := range oidc {
+		ok = append(ok, k)
+	}
+	sort.Slice(ok, func(i, j int) bool { return ok[i][0]+"\x00"+ok[i][1] < ok[j][0]+"\x00"+ok[j][1] })
+	for _, k := range ok {
+		fmt.Fprintf(w, "setura_gateway_oidc_events_total{route=\"%s\",event=\"%s\"} %d\n", promLabel(k[0]), k[1], oidc[k])
+	}
+	fmt.Fprint(w, "# HELP setura_gateway_authz_decisions_total Authorization decisions per route: action allow or deny, source rule or default (the matched rule is shown by setura why, not labelled).\n# TYPE setura_gateway_authz_decisions_total counter\n")
+	ak := make([][3]string, 0, len(az))
+	for k := range az {
+		ak = append(ak, k)
+	}
+	sort.Slice(ak, func(i, j int) bool {
+		return ak[i][0]+"\x00"+ak[i][1]+"\x00"+ak[i][2] < ak[j][0]+"\x00"+ak[j][1]+"\x00"+ak[j][2]
+	})
+	for _, k := range ak {
+		fmt.Fprintf(w, "setura_gateway_authz_decisions_total{route=\"%s\",action=\"%s\",source=\"%s\"} %d\n", promLabel(k[0]), k[1], k[2], az[k])
+	}
 }
 
 func (e *extStats) certRejectSnapshot() map[string]int64 {
@@ -107,7 +164,7 @@ func (s *Server) writeExtMetrics(w io.Writer) {
 		}
 	}
 	auth, cors, sess, btls := s.ext.snapshot()
-	head("setura_gateway_auth_requests_total", "counter", "Auth policy decisions per route: decision allowed or denied, reason unauthenticated, forbidden, client_cert or external for denials.")
+	head("setura_gateway_auth_requests_total", "counter", "Auth policy decisions per route: decision allowed or denied, reason unauthenticated, forbidden, client_cert, external, authz, csrf or unavailable for denials.")
 	keys := make([][3]string, 0, len(auth))
 	for k := range auth {
 		keys = append(keys, k)
@@ -123,6 +180,7 @@ func (s *Server) writeExtMetrics(w io.Writer) {
 	for _, k := range keys {
 		fmt.Fprintf(w, "setura_gateway_auth_requests_total{route=\"%s\",decision=\"%s\",reason=\"%s\"} %d\n", promLabel(k[0]), k[1], k[2], auth[k])
 	}
+	s.ext.writeAuthExtra(w)
 	one := func(name, typ, help, label string, m map[string]int64) {
 		head(name, typ, help)
 		for _, k := range sortedKeys(m) {
@@ -259,6 +317,8 @@ var MetricCatalog = []MetricDef{
 	{"setura_gateway_ratelimit_buckets", "gauge", nil, "rate limiting enabled"},
 	{"setura_gateway_shadow_total", "counter", []string{"route", "result"}, ""},
 	{"setura_gateway_auth_requests_total", "counter", []string{"route", "decision", "reason"}, ""},
+	{"setura_gateway_oidc_events_total", "counter", []string{"route", "event"}, ""},
+	{"setura_gateway_authz_decisions_total", "counter", []string{"route", "action", "source"}, ""},
 	{"setura_gateway_accesslog_skipped_total", "counter", []string{"reason"}, ""},
 	{"setura_gateway_client_cert_rejected_total", "counter", []string{"listener"}, ""},
 	{"setura_gateway_contract_unknown_total", "counter", []string{"route", "reason", "mode"}, ""},

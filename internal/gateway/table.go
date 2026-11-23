@@ -68,6 +68,8 @@ type RTListener struct {
 	LS         *ListenerSet // set when the listener comes from a ListenerSet
 	// TLSMin and TLSMax are the listener's own TLS version bounds, MaxBody its request body limit.
 	TLSMin, TLSMax uint16
+	TLSCiphers     []uint16
+	TLSResumption  string // "", "on" or "off"
 	MaxBody        *int64
 	Attached       int
 	Serving        bool
@@ -606,6 +608,9 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		return nil, nil, err
 	}
 	if err := compileAuth(rule.Auth); err != nil {
+		return nil, nil, err
+	}
+	if err := t.resolveAuthSecrets("HTTPRoute", r.NS, rule.Auth); err != nil {
 		return nil, nil, err
 	}
 	if err := cr.compileExt(rule); err != nil {

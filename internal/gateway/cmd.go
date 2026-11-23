@@ -103,6 +103,13 @@ Flags for run and up:
   --reject-escaped-slashes   answer 400 to paths containing %2F or %5C (default off)
   --tls-min-version 1.2|1.3, --tls-max-version 1.2|1.3   TLS version bounds of HTTPS and terminating TLS
                         listeners (default 1.2 to 1.3; a listener's tls.options override them)
+  --tls-cipher-suites NAME[,..]   TLS 1.2 cipher suites HTTPS listeners accept, as Go names them (default Go's
+                        secure set; insecure and TLS 1.3 suites are refused; listener option
+                        setura.zyvor.dev/tls-cipher-suites overrides; include an AES_128_GCM suite for HTTP/2)
+  --tls-session-resumption on|off   session tickets on HTTPS listeners (default on; listener option
+                        setura.zyvor.dev/tls-session-resumption overrides)
+  (route auth, per rule: jwt, apiKey, basic, oidc login, authorization rules, csrf and credential injection,
+                        see docs/security.md, docs/oidc.md and docs/authorization.md; secrets come from env, file or Secret)
   --otlp-retries N, --otlp-backoff DUR, --otlp-queue N   OTLP export retry count (default 4, -1 = none),
                         first backoff (250ms, doubling) and bounded span queue (2048)
   --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)

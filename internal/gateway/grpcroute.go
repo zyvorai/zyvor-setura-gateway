@@ -178,6 +178,14 @@ rules:
 			fail(err)
 			break
 		}
+		if rule.Auth != nil && rule.Auth.OIDC != nil {
+			fail(fmt.Errorf("%s: oidc logs a browser in with redirects and cookies, which a gRPC call cannot follow; use jwt on a GRPCRoute", AuthKey))
+			break
+		}
+		if err := t.resolveAuthSecrets("GRPCRoute", r.NS, rule.Auth); err != nil {
+			fail(err)
+			break
+		}
 		if rule.Retry != nil {
 			var err error
 			if cr.GRPCRetry, err = compileGRPCRetry(rule.Retry); err != nil {
@@ -354,7 +362,7 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 	if s.grpcRateLimited(rec, r, st) {
 		return
 	}
-	if s.authCheck(r, st, l, rule.Rule, func(status int, _ []string, certDeny bool) {
+	if s.authCheck(nil, r, st, l, rule.Rule, func(status int, _ []string, certDeny bool) {
 		switch {
 		case certDeny:
 			grpcFail(rec, grpcUnauthenticated, st.errMsg, status)
@@ -409,7 +417,7 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, port int) {
 		ErrorLog:      discardLog,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(ep.URL)
-			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true, st.reqID, st.listener)
+			shapeUpstream(pr.Out, pr.In, remoteIP(pr.In), pg.TLS, filters, e.Match, true, st.reqID, st.listener, st.claims())
 			s.chainForwardedFor(pr.In, pr.Out)
 			if hasHdr {
 				// Forward what is left of the deadline; drop an unparsable value.

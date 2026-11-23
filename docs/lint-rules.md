@@ -29,6 +29,12 @@
 | SET020 | error | API plan file (`setura lint --plans FILE`) does not parse or validate: unknown field, undefined plan, negative quota, price without currency, bad route or method (see [metering-plans.md](metering-plans.md)) |
 | SET021 | warning | API plan file names a route (plan `routes` or `unmeteredRoutes`) that no HTTPRoute in the snapshot has |
 | SET022 | warning | API plan file maps `apikey:NAME` for a key that no route's apiKey policy declares |
+| SET060 | warning | OIDC policy is weak: plain `http` issuer (outside loopback), `cookie.secure: false`, `sameSite: None`, or a public client without `clientSecret` (see [oidc.md](oidc.md)) |
+| SET061 | warning | authorization rules cannot work as written: no rules, only allow rules under a default `allow`, or a rule that matches every request and hides the ones after it (see [authorization.md](authorization.md)) |
+| SET062 | warning | OIDC policy authenticates by cookie but the rule has no `csrf` block |
+| SET063 | error | header modifier uses `{claim:NAME}` on a rule without a `jwt` or `oidc` policy, so the claim is never available |
+| SET064 | error | listener `tls.options` `setura.zyvor.dev/tls-cipher-suites` or `setura.zyvor.dev/tls-session-resumption` is invalid (unknown, insecure or TLS 1.3 suite, or not `on`/`off`) |
+| SET065 | warning | auth policy injects a credential into the upstream request but nobody has to authenticate to use it |
 | SET040 | error | `setura.zyvor.dev/ai` block or annotation is invalid, or names a rule that does not exist (see [ai-gateway.md](ai-gateway.md)) |
 | SET041 | error | AI token budget counts per an identity (`apikey`, `subject`, `claim:NAME`) the rule's auth policy cannot provide |
 | SET042 | warning | AI budget or cache identity is a request header the client sets itself, on a rule without an auth policy |
