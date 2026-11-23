@@ -1,0 +1,183 @@
+# Setura built-in gateway: controller and data plane in one static binary.
+# Printed by "setura gateway install"; review it, then apply it yourself.
+#
+# Gateway API CRDs v1.7.0 (standard channel) are not part of this document. Install them first, once per cluster:
+#   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
+#
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: setura-gateway
+  namespace: gw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: setura-gateway
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses", "gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes", "listenersets", "backendtlspolicies", "referencegrants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "tlsroutes/status", "tcproutes/status", "udproutes/status", "listenersets/status", "backendtlspolicies/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["services", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: setura-gateway
+  namespace: gw
+rules:
+  # Leader election Lease (--leader-elect).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  # --expose-gateway-ports: patch the controller's own Service, nothing else.
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["setura-gateway"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: setura-gateway
+  namespace: gw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: setura-gateway
+subjects:
+  - kind: ServiceAccount
+    name: setura-gateway
+    namespace: gw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: setura-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: setura-gateway
+subjects:
+  - kind: ServiceAccount
+    name: setura-gateway
+    namespace: gw
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: edge-admin
+  namespace: gw
+type: Opaque
+stringData:
+  token: 0123456789abcdef   # random, generated for this printout: apply this document once and do not re-apply it
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: edge
+spec:
+  controllerName: zyvor.dev/setura-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: setura-gateway
+  namespace: gw
+  labels: {app.kubernetes.io/name: setura-gateway}
+spec:
+  replicas: 2
+  # hostNetwork: two pods cannot bind the same node port, so replace one at a time.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
+  selector:
+    matchLabels: {app.kubernetes.io/name: setura-gateway}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: setura-gateway}
+    spec:
+      serviceAccountName: setura-gateway
+      hostNetwork: true   # --host-network: the controller binds node ports 8080, 8443 and the listener ports
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        disk: ssd
+        node-role.kubernetes.io/edge: "true"
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: gateway
+          image: example.test/setura:1
+          args:
+            - gateway
+            - run
+            - --kubernetes
+            - --bind=0.0.0.0
+            - --port-offset=8000   # 80 -> 8080, 443 -> 8443 without root
+            - --admin=0.0.0.0:19000
+            - --admin-open-ready   # kubelet probes read /ready; every other admin path needs the token
+            - --leader-elect       # one replica writes status, all serve traffic
+            - --expose-gateway-ports
+            - --rate-limit=100
+            - --rate-key=header:X-Api-Key
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          env:
+            - name: SETURA_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: edge-admin, key: token}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: https, containerPort: 8443}
+            - {name: admin, containerPort: 19000}
+            - {name: lp7443, containerPort: 7443}
+            - {name: lp18443, containerPort: 18443}
+          readinessProbe:
+            httpGet: {path: /ready, port: admin}
+          livenessProbe:
+            httpGet: {path: /ready, port: admin}
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: setura-gateway
+  namespace: gw
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector: {app.kubernetes.io/name: setura-gateway}
+  ports:
+    - {name: http, port: 80, targetPort: http, nodePort: 30080}
+    - {name: https, port: 443, targetPort: https, nodePort: 30443}
+    - {name: listener-7443, port: 7443, targetPort: 7443, nodePort: 30743}
+    - {name: listener-18443, port: 18443, targetPort: 18443}

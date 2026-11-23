@@ -1,6 +1,10 @@
 package gateway
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // StatusSchema identifies the /status document.
 const StatusSchema = "setura.gateway-status/v1"
@@ -105,6 +109,7 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 		gs := &GatewayStatus{ObservedGeneration: gw.Generation}
 		doc.Gateways[gw.Key()] = gs
 		allOK, accepted := true, true
+		var problems []string // one line per listener that is not programmed, named with its reason
 		for _, l := range t.Listeners {
 			if l.GW != gw || l.LS != nil {
 				continue
@@ -130,6 +135,18 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 			}
 			accepted = accepted && l.Accepted.OK
 			allOK = allOK && prog.OK
+			if !prog.OK {
+				reason := prog.Reason
+				switch {
+				case l.Conflicted.OK && l.Accepted.OK:
+					reason = l.Conflicted.Reason
+				case !l.Accepted.OK:
+					reason = l.Accepted.Reason
+				case !l.Resolved.OK:
+					reason = l.Resolved.Reason
+				}
+				problems = append(problems, fmt.Sprintf("listener %q: %s: %s", l.L.Name, reason, prog.Message))
+			}
 			conflict := l.Conflicted // OK means "is conflicted"
 			cf := fact{conflict.OK, conflict.Reason, conflict.Message}
 			ls := ListenerStatus{Name: l.L.Name, AttachedRoutes: l.Attached, SupportedKinds: []KindRef{}}
@@ -151,10 +168,11 @@ func BuildStatus(t *Table, bindErr map[string]string, now time.Time, prev *Statu
 		acc := fact{true, "Accepted", "Gateway is served by the Setura built-in gateway"}
 		if !accepted {
 			acc.Reason = "ListenersNotValid"
+			acc.Message = "one or more listeners are not valid: " + strings.Join(problems, "; ")
 		}
 		prog := fact{true, "Programmed", "all listeners are serving"}
 		if !allOK {
-			prog = fact{false, "ListenersNotValid", "one or more listeners are not programmed"}
+			prog = fact{false, "ListenersNotValid", "one or more listeners are not programmed: " + strings.Join(problems, "; ")}
 		}
 		gs.Conditions = []Condition{mkCond(oldC, "Accepted", acc, gw.Generation, now), mkCond(oldC, "Programmed", prog, gw.Generation, now)}
 	}

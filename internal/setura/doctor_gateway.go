@@ -50,6 +50,10 @@ type dgOptions struct {
 	AdminExplicit bool
 	WarnCertDays  int
 	Timeout       time.Duration
+	// Kube adds the cluster checks (CRDs, Gateway and route status) through kubectl.
+	Kube              bool
+	KubeNS            string
+	GatewayAPIVersion string
 }
 
 // dgEnv holds everything the checks touch outside the process, so tests can
@@ -61,6 +65,7 @@ type dgEnv struct {
 	client   *http.Client
 	readFile func(string) ([]byte, error)
 	token    func() string // SETURA_ADMIN_TOKEN
+	cluster  *Cluster      // kubectl access for --kube
 }
 
 func defaultDGEnv(timeout time.Duration) dgEnv {
@@ -171,6 +176,9 @@ func doctorGateway(o dgOptions, env dgEnv) *dgReport {
 	rep.Checks = append(rep.Checks, clockCheck(ctx, cfgOK, eps, env))
 	rep.Checks = append(rep.Checks, adm.check)
 	rep.Checks = append(rep.Checks, ejectedCheck(ctx, o, adm, env))
+	if o.Kube {
+		rep.Checks = append(rep.Checks, crdsCheck(o, env), clusterStatusCheck(o, env))
+	}
 
 	fails, warns := 0, 0
 	var firstFail, firstWarn *dgCheck
@@ -832,6 +840,11 @@ func (u *ui) DoctorGatewayPretty(r *dgReport) string {
 
 // runDoctorGateway implements "setura doctor gateway".
 func runDoctorGateway(rest []string, stdout, stderr io.Writer, u *ui, stdoutTTY bool) (int, error) {
+	return runDoctorGatewayWith(NewCluster(""), rest, stdout, stderr, u, stdoutTTY)
+}
+
+// runDoctorGatewayWith is runDoctorGateway with the cluster --kube reads.
+func runDoctorGatewayWith(cluster *Cluster, rest []string, stdout, stderr io.Writer, u *ui, stdoutTTY bool) (int, error) {
 	fs := newFlagSet("doctor gateway", stderr)
 	setCommandUsage(fs, "doctor", newUI(isTTY(stderr), termOptions{}, os.Getenv))
 	var o dgOptions
@@ -839,6 +852,9 @@ func runDoctorGateway(rest []string, stdout, stderr io.Writer, u *ui, stdoutTTY 
 	fs.StringVar(&o.Admin, "admin", "", "gateway admin address (default "+builtin.DefaultAdmin+"; honours SETURA_ADMIN_TOKEN)")
 	fs.IntVar(&o.WarnCertDays, "warn-cert-days", 14, "warn when a certificate expires within this many days")
 	fs.DurationVar(&o.Timeout, "timeout", 3*time.Second, "timeout for each network check")
+	fs.BoolVar(&o.Kube, "kube", false, "also check the cluster through kubectl: Gateway API CRDs (missing or too old) and Gateway and route status")
+	fs.StringVar(&o.KubeNS, "namespace", "", "with --kube: only this namespace (default: all)")
+	fs.StringVar(&o.GatewayAPIVersion, "gateway-api-version", "", "with --kube: Gateway API release to recommend (default "+builtin.GatewayAPIVersion+")")
 	format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty or json")
 	pos, err := parse(fs, rest)
 	if err != nil {
@@ -860,11 +876,82 @@ func runDoctorGateway(rest []string, stdout, stderr io.Writer, u *ui, stdoutTTY 
 	if o.Admin == "" {
 		o.Admin = builtin.DefaultAdmin
 	}
-	rep := doctorGateway(o, defaultDGEnv(o.Timeout))
+	if o.GatewayAPIVersion != "" {
+		if _, err := builtin.ParseGatewayAPIVersion(o.GatewayAPIVersion); err != nil {
+			return 0, userErrorf("--gateway-api-version: %v", err)
+		}
+	}
+	env := defaultDGEnv(o.Timeout)
+	env.cluster = cluster
+	rep := doctorGateway(o, env)
 	code := boolExit(!rep.OK)
 	if pretty {
 		fmt.Fprint(stdout, u.DoctorGatewayPretty(rep))
 		return code, nil
 	}
 	return code, writeJSON(stdout, rep)
+}
+
+// crdsCheck is the "crds" check of doctor gateway --kube.
+func crdsCheck(o dgOptions, env dgEnv) dgCheck {
+	c := dgCheck{ID: "crds", Title: "Gateway API CRDs"}
+	if env.cluster == nil {
+		c.State, c.Message = "skip", "no cluster access"
+		return c
+	}
+	items, err := clusterCRDs(env.cluster)
+	if err != nil {
+		c.State, c.Message, c.Fix = "fail", "cannot read the CRDs: "+err.Error(), "Check kubectl access: kubectl get crd"
+		return c
+	}
+	r := checkCRDs(items, o.GatewayAPIVersion)
+	c.State = "ok"
+	for _, f := range r.Findings {
+		switch f.State {
+		case "fail":
+			c.State = "fail"
+		case "warn":
+			if c.State == "ok" {
+				c.State = "warn"
+			}
+		}
+		if f.State == "fail" || f.State == "warn" {
+			c.Details = append(c.Details, f.Feature+": "+f.Message)
+		}
+	}
+	c.Message, c.Fix = r.Verdict, r.Next
+	return c
+}
+
+// clusterStatusCheck is the "gateways" check of doctor gateway --kube.
+func clusterStatusCheck(o dgOptions, env dgEnv) dgCheck {
+	c := dgCheck{ID: "gateways", Title: "Gateways and routes"}
+	if env.cluster == nil {
+		c.State, c.Message = "skip", "no cluster access"
+		return c
+	}
+	r, err := clusterStatus(env.cluster, o.KubeNS, false)
+	if err != nil {
+		c.State, c.Message, c.Fix = "fail", err.Error(), "Install the Gateway API CRDs first: setura gateway install --check"
+		return c
+	}
+	c.Message = r.Verdict
+	switch {
+	case !r.OK:
+		c.State, c.Fix = "fail", "setura gateway status shows every reason"
+		for _, l := range [][]stItem{r.Gateways, r.Routes} {
+			for _, it := range l {
+				for _, p := range it.Problems {
+					if len(c.Details) < 8 {
+						c.Details = append(c.Details, it.Kind+" "+it.Namespace+"/"+it.Name+": "+p)
+					}
+				}
+			}
+		}
+	case len(r.Gateways) == 0:
+		c.State, c.Fix = "warn", r.Next
+	default:
+		c.State = "ok"
+	}
+	return c
 }

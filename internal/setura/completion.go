@@ -60,7 +60,10 @@ var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--obser
 	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
 	"--max-request-body", "--max-header-bytes", "--header-read-timeout", "--idle-timeout", "--stream-idle-timeout",
 	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version",
-	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample"}
+	"--client-allow-san", "--client-allow-cn", "--client-cert-xfcc", "--access-log-exclude", "--access-log-sample",
+	"install", "status", "--service-type", "--node-port", "--listener-port", "--external-traffic-policy", "--host-network", "--arg", "--resources",
+	"--node-selector", "--admin-token-secret", "--create-admin-secret", "--crds", "--gateway-api-version", "--gateway-api-channel", "--check",
+	"--image", "--class", "--replicas", "--with-monitoring", "--expose-gateway-ports", "--all-controllers", "--all-namespaces", "-A"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
@@ -83,7 +86,7 @@ var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc
 var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}
 
 // doctorFlags are offered after "setura doctor" (gateway checks).
-var doctorFlags = []string{"--config", "--admin", "--format", "--warn-cert-days", "--timeout", "--namespace", "--proxy-namespace"}
+var doctorFlags = []string{"--config", "--admin", "--format", "--warn-cert-days", "--timeout", "--namespace", "--proxy-namespace", "--kube", "--gateway-api-version"}
 
 // flagSets maps a command to the flags completed after it. Adding a command's
 // flags is one entry here; the three shell scripts are generated from it.

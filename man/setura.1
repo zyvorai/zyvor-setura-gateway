@@ -85,7 +85,7 @@ replay an access log through two gateway configs and report the routing impact
 .B ai REPORT [\-\-model NAME]
 explain saved evidence, optionally with local Ollama
 .TP
-.B gateway run|up|install|rollout|history|rollback
+.B gateway run|up|install|status|rollout|history|rollback
 built\-in Gateway API data plane, no Envoy needed; guarded config rollout
 .TP
 .B shadow [\-\-admin ADDR] [\-\-follow] [\-\-fail\-under PCT]
@@ -98,7 +98,7 @@ scaffold a gateway config and checks.json from host=upstream pairs or an OpenAPI
 forward an Envoy Gateway listener to IPv4 loopback
 .TP
 .B doctor [gateway]
-check permissions needed by setura; `doctor gateway` checks a gateway config, ports, certificates and backends
+check permissions needed by setura; `doctor gateway` checks a gateway config, ports, certificates and backends (\-\-kube adds CRDs and Gateway status)
 .TP
 .B capabilities
 list GatewayClasses and controller features
@@ -148,6 +148,8 @@ the check, gate, lint, replay or migrate check failed or found differences, or w
 usage or input error
 .SH GATEWAY ROLLOUT
 \fBsetura gateway rollout\fR lints a candidate snapshot, backs up the live file in \fI.setura\-history\fR, replaces it atomically, waits for the admin /status generation, runs a checks file for an observation window and restores the backup on any failure. The window is judged on the probes and on the gateway's own /stats and /metrics deltas (\fB\-\-max\-error\-rate\fR and \fB\-\-max\-p95\fR apply to both). A candidate that changes canary weights is applied in stages 10,50,100 unless \fB\-\-steps\fR or \fB\-\-no\-steps\fR is given. A rollout lock left by a killed rollout (dead process on this host, or a heartbeat older than \fB\-\-lock\-timeout\fR) is taken over; a live owner never is. Relative certificate paths resolve against the candidate's directory. \fBsetura gateway history\fR lists the backups and \fBsetura gateway rollback\fR restores one.
+.SH GATEWAY INSTALL AND CLUSTER STATUS
+\fBsetura gateway install\fR prints plain YAML for the in\-cluster controller and never applies it. \fB\-\-service\-type\fR ClusterIP|NodePort|LoadBalancer, \fB\-\-node\-port\fR HTTP=PORT,HTTPS=PORT, \fB\-\-listener\-port\fR N (repeatable), \fB\-\-external\-traffic\-policy\fR, \fB\-\-host\-network\fR, \fB\-\-replicas\fR, \fB\-\-arg\fR FLAG (repeatable), \fB\-\-resources\fR, \fB\-\-node\-selector\fR and \fB\-\-expose\-gateway\-ports\fR remove the need to patch the output. The admin token Secret is not printed unless \fB\-\-create\-admin\-secret\fR is given, so re\-applying never rotates the token; \fB\-\-admin\-token\-secret\fR NAME names an existing Secret. \fB\-\-crds\fR with \fB\-\-gateway\-api\-version\fR prints the command that installs the Gateway API CRDs. \fBsetura gateway install \-\-check\fR and \fBsetura doctor gateway \-\-kube\fR report missing or too old CRDs and which Setura feature needs which release. \fBsetura gateway status\fR lists Gateways and routes with Accepted, Programmed and ResolvedRefs and the reason. See docs/install\-options.md and docs/cluster\-troubleshooting.md.
 .SH LICENCE
 \fBsetura licence verify\fR [KEY | \fB\-\-file\fR F] checks a signed ZYV1 licence key offline against the public keys embedded in the binary and prints the tier, cluster limit, expiry, licensee and status (valid, expired, bad signature, wrong product). \fBsetura licence show\fR checks the key in SETURA_LICENCE_KEY or the file named by SETURA_LICENCE_FILE (default: setura/licence.key in the user config directory). It exits 0 for a valid key, 1 for an invalid one and 2 on a usage error. Setura works without a key; \fBsetura version \-\-verbose\fR only reports the status and never blocks a command.
 .SH SEE ALSO
