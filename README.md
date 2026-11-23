@@ -217,6 +217,7 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET022` | warning | API plan file maps an API key name that no route declares |
 | `SET030` | error | direct-response, rate-limit or limits block is invalid, targets no rule or conflicts with backends or redirects |
 | `SET031` | error | fault block is invalid, has no ttl or expires, or targets no rule |
+| `SET090` | error | HTTPRoute rule filters the Gateway API rejects: `URLRewrite` with `RequestRedirect`, a repeated core filter, a filter without its block, `ReplacePrefixMatch` next to a non-prefix match, a bad redirect scheme or port |
 | `SET040` to `SET047` | error or warning | AI route problems: invalid block, budget without identity, client-chosen identity, key over plain http, no auth, shared cache on an authenticated route, cost budget without prices, ignored backendRefs |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
