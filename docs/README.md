@@ -19,6 +19,13 @@
 - [Traffic security](security.md): JWT, API keys, basic auth, address lists, client certificates, OCSP stapling, admin token.
 - [Observability](observability.md): access logs, rotation, tracing, OTLP (HTTP and gRPC), log sinks, rate limiting, `/metrics`, Grafana and alerts.
 - [Netra](netra.md): scrape the gateway from Netra, the metric contract. [SLOs](slo.md): burn rates. [Runbooks](runbooks.md): one section per alert.
+- [Direct responses](direct-response.md) and [limits](limits.md): fixed answers, per-route rate limits, size and timeout limits, path normalisation, TLS bounds.
+- [Client-certificate authorisation](client-cert-authz.md) and [headers and logs](headers-and-logs.md): SAN and CN allow-lists, XFCC, header variables, log excludes.
+- [Install options](install-options.md) and [cluster troubleshooting](cluster-troubleshooting.md): every `gateway install` option, CRD checks, `gateway status`.
+- [AI gateway](ai-gateway.md): token budgets, provider failover, key vaulting, prompt cache, PII redaction.
+- [Metering and plans](metering-plans.md): per-key quotas, usage export and invoices.
+- [API contract](contract.md): learn the endpoints served, find shadow and drifting APIs, enforce a spec.
+- [Chaos](chaos.md) and [pull-request check](pr-check.md): game-day faults with a safety guard, traffic impact of a config change.
 - [Connections](connections.md): who connected to what, over which protocol.
 - [Dashboard](ui.md): the live `setura ui` dashboard.
 - [Performance](performance.md): measured throughput, latency and soak numbers, the load and fuzz tools, and how to compare with Envoy.

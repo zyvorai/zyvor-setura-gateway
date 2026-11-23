@@ -210,6 +210,12 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET017` | warning | auth policy stores an API key or basic auth password in clear text instead of a hash |
 | `SET018` | error | auth block or `setura.zyvor.dev/auth` annotation is invalid or names a rule that does not exist |
 | `SET019` | error | a Gateway API 1.5 field is invalid: CORS, ExternalAuth, BackendTLSPolicy, session persistence or backend timeouts |
+| `SET020` | error | API plan file (`--plans`) does not parse or validate |
+| `SET021` | warning | API plan file names a route that no HTTPRoute has |
+| `SET022` | warning | API plan file maps an API key name that no route declares |
+| `SET030` | error | direct-response, rate-limit or limits block is invalid, targets no rule or conflicts with backends or redirects |
+| `SET031` | error | fault block is invalid, has no ttl or expires, or targets no rule |
+| `SET040` to `SET047` | error or warning | AI route problems: invalid block, budget without identity, client-chosen identity, key over plain http, no auth, shared cache on an authenticated route, cost budget without prices, ignored backendRefs |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).
 
@@ -261,6 +267,9 @@ setura gateway rollout --config live.json --new candidate.json --checks checks.j
 setura shadow --fail-under 99.5                                                      # does the new backend answer the same?
 setura migrate check --ingress ingress.yaml --routes routes.yaml                     # Ingress vs converted HTTPRoute
 setura gateway run --config gateway.json --ui 127.0.0.1:9090                         # live dashboard
+setura pr-check --base live/ --head candidate/ --traffic access.jsonl --fail-if-changed-over 5  # how much traffic would move?
+setura contract diff --spec openapi.json --learned inventory.json --fail-on shadow    # undocumented or drifting APIs
+setura chaos run --plan gameday.json                                                 # faults with a safety guard and kill switch
 ```
 
 | Question | Command | What you get |
@@ -271,6 +280,10 @@ setura gateway run --config gateway.json --ui 127.0.0.1:9090                    
 | Does the new version answer the same? | [`shadow`](docs/shadow.md) | A mirror that compares status, headers, body (JSON-aware, ignorable paths) and latency without ever touching the client response. |
 | Will my Ingress migration behave the same? | [`migrate check`](docs/migrate.md) | Ingress rules against converted Gateway API routes, offline or live, with nginx annotation hints, named ports, ReferenceGrants and IngressClass. |
 | What is happening right now? | [`ui`](docs/ui.md), [`connections`](docs/connections.md) | A read-only live dashboard with a route map, traffic split, findings with fixes, and who connected to what. Loopback by default. |
+| Which real traffic would this pull request move? | [`pr-check`](docs/pr-check.md) | Recorded traffic run through the base and head config: percent rerouted, per-route share, new 404s, a Markdown comment for the PR and a CI exit code. |
+| Which APIs do we serve that nobody documented? | [`contract`](docs/contract.md) | Endpoints learned from traffic, diffed against an OpenAPI spec: shadow, zombie and drifting APIs, auth gaps; optional enforcement. |
+| Does it survive failure, safely? | [`chaos`](docs/chaos.md) | Faults with a mandatory expiry, a blast-radius cap, a kill switch and a guard that aborts when the SLO burns. |
+| Who used how much? | [`usage`](docs/metering-plans.md), [`gateway ai-usage`](docs/ai-gateway.md) | Per-key quotas and plans, usage export, invoices, and AI token and cost budgets. |
 
 Across clusters and over time: `--context a,b,c` runs `check`, `snapshot`, `gate` and `lint` on several contexts ([multi-cluster](docs/multi-cluster.md)); `setura history` summarises `watch --history`; `watch` alerts to a webhook or Slack on failure and recovery only ([alerting](docs/alerting.md)).
 
