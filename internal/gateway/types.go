@@ -55,12 +55,16 @@ type Listener struct {
 	Protocol      string         `json:"protocol"`
 	TLS           *ListenerTLS   `json:"tls,omitempty"`
 	AllowedRoutes *AllowedRoutes `json:"allowedRoutes,omitempty"`
+	// Limits is a Setura extension of the listener (snapshot files).
+	Limits *ListenerLimits `json:"setura.zyvor.dev/limits,omitempty"`
 }
 
 // ListenerTLS is a listener's TLS block.
 type ListenerTLS struct {
 	Mode            string   `json:"mode,omitempty"`
 	CertificateRefs []ObjRef `json:"certificateRefs,omitempty"`
+	// Options are implementation specific; Setura reads TLSMinVersionOption and TLSMaxVersionOption.
+	Options map[string]string `json:"options,omitempty"`
 }
 
 // ObjRef references another object.
@@ -137,6 +141,12 @@ type Rule struct {
 	} `json:"timeouts,omitempty"`
 	// Auth is the traffic-security policy of the rule (setura.zyvor.dev/auth).
 	Auth *AuthPolicy `json:"setura.zyvor.dev/auth,omitempty"`
+	// DirectResponse answers without a backend, RateLimit adds a per-rule token
+	// bucket and Limits overrides the gateway-wide body and idle limits (ruleext.go).
+	DirectResponse *DirectResponse `json:"setura.zyvor.dev/direct-response,omitempty"`
+	RateLimit      *RouteRateLimit `json:"setura.zyvor.dev/rate-limit,omitempty"`
+	Limits         *RuleLimits     `json:"setura.zyvor.dev/limits,omitempty"`
+	extErr         error           // an annotation of the rule could not be decoded
 }
 
 // Match is one HTTPRouteMatch.
@@ -481,6 +491,7 @@ func ParseConfig(raw []byte, dir string) (*Config, error) {
 			}
 			annotateHTTP(spec.Rules, spec.Annotations)
 			annotateAuth(spec.Rules, spec.Annotations)
+			annotateExt(spec.Rules, spec.Annotations)
 			cfg.Routes = append(cfg.Routes, &Route{NS: rns, Name: name, Created: created, Parents: spec.ParentRefs, Hostnames: spec.Hostnames, Rules: spec.Rules})
 		case grantKey:
 			var spec struct {

@@ -35,6 +35,7 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET019", SeverityError, "route rule or BackendTLSPolicy uses a Gateway API 1.5 feature the built-in gateway refuses: malformed CORS filter, ExternalAuth without protocol or backendRef, invalid session persistence, backendRequest longer than request timeout, BackendTLSPolicy without hostname or CA source"},
 	{"SET016", SeverityWarning, "auth policy accepts any audience (jwt without audience) or fetches its JWKS over plain http"},
 	{"SET017", SeverityWarning, "auth policy stores an API key or a basic auth password in clear text instead of a hash"},
+	{"SET030", SeverityError, "direct-response, rate-limit or limits block (rule extension or annotation) is invalid or targets no rule, a direct-response rule also names backends, a redirect, a mirror or ExternalAuth, or a listener has invalid TLS version or limits settings"},
 	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
 }
 
@@ -149,7 +150,7 @@ func Lint(snapshot obj) (obj, error) {
 				add("SET002", id, where+": all backendRefs have weight 0")
 			}
 			if len(refs) == 0 {
-				redirect := false
+				redirect := ruleHasDirect(spec, rule, i)
 				for _, f := range asList(rule["filters"]) {
 					t := asStr(asMap(f)["type"])
 					redirect = redirect || t == "RequestRedirect"
@@ -220,6 +221,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, shadowRules(specs, ns)...)
 	findings = append(findings, gw15Rules(specs, ns)...)
 	findings = append(findings, authRules(specs, ns)...)
+	findings = append(findings, limitsRules(specs, ns)...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		if a["resource"] != b["resource"] {

@@ -225,3 +225,84 @@ func (s *Server) rateLimited(w http.ResponseWriter, r *http.Request, st *reqStat
 	plain(w, http.StatusTooManyRequests, "rate limit exceeded")
 	return true
 }
+
+// ruleRateLimited applies the rule's own limiter (setura.zyvor.dev/rate-limit)
+// after the gateway-wide one: a request must pass both.
+func (s *Server) ruleRateLimited(w http.ResponseWriter, r *http.Request, st *reqState, rule *CRule) bool {
+	l := rule.Limit
+	if l == nil {
+		return false
+	}
+	ok, wait := l.allow(st.route, r)
+	if ok {
+		return false
+	}
+	secs := int(math.Ceil(wait.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	st.errMsg, st.rateLimited = "rate limited (route)", true
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	plain(w, http.StatusTooManyRequests, "rate limit exceeded")
+	return true
+}
+
+type ruleLimiter struct {
+	route string
+	rule  int // 1-based
+	l     *limiter
+}
+
+// ruleLimiters lists the per-rule limiters of a table, ordered by route and rule.
+func (t *Table) ruleLimiters() []ruleLimiter {
+	if t == nil {
+		return nil
+	}
+	seen := map[*CRule]bool{}
+	var out []ruleLimiter
+	for _, l := range t.Listeners {
+		for _, e := range l.Entries {
+			if e.Rule.Limit != nil && !seen[e.Rule] {
+				seen[e.Rule] = true
+				out = append(out, ruleLimiter{e.Rule.RouteKey, e.Rule.Index + 1, e.Rule.Limit})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].route != out[j].route {
+			return out[i].route < out[j].route
+		}
+		return out[i].rule < out[j].rule
+	})
+	return out
+}
+
+// prepareLimiters gives the per-rule limiters of a new table the gateway's
+// clock and trusted proxies, and carries the buckets of an unchanged limiter
+// over from the table it replaces so a reload does not refill them.
+func (s *Server) prepareLimiters(old, next *Table) {
+	prev := map[[2]string]*limiter{}
+	for _, rl := range old.ruleLimiters() {
+		prev[[2]string{rl.route, strconv.Itoa(rl.rule)}] = rl.l
+	}
+	for _, rl := range next.ruleLimiters() {
+		if o := prev[[2]string{rl.route, strconv.Itoa(rl.rule)}]; o != nil && o.sameAs(rl.l) {
+			for _, l := range next.Listeners {
+				for _, e := range l.Entries {
+					if e.Rule.RouteKey == rl.route && e.Rule.Index+1 == rl.rule {
+						e.Rule.Limit = o
+					}
+				}
+			}
+			continue
+		}
+		rl.l.trusted = s.trusted
+		if s.opts.Obs.Now != nil {
+			rl.l.now = s.opts.Obs.Now
+		}
+	}
+}
+
+func (l *limiter) sameAs(o *limiter) bool {
+	return l.perSec == o.perSec && l.burst == o.burst && l.key == o.key && l.header == o.header
+}

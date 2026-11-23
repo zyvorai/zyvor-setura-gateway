@@ -58,11 +58,14 @@ type RTListener struct {
 	TLSEntries []*TLSEntry  // TLSRoute entries (passthrough listeners)
 	L4Entries  []*L4Entry   // TCPRoute and UDPRoute entries
 	LS         *ListenerSet // set when the listener comes from a ListenerSet
-	Attached   int
-	Serving    bool
-	Accepted   fact
-	Resolved   fact
-	Conflicted fact
+	// TLSMin and TLSMax are the listener's own TLS version bounds, MaxBody its request body limit.
+	TLSMin, TLSMax uint16
+	MaxBody        *int64
+	Attached       int
+	Serving        bool
+	Accepted       fact
+	Resolved       fact
+	Conflicted     fact
 }
 
 // Entry is one (route, rule, match) on one listener.
@@ -95,6 +98,12 @@ type CRule struct {
 	BackendTimeout time.Duration
 	// Session is the compiled session persistence policy, if any.
 	Session *CSession
+	// Direct is the fixed response of the rule (no backend is contacted), Limit its
+	// own rate limiter, MaxBody and StreamIdle its limit overrides (nil = inherit).
+	Direct     *DirectResponse
+	Limit      *limiter
+	MaxBody    *int64
+	StreamIdle *time.Duration
 }
 
 // CRef is a backendRef with its resolved backend (nil when unresolved).
@@ -325,6 +334,10 @@ func BuildTable(cfg *Config) *Table {
 				continue
 			case spec.Port < 1 || spec.Port > 65535:
 				l.Accepted = fact{false, "Invalid", "port out of range"}
+				continue
+			}
+			if err := l.resolveLimits(); err != nil {
+				l.Accepted = fact{false, "Invalid", err.Error()}
 				continue
 			}
 			names[ent.key(gw)] = true
@@ -576,6 +589,9 @@ func (t *Table) compileRule(r *Route, idx int, rule *Rule, refs *fact) (*CRule, 
 		return nil, nil, err
 	}
 	if err := compileAuth(rule.Auth); err != nil {
+		return nil, nil, err
+	}
+	if err := cr.compileExt(rule); err != nil {
 		return nil, nil, err
 	}
 	if rule.Timeouts != nil {

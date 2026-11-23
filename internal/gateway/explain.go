@@ -23,6 +23,8 @@ import (
 const (
 	VerdictRouted     = "routed"
 	VerdictRedirect   = "redirect"
+	VerdictDirect     = "direct-response"
+	VerdictBadRequest = "bad-request"
 	VerdictNoListener = "no-listener"
 	VerdictNoRoute    = "no-route"
 	VerdictNoBackend  = "no-backend"
@@ -35,6 +37,7 @@ type ExplainRequest struct {
 	Host     string      `json:"host"` // Host header, with the port when one was given
 	Port     int         `json:"port"` // spec port the request arrives on
 	Path     string      `json:"path"`
+	RawPath  string      `json:"raw_path,omitempty"` // the path as sent, when it has escapes
 	RawQuery string      `json:"query,omitempty"`
 	Header   http.Header `json:"headers,omitempty"`
 	GRPC     string      `json:"grpc,omitempty"` // "service/method": a gRPC call over HTTP/2
@@ -80,7 +83,7 @@ func ParseExplainRequest(method, rawURL string, headers []string, grpc, sni stri
 	} else {
 		req.Port = 443
 	}
-	req.Path, req.RawQuery = u.Path, u.RawQuery
+	req.Path, req.RawPath, req.RawQuery = u.Path, u.RawPath, u.RawQuery
 	if req.Path == "" {
 		req.Path = "/"
 	}
@@ -125,7 +128,7 @@ func (q ExplainRequest) httpRequest() *http.Request {
 	if remote == "" {
 		remote = "<client-ip>"
 	}
-	r := &http.Request{Method: q.Method, URL: &url.URL{Path: q.Path, RawQuery: q.RawQuery}, Header: h, Host: host, RemoteAddr: net.JoinHostPort(remote, "0"), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
+	r := &http.Request{Method: q.Method, URL: &url.URL{Path: q.Path, RawPath: q.RawPath, RawQuery: q.RawQuery}, Header: h, Host: host, RemoteAddr: net.JoinHostPort(remote, "0"), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
 	if q.GRPC != "" {
 		r.Proto, r.ProtoMajor, r.ProtoMinor = "HTTP/2.0", 2, 0
 	}
@@ -141,6 +144,8 @@ type Trace struct {
 	Routes     []TraceRoute     `json:"routes,omitempty"`
 	Candidates []TraceCandidate `json:"candidates,omitempty"`
 	Winner     *TraceWinner     `json:"winner,omitempty"`
+	// NormalizedPath is the path routing used, when path normalisation changed it.
+	NormalizedPath string `json:"normalized_path,omitempty"`
 
 	// recorders, filled by the match code when a Trace is attached
 	lrec   []listenerRec
@@ -244,6 +249,13 @@ type TraceRedirect struct {
 	Location string `json:"location"`
 }
 
+// TraceDirect is the answer of a direct-response rule.
+type TraceDirect struct {
+	Status  int               `json:"status"`
+	Body    string            `json:"body,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 // TraceWinner is the rule that took the request.
 type TraceWinner struct {
 	Route    string         `json:"route"`
@@ -253,6 +265,7 @@ type TraceWinner struct {
 	Summary  string         `json:"summary"`
 	Filters  []TraceFilter  `json:"filters,omitempty"`
 	Redirect *TraceRedirect `json:"redirect,omitempty"`
+	Direct   *TraceDirect   `json:"direct_response,omitempty"`
 	Backends []TraceBackend `json:"backends,omitempty"`
 	Mirrors  []string       `json:"mirrors,omitempty"`
 	Timeout  string         `json:"timeout,omitempty"`
@@ -261,6 +274,7 @@ type TraceWinner struct {
 	MirrorTargets []TraceMirror   `json:"mirror_targets,omitempty"`
 	Retry         *TraceRetry     `json:"retry,omitempty"`
 	RateLimit     *TraceRateLimit `json:"rate_limit,omitempty"`
+	RouteLimit    *TraceRateLimit `json:"route_rate_limit,omitempty"` // the rule's own limiter
 	Auth          *TraceAuth      `json:"auth,omitempty"`
 	Notes         []string        `json:"notes,omitempty"`
 
@@ -502,6 +516,13 @@ func Explain(t *Table, q ExplainRequest) *Trace {
 	}
 	pg := t.Ports[q.Port]
 	r := q.httpRequest()
+	if msg := q.Server.Path.normalizePath(r); msg != "" {
+		tr.Verdict, tr.Reason = VerdictBadRequest, msg+"; the gateway answers 400 before routing (--reject-escaped-slashes)"
+		return tr
+	}
+	if r.URL.Path != q.Path {
+		tr.NormalizedPath = r.URL.Path
+	}
 	host := hostOnly(r.Host)
 	passthrough := q.SNI != ""
 	if passthrough {
@@ -799,6 +820,9 @@ func (tr *Trace) finishBackends(w *TraceWinner) {
 		}
 	}
 	switch {
+	case w.Direct != nil:
+		tr.Verdict = VerdictDirect
+		tr.Reason = fmt.Sprintf("rule %d of %s answers with a fixed %d response; no backend is contacted", w.Rule, w.Route, w.Direct.Status)
 	case w.Redirect != nil:
 		tr.Verdict = VerdictRedirect
 		tr.Reason = fmt.Sprintf("rule %d of %s answers with a %d redirect to %s", w.Rule, w.Route, w.Redirect.Status, w.Redirect.Location)
@@ -835,6 +859,18 @@ func (tr *Trace) explainWinner(t *Table, pg *PortGroup, e *Entry, r *http.Reques
 			code = http.StatusFound
 		}
 		w.Redirect = &TraceRedirect{Status: code, Location: redirectURL(r, rule.Redirect, e.Match, pg.TLS)}
+		tr.explainExtras(w, e, r)
+		tr.finishBackends(w)
+		return
+	}
+	if d := rule.Direct; d != nil {
+		w.Direct = &TraceDirect{Status: d.Status, Body: d.Body, Headers: respHeadersFor(r, rule.Rule.Filters)}
+		if w.Direct.Headers == nil && len(d.Headers) > 0 {
+			w.Direct.Headers = map[string]string{}
+		}
+		for k, v := range d.Headers {
+			w.Direct.Headers[http.CanonicalHeaderKey(k)] = v
+		}
 		tr.explainExtras(w, e, r)
 		tr.finishBackends(w)
 		return

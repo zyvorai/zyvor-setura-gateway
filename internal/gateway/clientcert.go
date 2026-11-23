@@ -187,11 +187,15 @@ func (s *Server) clientTLSConfig(base *tls.Config, port int, h *tls.ClientHelloI
 		return nil, nil
 	}
 	l := t.Ports[port].listenerForTLS(h.ServerName)
-	if l == nil || l.Client == nil {
+	if l == nil || (l.Client == nil && l.TLSMin == 0 && l.TLSMax == 0) {
 		return nil, nil
 	}
 	c := base.Clone()
 	c.GetConfigForClient = nil
+	s.tlsFor(l).apply(c)
+	if l.Client == nil {
+		return c, nil
+	}
 	c.ClientCAs = l.Client.Pool
 	if l.Client.Mode == ModeAllowValidOnly {
 		c.ClientAuth = tls.RequireAndVerifyClientCert

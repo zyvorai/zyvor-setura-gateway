@@ -58,6 +58,11 @@ type Options struct {
 	AuthClock func() time.Time
 	// Cert holds ACME, PROXY protocol, Alt-Svc and certificate reload settings.
 	Cert CertOptions
+	// Limits are request size and timeout limits, Path the path normalisation applied
+	// before routing and TLS the version bounds of HTTPS listeners (limits.go).
+	Limits LimitsOptions
+	Path   PathOptions
+	TLS    TLSOptions
 }
 
 // Loaded is one configuration read from a Source.
@@ -230,7 +235,11 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		s.ports[spec] = &boundPort{ln: ln, raw: s.startPassthrough(ln, spec)}
 		return nil
 	}
-	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0),
+	hrt := DefaultHeaderReadTimeout
+	if d := s.opts.Limits.HeaderReadTimeout; d > 0 {
+		hrt = d
+	}
+	srv := &http.Server{ReadHeaderTimeout: hrt, IdleTimeout: s.opts.Limits.IdleTimeout, MaxHeaderBytes: s.opts.Limits.MaxHeaderBytes, ErrorLog: log.New(io.Discard, "", 0),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s.inflight.Add(1)
 			defer s.inflight.Add(-1)
@@ -247,6 +256,7 @@ func (s *Server) startPort(spec int, pg *PortGroup) error {
 		base := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: s.httpProtos(),
 			GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.acmeHello(spec, h) }}
 		base.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) { return s.clientTLSConfig(base, spec, h) }
+		s.opts.TLS.apply(base)
 		srv.TLSConfig = base
 		go srv.ServeTLS(ln, "", "")
 	} else {
@@ -327,6 +337,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	}
 	t := BuildTable(cfg)
 	s.carryState(s.table.Load(), t)
+	s.prepareLimiters(s.table.Load(), t)
 	bindErr := map[string]string{}
 	specPorts := make([]int, 0, len(t.Ports))
 	for p := range t.Ports {

@@ -104,9 +104,22 @@ func (s *Server) writeObsMetrics(w io.Writer) {
 			fmt.Fprintf(&b, "setura_gateway_route_requests_total{route=\"%s\",code=\"%s\"} %d\n", esc(k), c, routes[k].Status[c])
 		}
 	}
-	if l := s.obs.limiter; l != nil {
-		allowed, limited, buckets := l.snapshot()
-		head("setura_gateway_ratelimit_allowed_total", "counter", "Requests admitted by the rate limiter.")
+	rls := s.table.Load().ruleLimiters()
+	if l := s.obs.limiter; l != nil || len(rls) > 0 {
+		var allowed int64
+		var buckets int
+		limited := map[string]int64{}
+		if l != nil {
+			allowed, limited, buckets = l.snapshot()
+		}
+		for _, rl := range rls { // the totals cover the gateway-wide and the per-rule limiters
+			a, lim, n := rl.l.snapshot()
+			allowed, buckets = allowed+a, buckets+n
+			for r, v := range lim {
+				limited[r] += v
+			}
+		}
+		head("setura_gateway_ratelimit_allowed_total", "counter", "Requests admitted by the rate limiters.")
 		fmt.Fprintf(&b, "setura_gateway_ratelimit_allowed_total %d\n", allowed)
 		head("setura_gateway_ratelimit_limited_total", "counter", "Requests refused with 429 by the rate limiter, per route.")
 		for _, r := range sortedRoutes(limited) {
@@ -114,6 +127,22 @@ func (s *Server) writeObsMetrics(w io.Writer) {
 		}
 		head("setura_gateway_ratelimit_buckets", "gauge", "Live token buckets.")
 		fmt.Fprintf(&b, "setura_gateway_ratelimit_buckets %d\n", buckets)
+		if len(rls) > 0 {
+			head("setura_gateway_route_ratelimit_allowed_total", "counter", "Requests admitted by a per-rule rate limit (setura.zyvor.dev/rate-limit).")
+			for _, rl := range rls {
+				a, _, _ := rl.l.snapshot()
+				fmt.Fprintf(&b, "setura_gateway_route_ratelimit_allowed_total{route=\"%s\",rule=\"%d\"} %d\n", esc(rl.route), rl.rule, a)
+			}
+			head("setura_gateway_route_ratelimit_limited_total", "counter", "Requests refused with 429 by a per-rule rate limit.")
+			for _, rl := range rls {
+				_, lim, _ := rl.l.snapshot()
+				var n int64
+				for _, v := range lim {
+					n += v
+				}
+				fmt.Fprintf(&b, "setura_gateway_route_ratelimit_limited_total{route=\"%s\",rule=\"%d\"} %d\n", esc(rl.route), rl.rule, n)
+			}
+		}
 	}
 	if a := s.obs.access; a != nil {
 		head("setura_gateway_accesslog_written_total", "counter", "Access log lines written.")

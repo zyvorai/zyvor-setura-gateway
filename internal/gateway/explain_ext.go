@@ -35,6 +35,9 @@ func (tr *Trace) explainExtras(w *TraceWinner, e *Entry, r *http.Request) {
 	if rule.Redirect != nil {
 		w.ResponseHeaders = respHeadersFor(r, rule.Rule.Filters)
 	}
+	if rule.Direct != nil {
+		w.Notes = append(w.Notes, "direct response: the gateway answers itself and no backend is contacted")
+	}
 	if rule.Session != nil {
 		w.Session = describeSession(rule.Session)
 	}

@@ -284,7 +284,13 @@ func (k *KubeSource) Load(ctx context.Context) (*Loaded, error) {
 		k.shadowAnnotations("HTTPRoute", r.Metadata, len(spec.Rules), func() {
 			annotateHTTP(spec.Rules, r.Metadata.Annotations)
 			annotateAuth(spec.Rules, r.Metadata.Annotations)
+			annotateExt(spec.Rules, r.Metadata.Annotations)
 		})
+		for _, base := range RuleExtKeys {
+			for _, key := range OrphanRuleAnnotations(r.Metadata.Annotations, base, len(spec.Rules)) {
+				k.warn("HTTPRoute %s/%s: annotation %s matches no rule (want %s.rule-N with N from 1 to %d)", r.Metadata.Namespace, r.Metadata.Name, key, base, len(spec.Rules))
+			}
+		}
 		rtRaw[cfg.Routes[len(cfg.Routes)-1].Key()] = rtItems[i]
 	}
 

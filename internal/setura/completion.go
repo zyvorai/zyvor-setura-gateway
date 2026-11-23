@@ -57,7 +57,9 @@ var replayFlags = []string{"--log", "--before", "--after", "--format", "--limit"
 var gatewayFlags = []string{"--config", "--new", "--checks", "--admin", "--observe", "--steps", "--rollback-on-fail", "--max-error-rate",
 	"--max-p95", "--keep", "--to", "--force", "--format", "--probe-interval", "--apply-timeout", "--no-steps", "--lock-timeout",
 	"--shadow-diff", "--shadow-state", "--admin-token", "--admin-open-ready", "--ocsp-staple", "--kind", "--iterations", "--udp-idle-timeout",
-	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc"}
+	"--acme-dir", "--acme-directory", "--acme-production", "--acme-email", "--acme-dns-hook", "--acme-challenge", "--proxy-protocol", "--alt-svc",
+	"--max-request-body", "--max-header-bytes", "--header-read-timeout", "--idle-timeout", "--stream-idle-timeout",
+	"--normalize-path", "--merge-slashes", "--reject-escaped-slashes", "--tls-min-version", "--tls-max-version"}
 
 // connectionsFlags are offered after "setura connections".
 var connectionsFlags = []string{"--admin", "--follow", "--format", "--filter", "--limit", "--interval"}
@@ -74,7 +76,7 @@ var uiFlags = []string{"--listen", "--snapshot", "--kube", "--token", "--redact"
 var shadowFlags = []string{"--admin", "--follow", "--format", "--fail-under", "--interval"}
 
 // whyFlags are offered after "setura why".
-var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff"}
+var whyFlags = []string{"--config", "--snapshot", "--admin", "--format", "--grpc", "--sni", "-H", "--header", "--client-ip", "--rate-limit", "--rate-burst", "--rate-key", "--shadow-diff", "--normalize-path", "--merge-slashes", "--reject-escaped-slashes"}
 
 // initFlags are offered after "setura init".
 var initFlags = []string{"--route", "--openapi", "--upstream", "--out", "--listen-port", "--hostname", "--name", "--force", "--no-lint", "--format"}

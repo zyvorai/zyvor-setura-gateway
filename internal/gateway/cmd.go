@@ -79,6 +79,17 @@ Flags for run and up:
                         shared limit; no state is shared between replicas)
   --trusted-proxies CIDR[,..]   believe X-Forwarded-For only from these peers (client IP for rate
                         limits and access logs; appended to, not replaced, when forwarded)
+  --max-request-body SIZE   refuse request bodies over SIZE (100, 64k, 10MB) with 413 (default no limit; a rule or
+                        listener "setura.zyvor.dev/limits" block overrides it, see docs/limits.md)
+  --max-header-bytes SIZE   refuse request headers over SIZE with 431 (default 1MB, Go's own limit)
+  --header-read-timeout DUR   time a client has to send the request headers (default 10s)
+  --idle-timeout DUR    close idle keep-alive connections after DUR (default off)
+  --stream-idle-timeout DUR   cut a response that sends no byte for DUR, such as a stalled stream (default off)
+  --normalize-path      remove . and .. path segments before routing (default off)
+  --merge-slashes       collapse // in the request path before routing (default off)
+  --reject-escaped-slashes   answer 400 to paths containing %2F or %5C (default off)
+  --tls-min-version 1.2|1.3, --tls-max-version 1.2|1.3   TLS version bounds of HTTPS and terminating TLS
+                        listeners (default 1.2 to 1.3; a listener's tls.options override them)
   --otlp-retries N, --otlp-backoff DUR, --otlp-queue N   OTLP export retry count (default 4, -1 = none),
                         first backoff (250ms, doubling) and bounded span queue (2048)
   --retry-budget PCT    retries may not exceed PCT percent of recent requests (default 20)
@@ -126,6 +137,7 @@ type runFlags struct {
 	uiAddr     string
 	uiToken    string
 	cert       certFlags
+	limits     limitFlags
 }
 
 func addRunFlags(fs *flag.FlagSet, f *runFlags) {
@@ -168,6 +180,7 @@ func addRunFlags(fs *flag.FlagSet, f *runFlags) {
 	fs.BoolVar(&f.opts.AdminOpenReady, "admin-open-ready", false, "leave /ready open without the admin token")
 	fs.BoolVar(&f.opts.OCSPStaple, "ocsp-staple", false, "staple OCSP responses to listener certificates")
 	addCertFlags(fs, &f.cert)
+	addLimitFlags(fs, &f.limits)
 	fs.StringVar(&f.uiAddr, "ui", "", "serve the read-only dashboard on ADDR")
 	fs.StringVar(&f.uiToken, "ui-token", os.Getenv("SETURA_UI_TOKEN"), "bearer token for the dashboard")
 }
@@ -222,6 +235,9 @@ func (f *runFlags) finish(stdout, stderr io.Writer, lint func([]byte) (bool, str
 	f.opts.Diag = stderr
 	f.opts.Lint = lint
 	if err := f.cert.apply(&f.opts); err != nil {
+		return nil, err
+	}
+	if err := f.limits.apply(&f.opts); err != nil {
 		return nil, err
 	}
 	if err := f.obs.apply(&f.opts); err != nil {

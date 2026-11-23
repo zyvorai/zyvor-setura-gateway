@@ -31,6 +31,9 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 	rateLimit := fs.String("rate-limit", "", "model the gateway's --rate-limit (N/s, N/m, N/h); offline only")
 	rateBurst := fs.Int("rate-burst", 0, "model the gateway's --rate-burst; offline only")
 	rateKey := fs.String("rate-key", "ip", "model the gateway's --rate-key: ip, route or header:NAME; offline only")
+	normalize := fs.Bool("normalize-path", false, "model the gateway's --normalize-path; offline only")
+	merge := fs.Bool("merge-slashes", false, "model the gateway's --merge-slashes; offline only")
+	rejectEsc := fs.Bool("reject-escaped-slashes", false, "model the gateway's --reject-escaped-slashes; offline only")
 	shadowDiff := fs.Int("shadow-diff", 0, "model the gateway's --shadow-diff default sample percent; offline only")
 	var headers stringList
 	fs.Var(&headers, "H", `request header, "Name: value"; repeatable`)
@@ -81,6 +84,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 		return usage("--shadow-diff must be 0-100")
 	}
 	policy.ShadowDiff = *shadowDiff
+	policy.Path = builtin.PathOptions{Normalize: *normalize, MergeSlashes: *merge, RejectEscapedSlashes: *rejectEsc}
 	req, err := builtin.ParseExplainRequest(method, target, headers, *grpc, *sni)
 	if err != nil {
 		return usage(err.Error())
@@ -119,7 +123,7 @@ func runWhy(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer, u *ui) (i
 	} else {
 		fmt.Fprint(stdout, u.WhyPretty(tr, *admin != "", whyWidth()))
 	}
-	if tr.Verdict == builtin.VerdictRouted || tr.Verdict == builtin.VerdictRedirect {
+	if tr.Verdict == builtin.VerdictRouted || tr.Verdict == builtin.VerdictRedirect || tr.Verdict == builtin.VerdictDirect {
 		return 0, nil
 	}
 	return 1, nil
@@ -310,6 +314,16 @@ func (u *ui) WhyPretty(tr *builtin.Trace, remote bool, width int) string {
 			}
 		}
 		u.whyPolicy(&b, win, width)
+		if d := win.Direct; d != nil {
+			section("Direct response (no backend is contacted)")
+			w("    %s %s\n", u.arrow(), u.bold(fmt.Sprint(d.Status)))
+			for _, k := range sortedKeys(d.Headers) {
+				w("    %s %s\n", u.gray(k+":"), d.Headers[k])
+			}
+			if d.Body != "" {
+				w("    %s %q\n", u.gray("body:"), d.Body)
+			}
+		}
 		if win.Redirect != nil {
 			section("Redirect")
 			w("    %s %s %s %s\n", u.arrow(), u.bold(fmt.Sprint(win.Redirect.Status)), u.gray("Location"), win.Redirect.Location)
@@ -357,6 +371,10 @@ func (u *ui) WhyPretty(tr *builtin.Trace, remote bool, width int) string {
 		w("  %s %s\n", u.okSym(), u.bold("Routed"))
 	case builtin.VerdictRedirect:
 		w("  %s %s\n", u.okSym(), u.bold("Redirected"))
+	case builtin.VerdictDirect:
+		w("  %s %s\n", u.okSym(), u.bold("Answered directly"))
+	case builtin.VerdictBadRequest:
+		w("  %s %s\n", u.failSym(), u.bold("Refused: bad request"))
 	default:
 		w("  %s %s\n", u.failSym(), u.bold("No route: "+tr.Verdict))
 	}
@@ -459,6 +477,21 @@ func (u *ui) whyPolicy(b *strings.Builder, win *builtin.TraceWinner, width int) 
 				}
 				fmt.Fprintf(b, "        live bucket holds %.1f tokens: this request would be %s\n", *rl.Tokens, verdict)
 			}
+		}
+		if rl.Note != "" {
+			for _, ln := range wrap(rl.Note, "        ", width) {
+				fmt.Fprintln(b, u.gray(ln))
+			}
+		}
+	}
+	if rl := win.RouteLimit; rl != nil {
+		fmt.Fprintf(b, "    %s rate limit %s, bucket %s\n", u.arrow(), rl.Policy, rl.Bucket)
+		if rl.Live && rl.Tokens != nil {
+			verdict := u.green("admitted")
+			if rl.Limited != nil && *rl.Limited {
+				verdict = u.red("refused with 429")
+			}
+			fmt.Fprintf(b, "        live bucket holds %.1f tokens: this request would be %s\n", *rl.Tokens, verdict)
 		}
 		if rl.Note != "" {
 			for _, ln := range wrap(rl.Note, "        ", width) {

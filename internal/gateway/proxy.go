@@ -140,6 +140,15 @@ func plain(w http.ResponseWriter, code int, msg string) {
 
 // serveHTTP is the data-plane handler for one port.
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
+	if msg := s.opts.Path.normalizePath(r); msg != "" {
+		start := time.Now()
+		rec := &recorder{ResponseWriter: w}
+		st := &reqState{errMsg: msg}
+		s.beginTrace(rec, r, st)
+		defer func() { s.logRequest(rec, r, st, start) }()
+		plain(rec, http.StatusBadRequest, msg)
+		return
+	}
 	if isGRPC(r) {
 		s.serveGRPC(w, r, port)
 		return
@@ -192,10 +201,18 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 	st.rule = &idx
 	st.match, st.matched = e.MatchIdx, true
 	st.markRoute()
-	if s.rateLimited(rec, r, st) {
+	if s.rateLimited(rec, r, st) || s.ruleRateLimited(rec, r, st, rule) {
 		return
 	}
 	if s.authDenied(rec, r, st, l, rule.Rule) {
+		return
+	}
+	if rule.Direct != nil {
+		serveDirect(rec, r, rule)
+		return
+	}
+	lr, tooLarge := s.limitBody(rec, r, st, s.bodyLimit(l, rule))
+	if tooLarge {
 		return
 	}
 
@@ -250,6 +267,14 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		defer cancel()
 		r = r.WithContext(ctx)
 	}
+	idle := s.idleLimit(rule)
+	var idleCancel context.CancelCauseFunc
+	if idle > 0 {
+		var ctx context.Context
+		ctx, idleCancel = context.WithCancelCause(r.Context())
+		defer idleCancel(nil)
+		r = r.WithContext(ctx)
+	}
 
 	var replay []byte
 	canReplay := false
@@ -268,6 +293,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 		var err error
 		if body, err = io.ReadAll(io.LimitReader(r.Body, maxMirrorBody+1)); err != nil {
 			st.errMsg = "reading request body: " + err.Error()
+			if lr != nil && lr.exceeded.Load() {
+				w.Header().Set("Connection", "close")
+				plain(rec, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
 			plain(rec, http.StatusBadRequest, "cannot read request body")
 			return
 		}
@@ -314,6 +344,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			w.Header().Del(RequestIDHeader)
 			resp.Header.Set(RequestIDHeader, st.reqID)
 			rt.annotate(resp.Header)
+			if idleCancel != nil && resp.StatusCode != http.StatusSwitchingProtocols {
+				resp.Body = newIdleBody(resp.Body, idle, idleCancel)
+			}
 			shapeResponse(resp.Header, r, requestFilters(rule, ref))
 			if len(rule.sessionPolicies()) > 0 && resp.Request != nil {
 				var served *Endpoint
@@ -332,6 +365,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request, port int) {
 			code := http.StatusBadGateway
 			if errors.Is(err, context.DeadlineExceeded) {
 				code = http.StatusGatewayTimeout
+			}
+			if lr != nil && lr.exceeded.Load() {
+				w.Header().Set("Connection", "close")
+				plain(w, http.StatusRequestEntityTooLarge, "request body too large")
+				return
 			}
 			w.Header().Set(BackendHeader, rt.ref.Name)
 			rt.annotate(w.Header())

@@ -275,7 +275,7 @@ func classifyReplay(b, a builtin.Decision, ignoreWeights bool) []string {
 	if hasBackends(b) && hasBackends(a) && backendKeys(b) != backendKeys(a) {
 		out = append(out, classBackend)
 	}
-	if b.Outcome != a.Outcome || (b.Outcome == builtin.OutcomeRedirect && (b.Status != a.Status || b.Location != a.Location)) {
+	if b.Outcome != a.Outcome || ((b.Outcome == builtin.OutcomeRedirect || b.Outcome == builtin.OutcomeDirect) && (b.Status != a.Status || b.Location != a.Location)) {
 		out = append(out, classOutcome)
 	}
 	if !ignoreWeights && hasBackends(b) && hasBackends(a) && backendKeys(b) == backendKeys(a) && !sameDistribution(b, a) {

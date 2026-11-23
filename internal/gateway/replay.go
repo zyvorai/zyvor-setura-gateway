@@ -12,10 +12,11 @@ import (
 const (
 	OutcomeRouted     = "routed"
 	OutcomeRedirect   = "redirect"
-	OutcomeNoListener = "no-listener"  // 404: no listener serves the host
-	OutcomeNoRoute    = "no-route"     // 404: listener found, no route matched
-	OutcomeNoBackend  = "no-backend"   // 500: route matched, no valid backend
-	NoBackendKey      = "(no backend)" // pseudo backend for the unresolvable share
+	OutcomeDirect     = "direct-response" // the rule answers with a fixed status
+	OutcomeNoListener = "no-listener"     // 404: no listener serves the host
+	OutcomeNoRoute    = "no-route"        // 404: listener found, no route matched
+	OutcomeNoBackend  = "no-backend"      // 500: route matched, no valid backend
+	NoBackendKey      = "(no backend)"    // pseudo backend for the unresolvable share
 )
 
 // ReqSpec is the part of a request an access log records. Headers are unknown.
@@ -160,6 +161,10 @@ func (t *Table) Resolve(spec ReqSpec) Decision {
 		d.Location = redirectURL(r, rule.Redirect, e.Match, pg.TLS)
 		return d
 	}
+	if rule.Direct != nil {
+		d.Outcome, d.Status = OutcomeDirect, rule.Direct.Status
+		return d
+	}
 	d.Status = http.StatusInternalServerError
 	d.Outcome = OutcomeNoBackend
 	total, valid := 0, 0
@@ -266,6 +271,8 @@ func (d Decision) base() string {
 		return fmt.Sprintf("%s rule %d -> %s", d.Route, d.Rule+1, strings.Join(parts, ", "))
 	case OutcomeRedirect:
 		return fmt.Sprintf("%s rule %d redirect %d %s", d.Route, d.Rule+1, d.Status, d.Location)
+	case OutcomeDirect:
+		return fmt.Sprintf("%s rule %d direct response %d", d.Route, d.Rule+1, d.Status)
 	}
 	return d.Outcome
 }

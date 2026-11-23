@@ -18,6 +18,8 @@ type ExplainServer struct {
 	RateLimit  RateLimitConfig   // --rate-limit/--rate-burst/--rate-key
 	Resilience ResilienceOptions // retry budget and body limit
 	ShadowDiff int               // --shadow-diff default sample percent
+	Path       PathOptions       // --normalize-path, --merge-slashes, --reject-escaped-slashes
+	Limits     LimitsOptions     // --max-request-body and the other limits, for the notes
 	AuthClock  func() time.Time  // clock of token validation (the running gateway's)
 
 	limiter *limiter // live limiter of a running gateway (admin endpoint)
@@ -26,7 +28,7 @@ type ExplainServer struct {
 // liveServerPolicy hands the explainer the running gateway's policy and
 // limiter, so the admin endpoint reports the bucket's current state.
 func (s *Server) liveServerPolicy() ExplainServer {
-	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter}
+	return ExplainServer{RateLimit: s.opts.Obs.RateLimit, Resilience: *s.res.opt(), ShadowDiff: s.opts.ShadowDiff, Path: s.opts.Path, Limits: s.opts.Limits, AuthClock: s.opts.AuthClock, limiter: s.obs.limiter}
 }
 
 // TraceMirror is one mirror target of the winning rule.
@@ -114,7 +116,9 @@ func (tr *Trace) explainPolicy(w *TraceWinner, e *Entry, q ExplainRequest, r *ht
 		w.Notes = append(w.Notes, "gRPC calls are not rate limited, retried or mirrored by the built-in gateway")
 	} else {
 		w.RateLimit = srv.rateLimit(w.Route, q, r)
-		if rule.Redirect == nil {
+		w.RouteLimit = srv.ruleRateLimit(rule, w.Route, q, r)
+		srv.noteLimits(w, rule, tr.chosen)
+		if rule.Redirect == nil && rule.Direct == nil {
 			for _, m := range rule.Mirrors {
 				tm := srv.describeMirror(m)
 				w.MirrorTargets = append(w.MirrorTargets, tm)
@@ -167,4 +171,52 @@ func (e ExplainServer) rateLimit(route string, q ExplainRequest, r *http.Request
 		t.Note = "no bucket exists for this key yet, so it starts full"
 	}
 	return t
+}
+
+// ruleRateLimit models the rule's own limiter (setura.zyvor.dev/rate-limit).
+// The limiter is the table's, so a running gateway reports its live bucket.
+func (e ExplainServer) ruleRateLimit(rule *CRule, route string, q ExplainRequest, r *http.Request) *TraceRateLimit {
+	l := rule.Limit
+	if l == nil {
+		return nil
+	}
+	t := &TraceRateLimit{Enabled: true, Applies: true}
+	t.Policy = fmt.Sprintf("%g tokens/s, burst %g, key %s (this rule)", l.perSec, l.burst, l.key)
+	t.Bucket = strings.ReplaceAll(l.bucketKey(route, r), "\x00", " | ")
+	if !q.Live {
+		t.Note = "policy only: a fresh bucket starts full, so the first request for this key is admitted; live bucket state needs --admin"
+		return t
+	}
+	now := q.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	tok, exists := l.peek(l.bucketKey(route, r), now)
+	limited := tok < 1
+	t.Live, t.Tokens, t.Limited = true, &tok, &limited
+	if !exists {
+		t.Note = "no bucket exists for this key yet, so it starts full"
+	}
+	return t
+}
+
+// noteLimits adds the size and idle limits that apply to the winning rule.
+func (e ExplainServer) noteLimits(w *TraceWinner, rule *CRule, l *RTListener) {
+	max := e.Limits.MaxBodyBytes
+	switch {
+	case rule.MaxBody != nil:
+		max = *rule.MaxBody
+	case l != nil && l.MaxBody != nil:
+		max = *l.MaxBody
+	}
+	if max > 0 {
+		w.Notes = append(w.Notes, fmt.Sprintf("request bodies over %d bytes are refused with 413", max))
+	}
+	idle := e.Limits.StreamIdleTimeout
+	if rule.StreamIdle != nil {
+		idle = *rule.StreamIdle
+	}
+	if idle > 0 && rule.Direct == nil {
+		w.Notes = append(w.Notes, fmt.Sprintf("a response that sends no byte for %s is cut", idle))
+	}
 }

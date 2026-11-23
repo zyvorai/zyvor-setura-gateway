@@ -41,6 +41,7 @@ func (s *Server) terminateTLS(c net.Conn, raw []byte, port int, l *RTListener) (
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: protos,
 		GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) { return s.certFor(port, h.ServerName) }}
+	s.tlsFor(l).apply(cfg)
 	tc := tls.Server(&replayConn{Conn: c, pre: raw}, cfg)
 	c.SetDeadline(time.Now().Add(10 * time.Second))
 	if err := tc.Handshake(); err != nil {
