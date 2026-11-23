@@ -38,15 +38,18 @@ func h2Transport(conn net.Conn, timeout time.Duration) *http.Transport {
 }
 
 // h2Get issues GET path over conn using HTTP/2.
-func h2Get(conn net.Conn, u *url.URL, path string, timeout time.Duration) (*http.Response, error) {
+func h2Get(conn net.Conn, u *url.URL, path string, timeout time.Duration, method string, headers map[string]string) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+u.Host+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, "https://"+u.Host+path, nil)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	req.Host = u.Host
 	req.Header.Set("User-Agent", "zyvor-setura")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := h2Transport(conn, timeout).RoundTrip(req)
 	if err != nil {
 		cancel()

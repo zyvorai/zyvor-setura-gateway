@@ -239,6 +239,10 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		minTLS := fs.String("min-tls", "", "minimum TLS version, 1.2 or 1.3")
 		warnDays := fs.Int("warn-expiry-days", 0, "add expiry_warning when the server certificate expires sooner than N days")
 		http2 := fs.Bool("http2", false, "negotiate ALPN h2 over TLS and speak HTTP/2")
+		method := fs.String("method", "", "request method: GET (default), HEAD, OPTIONS; POST, PUT, PATCH, DELETE need --allow-unsafe-method")
+		unsafeMethod := fs.Bool("allow-unsafe-method", false, "allow POST, PUT, PATCH and DELETE (sent with no body)")
+		var reqHeaders stringList
+		fs.Var(&reqHeaders, "request-header", `send a request header, "Name: value"; repeatable (Host and framing headers are refused)`)
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -246,7 +250,11 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		if err := need(pos, 1, "URL"); err != nil {
 			return 2, err
 		}
-		o := ProbeOptions{URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
+		rh, err := parseRequestHeaderFlags(reqHeaders)
+		if err != nil {
+			return 0, err
+		}
+		o := ProbeOptions{Method: *method, AllowUnsafeMethod: *unsafeMethod, RequestHeaders: rh, URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
 			BodyContains: *body, MaxMS: *maxMS, HTTP2: *http2,
 			Cert: *cert, Key: *key, ServerName: *sni, MinTLS: *minTLS, WarnExpiryDays: *warnDays}
 		for _, h := range headers {
@@ -700,6 +708,12 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 	case "bench":
 		return runBench(fs, rest, stdout, stderr)
 
+	case "split":
+		return runSplit(fs, rest, stdout, stderr)
+
+	case "cors":
+		return runCORS(fs, rest, stdout, stderr)
+
 	case "load":
 		return runLoad(fs, rest, stdout, stderr)
 
@@ -803,7 +817,7 @@ func Check(path string) ([]*Report, error) {
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
 		"headers": true, "body_contains": true, "max_ms": true, "http2": true}
-	for _, k := range mtlsCheckKeys {
+	for _, k := range append(append([]string{}, mtlsCheckKeys...), requestCheckKeys...) {
 		allowed[k] = true
 	}
 	rows := []*Report{}
@@ -855,6 +869,9 @@ func Check(path string) ([]*Report, error) {
 			o.MaxMS = f
 		}
 		if err := applyCheckTLS(m, &o); err != nil {
+			return nil, err
+		}
+		if err := applyCheckRequest(m, &o); err != nil {
 			return nil, err
 		}
 		if h, ok := m["http2"]; ok {

@@ -7,6 +7,7 @@
 - [Release process](release-process.md): signed releases, provenance, macOS signing on the Mac mini.
 - [Verification](verification.md): what has been proven, and how, for each release.
 - [Operators guide](operators.md): publish a listener and verify it from the client.
+- [Request shaping, traffic splits and CORS](probe-requests.md): `--method`, `--request-header`, `setura split`, `setura cors`.
 - [Terminal](terminal.md): colour, ASCII mode and output formats.
 
 ## The built-in gateway

@@ -30,6 +30,8 @@ var commandNames = []string{
 	"certs",
 	"grpc-health",
 	"bench",
+	"split",
+	"cors",
 	"load",
 	"why",
 	"doctor",

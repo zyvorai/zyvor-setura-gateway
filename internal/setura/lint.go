@@ -70,6 +70,7 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET073", SeverityWarning, "compress block lists a content type that is already compressed (images, video, archives, PDF)"},
 	{"SET074", SeverityWarning, "gRPC-web rule has neither allowOrigins nor a CORS filter, so browsers cannot call it cross-origin"},
 	{"SET075", SeverityWarning, "gRPC-web rule also has retries or a mirror, which do not apply to bridged calls"},
+	{"SET090", SeverityError, "HTTPRoute rule has filters the Gateway API rejects: URLRewrite with RequestRedirect, a repeated core filter, a filter without its configuration block, ReplacePrefixMatch on a rule that has a non-prefix match, a mismatched path modifier, or a bad redirect scheme or port"},
 	{"SET076", SeverityWarning, "listener maxConnectionsPerIP is above maxConnections, so the per-IP limit can never be reached"},
 }
 
@@ -257,6 +258,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, authRules(specs, ns)...)
 	findings = append(findings, edgeSecRules(specs, ns)...)
 	findings = append(findings, limitsRules(specs, ns)...)
+	findings = append(findings, filterRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)
 	findings = append(findings, lbRules(snapshot, specs, ns)...)

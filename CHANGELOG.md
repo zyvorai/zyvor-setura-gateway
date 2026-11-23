@@ -2,13 +2,29 @@
 
 ## 0.9.1
 
-A patch release from the first end-to-end test of 0.9.0 (33 checks with real binaries and real traffic, now `make e2e`).
+A patch release from the first end-to-end test of 0.9.0 (33 checks with real binaries and real traffic, now `make e2e`). It also carries the probe features merged from pull request #2, listed under Added below.
+
+### Fixed
 
 - **A misspelt Setura extension key can no longer leave a route unprotected.** In 0.9.0 a rule key such as `setura.zyvor.dev/authh` or an annotation such as `setura.zyvor.dev/rate-limt.rule-1` was ignored without a word, and the route was served with no auth or limit. Now `setura lint` reports every unknown `setura.zyvor.dev/*` key as error `SET023` with a suggestion; a rule with an unknown key is refused (`Accepted=False`, reason `UnsupportedValue`); a route annotation within two edits of a known key (one edit for the short names `auth` and `ai`) refuses the route too; any other unknown annotation is served with a warning in the route status and in `setura why`. If you rely on a key that is not in the table, lint now tells you.
 - **Consistent-hash rings move only the keys they should.** Removing a backend used to reshuffle about 15% of the keys that were not on it, because the number of ring points per endpoint depended on the endpoint count. Points now depend only on the endpoint's weight, so removing one endpoint moves exactly its own keys. Maglev is documented as minimal, not zero, disruption.
 - **`doctor gateway` and `why --admin` understand port maps.** `doctor gateway` no longer calls a foreign process "the running gateway" (it reads the gateway's real listeners from `/status`, and takes `--port-map` and `--port-offset`), and `why --admin` maps a real port through the gateway's port map.
 - **Smaller fixes.** `WWW-Authenticate` and `X-RateLimit-*` are sent with their documented spelling on HTTP/1; the local fallback of a shared rate limit has a sane burst instead of 1; `why` prints rates as `2 tokens/min`; `docs/ai-gateway.md`, `docs/security.md` and `docs/shared-rate-limits.md` now match the behaviour.
 - **`make e2e`** runs the 33-check end-to-end script against `bin/setura`. It is not part of `make test`. See `docs/verification.md`.
+
+### Added
+
+- **Request shaping for probes.** `explain`, `check` files and `watch` files can send a method (`GET`, `HEAD`, `OPTIONS`; `POST`, `PUT`, `PATCH`, `DELETE` need `--allow-unsafe-method` and carry no body) and request headers (`--request-header`, `request_headers`), over HTTP/1.1 and HTTP/2. This makes method-matched, header-matched and header-canary routes verifiable from the client. Host and framing headers, CR/LF and control characters, duplicates, and more than 32 headers or 16 KiB are refused.
+- **`setura split`.** Sends requests and checks the share each backend identity answered with against expected weights, with a per-backend binomial tolerance (3.29 sigma, about 0.1% false alarms), a minimum sample size for small shares, unexpected-identity detection and an error budget. Honest about being statistical and client-side.
+- **`setura cors`.** Sends the preflight a browser would send and judges the answer against the Fetch standard: status, `Access-Control-Allow-Origin`, credentials, methods, headers, `Max-Age`, and a `Vary: Origin` warning.
+- **Lint rule `SET090`.** Reports HTTPRoute rules whose filters a conforming controller refuses (`IncompatibleFilters`): `URLRewrite` with `RequestRedirect`, a repeated core filter, a missing or foreign filter block, `ReplacePrefixMatch` beside an `Exact` or regular-expression match, a mismatched path modifier, a redirect scheme other than http or https, a redirect port out of range. See `docs/lint-rules.md`.
+- See `docs/probe-requests.md` and `docs/research.md`.
+
+### Dependency and tooling upgrades (checked 2026-11-23)
+
+- Container base image moved from `gcr.io/distroless/static-debian12` to `static-debian13` (tag verified to exist). The binary is static, so nothing else changes.
+- Already current, no change: the main module has no third-party dependencies; `conformance/` modules (`sigs.k8s.io/gateway-api` v1.7.0, the latest stable) were already at the newest versions `go get -u` offers; Go 1.27 (1.27.4 is current); `golang:1.27-alpine`; every GitHub Action pin is already on the latest major listed in the release process.
+- Held back: Envoy Gateway v1.8.6 (CI helm install and docs) stays. v1.9.4 and v1.10.0 exist, but v1.10.0 has many breaking changes (session persistence cookies, health check protocol, OIDC, SecurityPolicy admission) and there is no cluster here to run the cluster smoke against it. K3s `v1.35.6-k3s1` stays for the same reason (`v1.37.2-k3s1` exists). `actions/configure-pages` v6 and `actions/attest-build-provenance` v4.1.0 were not verified against newer majors and are left alone.
 
 ## 0.9.0-rc1
 

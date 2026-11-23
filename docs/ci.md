@@ -9,7 +9,7 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: zyvorai/zyvor-setura-gateway@v0
         with:
           version: latest          # or a release such as 0.5.0

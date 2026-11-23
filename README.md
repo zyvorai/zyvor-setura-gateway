@@ -122,12 +122,14 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | Command | What it does |
 | --- | --- |
 | `publish GATEWAY --listener NAME` | Finds the single matching Envoy Service and runs `kubectl port-forward` on `127.0.0.1`. `--dry-run` prints the exact command. |
-| `explain URL` | One HTTP/1.1 or HTTP/2 GET with per-stage evidence: DNS, TCP, TLS, HTTP, backend, assertions. Flags: `--json`, `--status`, `--backend`, `--address`, `--ca`, `--timeout`, `--header`, `--body-contains`, `--max-ms`, `--http2`, and mTLS (`--cert`, `--key`, `--tls-server-name`, `--min-tls`, `--warn-expiry-days`). |
+| `explain URL` | One HTTP/1.1 or HTTP/2 GET with per-stage evidence: DNS, TCP, TLS, HTTP, backend, assertions. Flags: `--json`, `--status`, `--backend`, `--address`, `--ca`, `--timeout`, `--header`, `--method`, `--request-header`, `--body-contains`, `--max-ms`, `--http2`, and mTLS (`--cert`, `--key`, `--tls-server-name`, `--min-tls`, `--warn-expiry-days`). |
 | `check FILE` | Runs a JSON file of route assertions. `--junit FILE` writes JUnit XML, `--sarif FILE` writes SARIF, `--format github` emits workflow annotations. Expected `404`s can be positive assertions. |
 | `gateway run\|up\|install` | The built-in Gateway API data plane: `up` runs a one-command local demo, `run --config FILE` serves a config with hot reload, `run --kubernetes` runs as an in-cluster controller, and `install` prints (never applies) the manifests. [Details](docs/builtin-gateway.md) |
 | `echo --name NAME` | A tiny identity backend that answers with `X-Setura-Backend`, for demos and tests. |
 | `watch URL...` | Re-probes on an interval and prints only state changes. `--listen` serves Prometheus `/metrics`, `--history` appends JSON lines. [Details](docs/watch.md) |
 | `bench URL` | Repeated probes with p50/p90/p99 latency, error rate and status histogram, and budget flags that fail the run. |
+| `split URL --expect NAME=WEIGHT...` | Sends requests and checks the share each backend answered with against the expected weights (a statistical canary check, with tolerance and a minimum sample size). [Details](docs/probe-requests.md) |
+| `cors URL --origin ORIGIN` | Sends the CORS preflight a browser would send and judges the answer against the Fetch rules (origin, methods, headers, credentials, max-age, Vary). [Details](docs/probe-requests.md) |
 | `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
 | `certs HOST:PORT` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. |
 | `ui` | A read-only live dashboard: route map, traffic split, findings with fixes, live feed. Also `--ui ADDR` on `gateway run` and `watch`. Loopback by default. |
@@ -215,6 +217,7 @@ setura lint --snapshot snapshot.json --format github              # workflow ann
 | `SET022` | warning | API plan file maps an API key name that no route declares |
 | `SET030` | error | direct-response, rate-limit or limits block is invalid, targets no rule or conflicts with backends or redirects |
 | `SET031` | error | fault block is invalid, has no ttl or expires, or targets no rule |
+| `SET090` | error | HTTPRoute rule filters the Gateway API rejects: `URLRewrite` with `RequestRedirect`, a repeated core filter, a filter without its block, `ReplacePrefixMatch` next to a non-prefix match, a bad redirect scheme or port |
 | `SET040` to `SET047` | error or warning | AI route problems: invalid block, budget without identity, client-chosen identity, key over plain http, no auth, shared cache on an authenticated route, cost budget without prices, ignored backendRefs |
 
 `lint` exits `1` on errors, and on warnings too with `--strict`. It reads declared specs only, so it cannot see controller status or runtime behavior. List the rules any time with `setura lint --rules`; details are in [docs/lint-rules.md](docs/lint-rules.md).

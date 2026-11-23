@@ -136,6 +136,11 @@ type ProbeOptions struct {
 	MinCertDays    int
 	HTTP2          bool // require ALPN h2 over TLS and speak HTTP/2
 
+	// Optional request shaping (see request.go). Method defaults to GET.
+	Method            string
+	AllowUnsafeMethod bool
+	RequestHeaders    map[string]string
+
 	// capture, when set, sees the response head before assertions run (used by migrate).
 	capture func(*http.Response)
 }
@@ -206,6 +211,10 @@ func Probe(o ProbeOptions) (*Report, error) {
 	if err := o.tlsOpts().validate(); err != nil {
 		return nil, err
 	}
+	if err := o.validateRequest(); err != nil {
+		return nil, err
+	}
+	method, _ := o.requestMethod()
 	timeout := time.Duration(o.Timeout * float64(time.Second))
 
 	r := &Report{URL: o.URL, Steps: map[string]*Step{}}
@@ -332,15 +341,15 @@ func Probe(o ProbeOptions) (*Report, error) {
 		var resp *http.Response
 		if o.HTTP2 {
 			var err error
-			if resp, err = h2Get(conn, u, path, timeout); err != nil {
+			if resp, err = h2Get(conn, u, path, timeout, method, o.RequestHeaders); err != nil {
 				return err
 			}
 		} else {
-			if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: zyvor-setura\r\n\r\n", path, u.Host); err != nil {
+			if _, err := conn.Write(o.writeRequestHead(method, path, u.Host)); err != nil {
 				return err
 			}
 			var err error
-			if resp, err = http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "GET"}); err != nil {
+			if resp, err = http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: method}); err != nil {
 				return err
 			}
 		}
