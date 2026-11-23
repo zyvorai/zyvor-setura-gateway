@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.1
+
+A patch release from the first end-to-end test of 0.9.0 (33 checks with real binaries and real traffic, now `make e2e`).
+
+- **A misspelt Setura extension key can no longer leave a route unprotected.** In 0.9.0 a rule key such as `setura.zyvor.dev/authh` or an annotation such as `setura.zyvor.dev/rate-limt.rule-1` was ignored without a word, and the route was served with no auth or limit. Now `setura lint` reports every unknown `setura.zyvor.dev/*` key as error `SET023` with a suggestion; a rule with an unknown key is refused (`Accepted=False`, reason `UnsupportedValue`); a route annotation within two edits of a known key (one edit for the short names `auth` and `ai`) refuses the route too; any other unknown annotation is served with a warning in the route status and in `setura why`. If you rely on a key that is not in the table, lint now tells you.
+- **Consistent-hash rings move only the keys they should.** Removing a backend used to reshuffle about 15% of the keys that were not on it, because the number of ring points per endpoint depended on the endpoint count. Points now depend only on the endpoint's weight, so removing one endpoint moves exactly its own keys. Maglev is documented as minimal, not zero, disruption.
+- **`doctor gateway` and `why --admin` understand port maps.** `doctor gateway` no longer calls a foreign process "the running gateway" (it reads the gateway's real listeners from `/status`, and takes `--port-map` and `--port-offset`), and `why --admin` maps a real port through the gateway's port map.
+- **Smaller fixes.** `WWW-Authenticate` and `X-RateLimit-*` are sent with their documented spelling on HTTP/1; the local fallback of a shared rate limit has a sane burst instead of 1; `why` prints rates as `2 tokens/min`; `docs/ai-gateway.md`, `docs/security.md` and `docs/shared-rate-limits.md` now match the behaviour.
+- **`make e2e`** runs the 33-check end-to-end script against `bin/setura`. It is not part of `make test`. See `docs/verification.md`.
+
 ## 0.9.0-rc1
 
 Release candidate for 0.9.0: the same changes as the 0.9.0 section below.

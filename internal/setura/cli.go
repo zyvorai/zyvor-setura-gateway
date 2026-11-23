@@ -13,7 +13,7 @@ import (
 )
 
 // Version is the release version, overridden at build time with -ldflags.
-var Version = "0.9.0"
+var Version = "0.9.1"
 
 type stringList []string
 
