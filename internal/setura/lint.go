@@ -36,14 +36,14 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET016", SeverityWarning, "auth policy accepts any audience (jwt without audience) or fetches its JWKS over plain http"},
 	{"SET017", SeverityWarning, "auth policy stores an API key or a basic auth password in clear text instead of a hash"},
 	{"SET018", SeverityError, "auth block (rule extension or setura.zyvor.dev/auth annotation) is invalid or targets no rule"},
-	{"SET020", SeverityError, "AI block (rule extension or setura.zyvor.dev/ai annotation) is invalid or targets no rule"},
-	{"SET021", SeverityError, "AI token budget has no identity to count against: the identity (apikey, subject or claim) needs an auth policy on the rule that provides it"},
-	{"SET022", SeverityWarning, "AI budget or cache identity is a request header the client sets itself, so a client can pick another tenant's identity"},
-	{"SET023", SeverityWarning, "AI provider is called over plain http with an API key outside the cluster or loopback, so the key crosses the network in clear text"},
-	{"SET024", SeverityWarning, "AI route has no auth policy: everyone who can reach the gateway spends the provider key"},
-	{"SET025", SeverityWarning, "AI prompt cache is shared across identities (scope route) on a route that authenticates, so one client's answer can be served to another"},
-	{"SET026", SeverityWarning, "AI monthlyCost budget has no price table on the route (prices); without --ai-prices on the gateway the cost is always 0 and the budget never fires"},
-	{"SET027", SeverityWarning, "AI rule also has backendRefs, which are ignored: an AI rule serves its providers"},
+	{"SET040", SeverityError, "AI block (rule extension or setura.zyvor.dev/ai annotation) is invalid or targets no rule"},
+	{"SET041", SeverityError, "AI token budget has no identity to count against: the identity (apikey, subject or claim) needs an auth policy on the rule that provides it"},
+	{"SET042", SeverityWarning, "AI budget or cache identity is a request header the client sets itself, so a client can pick another tenant's identity"},
+	{"SET043", SeverityWarning, "AI provider is called over plain http with an API key outside the cluster or loopback, so the key crosses the network in clear text"},
+	{"SET044", SeverityWarning, "AI route has no auth policy: everyone who can reach the gateway spends the provider key"},
+	{"SET045", SeverityWarning, "AI prompt cache is shared across identities (scope route) on a route that authenticates, so one client's answer can be served to another"},
+	{"SET046", SeverityWarning, "AI monthlyCost budget has no price table on the route (prices); without --ai-prices on the gateway the cost is always 0 and the budget never fires"},
+	{"SET047", SeverityWarning, "AI rule also has backendRefs, which are ignored: an AI rule serves its providers"},
 }
 
 func ruleSeverity(id string) string {

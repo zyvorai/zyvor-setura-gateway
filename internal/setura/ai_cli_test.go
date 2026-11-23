@@ -61,23 +61,23 @@ func TestLintAIRules(t *testing.T) {
 		rule obj
 		want string
 	}{
-		{"invalid block", ruleOf(obj{"providers": []any{}}, keyAuth), "SET020"},
-		{"unknown field", ruleOf(aiProviderBlock(obj{"bogus": 1}), keyAuth), "SET020"},
-		{"budget without auth", ruleOf(aiProviderBlock(obj{"identity": "apikey", "budget": obj{"default": obj{"tokensPerDay": 1}}}), nil), "SET021"},
+		{"invalid block", ruleOf(obj{"providers": []any{}}, keyAuth), "SET040"},
+		{"unknown field", ruleOf(aiProviderBlock(obj{"bogus": 1}), keyAuth), "SET040"},
+		{"budget without auth", ruleOf(aiProviderBlock(obj{"identity": "apikey", "budget": obj{"default": obj{"tokensPerDay": 1}}}), nil), "SET041"},
 		{"apikey identity on a jwt rule", ruleOf(aiProviderBlock(obj{"identity": "apikey", "budget": obj{"default": obj{"tokensPerDay": 1}}}),
-			obj{"jwt": obj{"audience": []any{"a"}, "jwksUri": "https://idp.test/j"}}), "SET021"},
-		{"claim identity without jwt", ruleOf(aiProviderBlock(obj{"identity": "claim:org", "budget": obj{"default": obj{"tokensPerDay": 1}}}), keyAuth), "SET021"},
-		{"header identity", ruleOf(aiProviderBlock(obj{"identity": "header:X-Tenant", "budget": obj{"default": obj{"tokensPerDay": 1}}}), nil), "SET022"},
-		{"http with key", ruleOf(obj{"providers": []any{obj{"name": "p", "baseURL": "http://llm.example.com/v1", "apiKey": obj{"env": "K"}}}}, keyAuth), "SET023"},
-		{"open route", ruleOf(aiProviderBlock(nil), nil), "SET024"},
-		{"shared cache on authenticated route", ruleOf(aiProviderBlock(obj{"cache": obj{"enabled": true, "scope": "route"}}), keyAuth), "SET025"},
-		{"cost budget without prices", ruleOf(aiProviderBlock(obj{"identity": "apikey", "budget": obj{"default": obj{"monthlyCost": 50}}}), keyAuth), "SET026"},
+			obj{"jwt": obj{"audience": []any{"a"}, "jwksUri": "https://idp.test/j"}}), "SET041"},
+		{"claim identity without jwt", ruleOf(aiProviderBlock(obj{"identity": "claim:org", "budget": obj{"default": obj{"tokensPerDay": 1}}}), keyAuth), "SET041"},
+		{"header identity", ruleOf(aiProviderBlock(obj{"identity": "header:X-Tenant", "budget": obj{"default": obj{"tokensPerDay": 1}}}), nil), "SET042"},
+		{"http with key", ruleOf(obj{"providers": []any{obj{"name": "p", "baseURL": "http://llm.example.com/v1", "apiKey": obj{"env": "K"}}}}, keyAuth), "SET043"},
+		{"open route", ruleOf(aiProviderBlock(nil), nil), "SET044"},
+		{"shared cache on authenticated route", ruleOf(aiProviderBlock(obj{"cache": obj{"enabled": true, "scope": "route"}}), keyAuth), "SET045"},
+		{"cost budget without prices", ruleOf(aiProviderBlock(obj{"identity": "apikey", "budget": obj{"default": obj{"monthlyCost": 50}}}), keyAuth), "SET046"},
 	} {
 		if got := aiLint(t, c.rule, nil); len(got[c.want]) != 1 {
 			t.Errorf("%s: want one %s, got %v", c.name, c.want, got)
 		}
 	}
-	// In-cluster http is fine; prices silence SET026.
+	// In-cluster http is fine; prices silence SET046.
 	inCluster := ruleOf(obj{"providers": []any{obj{"name": "p", "baseURL": "http://vllm.llm.svc:8000/v1", "apiKey": obj{"env": "K"}}},
 		"prices": obj{"m": obj{"input": 1, "output": 1}}, "identity": "apikey", "budget": obj{"default": obj{"monthlyCost": 5}}}, keyAuth)
 	if got := aiLint(t, inCluster, nil); len(got) != 0 {
@@ -86,19 +86,19 @@ func TestLintAIRules(t *testing.T) {
 	// backendRefs are ignored.
 	both := ruleOf(aiProviderBlock(nil), keyAuth)
 	both["backendRefs"] = []any{obj{"name": "x", "port": 80}}
-	if got := aiLint(t, both, nil); len(got["SET027"]) != 1 {
+	if got := aiLint(t, both, nil); len(got["SET047"]) != 1 {
 		t.Errorf("backendRefs with an AI block: %v", got)
 	}
-	// Annotations: a valid one is an AI rule too, a bad or orphan one is SET020.
+	// Annotations: a valid one is an AI rule too, a bad or orphan one is SET040.
 	ann := func(v string) obj { return obj{builtin.SeturaAnnotationsKey: obj{builtin.AIKey: v}} }
 	valid, _ := json.Marshal(aiProviderBlock(nil))
 	if got := aiLint(t, obj{builtin.AuthKey: keyAuth}, ann(string(valid))); len(got) != 0 {
 		t.Errorf("annotation AI rule: %v", got)
 	}
-	if got := aiLint(t, obj{builtin.AuthKey: keyAuth, "backendRefs": []any{obj{"name": "x", "port": 80}}}, obj{builtin.SeturaAnnotationsKey: obj{builtin.AIKey + ".rule-4": string(valid)}}); len(got["SET020"]) != 1 {
+	if got := aiLint(t, obj{builtin.AuthKey: keyAuth, "backendRefs": []any{obj{"name": "x", "port": 80}}}, obj{builtin.SeturaAnnotationsKey: obj{builtin.AIKey + ".rule-4": string(valid)}}); len(got["SET040"]) != 1 {
 		t.Errorf("orphan annotation: %v", got)
 	}
-	if got := aiLint(t, obj{}, ann(`{"providers":`)); len(got["SET020"]) != 1 {
+	if got := aiLint(t, obj{}, ann(`{"providers":`)); len(got["SET040"]) != 1 {
 		t.Errorf("broken annotation: %v", got)
 	}
 }
@@ -212,7 +212,7 @@ func TestGatewayAIUsageCommand(t *testing.T) {
 func TestAIFlagsHelpManCompletion(t *testing.T) {
 	var b bytes.Buffer
 	Man(&b)
-	for _, w := range []string{"AI GATEWAY", "ai\\-usage", "ai\\-prices", "SET020"} {
+	for _, w := range []string{"AI GATEWAY", "ai\\-usage", "ai\\-prices", "SET040"} {
 		if !strings.Contains(b.String(), w) {
 			t.Errorf("man page lacks %q", w)
 		}

@@ -152,7 +152,7 @@ selects it:
 
 A header identity is exactly as trustworthy as whoever sets the header. Use it behind a
 layer you control that overwrites it, never on a route clients reach directly: lint warns
-(SET022). A route with a budget whose identity is missing answers 401 `identity_required`
+(SET042). A route with a budget whose identity is missing answers 401 `identity_required`
 (fail closed); it never pools unidentified callers.
 
 ## Token accounting
@@ -225,7 +225,7 @@ body that says which limit and what to do:
 
 A request whose estimate alone is larger than a limit can never succeed: tell clients to
 lower `max_tokens`. `monthlyCost` uses the price table; without prices it never fires
-(lint SET026). Cache hits cost no tokens and spend no budget.
+(lint SET046). Cache hits cost no tokens and spend no budget.
 
 ## Failover
 
@@ -268,7 +268,7 @@ burst. Prompts are redacted before the key is computed and the cache never holds
 
 The default scope is per identity so one client never receives another's answer. Scope
 `route` shares answers across everyone who can reach the route: use it only when every
-caller may see every answer (lint SET025 warns on an authenticated route). Caching a
+caller may see every answer (lint SET045 warns on an authenticated route). Caching a
 non-deterministic model returns one earlier answer for a while; set `temperature: 0` for
 requests you want deterministic.
 
@@ -329,11 +329,11 @@ the `key` label at `--ai-max-key-labels` (default 500) per route; the rest becom
 
 ## Lint
 
-`setura lint` checks AI blocks offline, without reading any secret: SET020 (invalid block or
-orphan annotation), SET021 (a budget whose identity the auth policy cannot provide),
-SET022 (client-set header identity), SET023 (API key over plain `http` outside the cluster),
-SET024 (AI route with no auth policy), SET025 (cache shared across authenticated clients),
-SET026 (`monthlyCost` without prices), SET027 (`backendRefs` that are ignored). See
+`setura lint` checks AI blocks offline, without reading any secret: SET040 (invalid block or
+orphan annotation), SET041 (a budget whose identity the auth policy cannot provide),
+SET042 (client-set header identity), SET043 (API key over plain `http` outside the cluster),
+SET044 (AI route with no auth policy), SET045 (cache shared across authenticated clients),
+SET046 (`monthlyCost` without prices), SET047 (`backendRefs` that are ignored). See
 [lint-rules.md](lint-rules.md).
 
 ## Honest limits
