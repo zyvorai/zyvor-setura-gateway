@@ -129,9 +129,9 @@ The `--address` override connects to `127.0.0.1` while keeping the URL's hostnam
 | `watch URL...` | Re-probes on an interval and prints only state changes. `--listen` serves Prometheus `/metrics`, `--history` appends JSON lines. [Details](docs/watch.md) |
 | `bench URL` | Repeated probes with p50/p90/p99 latency, error rate and status histogram, and budget flags that fail the run. |
 | `split URL --expect NAME=WEIGHT...` | Sends requests and checks the share each backend answered with against the expected weights (a statistical canary check, with tolerance and a minimum sample size). [Details](docs/probe-requests.md) |
-| `cors URL --origin ORIGIN` | Sends the CORS preflight a browser would send and judges the answer against the Fetch rules (origin, methods, headers, credentials, max-age, Vary). [Details](docs/probe-requests.md) |
+| `cors URL --origin ORIGIN` | Sends the CORS preflight a browser would send and judges the answer against the Fetch rules (origin, methods, headers, credentials, max-age, Vary); `--expect-refused` asserts a hostile origin is refused. [Details](docs/probe-requests.md) |
 | `grpc-health HOST:PORT` | Calls `grpc.health.v1.Health/Check` over TLS and HTTP/2. |
-| `certs HOST:PORT` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. |
+| `certs HOST:PORT...` | Prints and verifies the presented certificate chain, and fails when it is invalid or near expiry. Several targets or `--file` give a table sorted by soonest expiry. [Details](docs/assertions.md) |
 | `ui` | A read-only live dashboard: route map, traffic split, findings with fixes, live feed. Also `--ui ADDR` on `gateway run` and `watch`. Loopback by default. |
 | `why METHOD URL` | Explains a routing decision: every candidate, why it won or lost, filters, backend odds and the upstream request. |
 | `replay --log F --before A --after B` | Replays an access log through two configs and reports the routing impact. |
@@ -175,7 +175,7 @@ A check case can require response headers, body text and a latency budget, on to
 ]
 ```
 
-A header value of `"*"` only requires the header to be present. The body check reads at most the first 1 MiB. Run the same file from a laptop, a CI job, or an in-cluster CronJob (see [`examples/cluster-check.yaml`](examples/cluster-check.yaml)).
+A header value of `"*"` only requires the header to be present, `"!"` requires it to be absent and `"~REGEX"` matches it. `"json": {"$.status": "ok", "$.count": ">=3"}`, `"body_matches"` and `"retries"` are also accepted ([assertions, retries and certificate lists](docs/assertions.md)). The body check reads at most the first 1 MiB. Run the same file from a laptop, a CI job, or an in-cluster CronJob (see [`examples/cluster-check.yaml`](examples/cluster-check.yaml)).
 
 ## Lint your routes before traffic does
 

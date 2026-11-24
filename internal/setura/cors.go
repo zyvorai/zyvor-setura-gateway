@@ -208,6 +208,7 @@ func runCORS(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, er
 	method := fs.String("request-method", "GET", "the method the real request will use")
 	headers := fs.String("request-headers", "", "comma-separated header names the real request will send")
 	creds := fs.Bool("credentials", false, "the real request carries credentials (cookies or Authorization)")
+	refused := fs.Bool("expect-refused", false, "assert the opposite: pass only when a browser would refuse this origin (a hostile-origin check)")
 	asJSON := fs.Bool("json", false, "print JSON")
 	pos, err := parse(fs, rest)
 	if err != nil {
@@ -243,17 +244,38 @@ func runCORS(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, er
 		return 1, nil
 	}
 	findings := EvaluatePreflight(req, status, hdr)
-	ok := true
+	allowed := true // a browser would accept the preflight
 	list := []any{}
 	for _, f := range findings {
 		if f.Level == "fail" {
-			ok = false
+			allowed = false
 		}
 		list = append(list, obj{"level": f.Level, "message": f.Message})
 	}
+	ok := allowed
+	if *refused {
+		ok = !allowed
+	}
 	if *asJSON {
-		return boolExit(!ok), writeJSON(stdout, obj{"ok": ok, "status": status, "origin": req.Origin, "method": req.Method,
-			"request_headers": nonNilStrings(req.Headers), "credentials": req.Credentials, "findings": list})
+		res := obj{"ok": ok, "status": status, "origin": req.Origin, "method": req.Method,
+			"request_headers": nonNilStrings(req.Headers), "credentials": req.Credentials, "findings": list}
+		if *refused {
+			res["expect_refused"] = true
+			res["allowed"] = allowed
+		}
+		return boolExit(!ok), writeJSON(stdout, res)
+	}
+	if *refused {
+		fmt.Fprintf(stdout, "OPTIONS %s -> HTTP %d  (origin %s, method %s)\n", pos[0], status, req.Origin, req.Method)
+		for _, f := range findings {
+			fmt.Fprintf(stdout, "%-4s %s\n", strings.ToUpper(f.Level), f.Message)
+		}
+		if ok {
+			fmt.Fprintf(stdout, "PASS origin %s is refused, as expected\n", req.Origin)
+		} else {
+			fmt.Fprintf(stdout, "FAIL origin %s is allowed but was expected to be refused\n", req.Origin)
+		}
+		return boolExit(!ok), nil
 	}
 	fmt.Fprintf(stdout, "OPTIONS %s -> HTTP %d  (origin %s, method %s)\n", pos[0], status, req.Origin, req.Method)
 	for _, f := range findings {

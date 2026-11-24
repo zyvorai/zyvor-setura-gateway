@@ -17,7 +17,7 @@ Plans, not promises. Dates are intentionally absent.
 
 Things we know are missing, in the order we would take them:
 
-0. **Probe follow-ups** (after `split`, `cors` and request shaping): a split check for GRPCRoute and TLSRoute, a list mode for certificate and DNS expiry, and a `cors` run that asserts an origin is refused.
+0. **Probe follow-ups** (after `split`, `cors` and request shaping): a split check for GRPCRoute and TLSRoute, and DNS (domain) expiry in the `certs` list mode. The certificate list mode, `cors --expect-refused`, JSON and regex assertions and `check --retries` are done (`docs/assertions.md`).
 1. **Prove it.** Run the upstream Gateway API conformance suite on K3s and publish the
    report; watch the new controller-mode smoke (`scripts/controller-smoke.sh`, in the cluster-smoke job)
    go green for the first time; run ACME against Let's Encrypt
