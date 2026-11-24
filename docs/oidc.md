@@ -49,8 +49,10 @@ provider.
    the tokens when they have expired, and proxies the request with the claim headers.
 
 Discovery is read from `issuer/.well-known/openid-configuration` and cached for an hour. A
-document whose `issuer` differs from your setting is refused. If the provider does not
-advertise PKCE `S256` the login does not start. When the discovery document is unreachable the
+document whose `issuer` differs from your setting is refused. If the document lists
+`code_challenge_methods_supported` without `S256` the login does not start; a document that
+leaves the list out is accepted, because the gateway always sends `S256` and the provider
+rejects it at the authorization endpoint if it cannot honour it. When the discovery document is unreachable the
 login answers `503` and the check is retried at most every 10 seconds; with every endpoint
 overridden (`authorizationEndpoint`, `tokenEndpoint`, `jwksUri`) discovery is not used.
 

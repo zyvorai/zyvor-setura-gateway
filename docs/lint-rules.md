@@ -1,3 +1,5 @@
+| SET091 | error | HTTPRoute rule `retry` block is invalid and the gateway refuses it: `codes` outside 400-599, `attempts` outside 0-10, `backoff` not a duration, `perTryTimeout` not a positive duration, `jitter` outside 0-1 |
+| SET092 | warning | HTTPRoute rule `retry` block has `attempts: 0`, so it never retries |
 # Lint rules
 
 `setura lint --rules` prints the table. IDs are stable. Errors fail `lint`

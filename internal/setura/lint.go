@@ -72,6 +72,8 @@ var Rules = []struct{ ID, Severity, Summary string }{
 	{"SET075", SeverityWarning, "gRPC-web rule also has retries or a mirror, which do not apply to bridged calls"},
 	{"SET090", SeverityError, "HTTPRoute rule has filters the Gateway API rejects: URLRewrite with RequestRedirect, a repeated core filter, a filter without its configuration block, ReplacePrefixMatch on a rule that has a non-prefix match, a mismatched path modifier, or a bad redirect scheme or port"},
 	{"SET076", SeverityWarning, "listener maxConnectionsPerIP is above maxConnections, so the per-IP limit can never be reached"},
+	{"SET091", SeverityError, "HTTPRoute rule retry block is invalid, so the gateway refuses it: a code outside 400-599, attempts outside 0-10, a backoff that is not a duration, a perTryTimeout that is not a positive duration, or a jitter outside 0-1"},
+	{"SET092", SeverityWarning, "HTTPRoute rule retry block has attempts 0, so it never retries"},
 }
 
 func ruleSeverity(id string) string {
@@ -259,6 +261,7 @@ func Lint(snapshot obj) (obj, error) {
 	findings = append(findings, edgeSecRules(specs, ns)...)
 	findings = append(findings, limitsRules(specs, ns)...)
 	findings = append(findings, filterRules(specs, ns)...)
+	findings = append(findings, retryRules(specs, ns)...)
 	findings = append(findings, faultRules(specs, ns)...)
 	findings = append(findings, aiRules(specs, ns)...)
 	findings = append(findings, lbRules(snapshot, specs, ns)...)

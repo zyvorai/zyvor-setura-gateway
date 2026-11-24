@@ -83,3 +83,46 @@ func TestLintFilterCombinations(t *testing.T) {
 		t.Errorf("SET090 is an error: %s", r)
 	}
 }
+
+func TestLintRetryBlock(t *testing.T) {
+	back := []any{obj{"name": "a", "port": 80}}
+	cases := map[string]struct {
+		retry any
+		id    string
+		want  string
+	}{
+		"clean":         {obj{"attempts": 3, "backoff": "50ms", "perTryTimeout": "2s", "codes": []any{503}, "jitter": 0.2}, "", ""},
+		"zero attempts": {obj{"attempts": 0}, "SET092", "never retries"},
+		"too many":      {obj{"attempts": 11}, "SET091", "retry.attempts"},
+		"negative":      {obj{"attempts": -1}, "SET091", "retry.attempts"},
+		"bad backoff":   {obj{"backoff": "soon"}, "SET091", "retry.backoff"},
+		"negative boff": {obj{"backoff": "-1s"}, "SET091", "retry.backoff"},
+		"zero pertry":   {obj{"perTryTimeout": "0s"}, "SET091", "retry.perTryTimeout"},
+		"bad code":      {obj{"codes": []any{200}}, "SET091", "retry.codes"},
+		"bad jitter":    {obj{"jitter": 1.5}, "SET091", "retry.jitter"},
+		"not an object": {"yes", "SET091", "must be an object"},
+	}
+	for name, c := range cases {
+		rep, err := Lint(obj{"schema": snapshotSchema, "namespace": "t", "resources": obj{
+			gateway + "/gw": obj{"gatewayClassName": "x", "listeners": []any{obj{"name": "web", "protocol": "HTTP", "port": 80}}},
+			route + "/r":    obj{"parentRefs": []any{obj{"name": "gw"}}, "rules": []any{obj{"backendRefs": back, "retry": c.retry}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, f := range asList(rep["findings"]) {
+			if m := asMap(f); asStr(m["id"]) == "SET091" || asStr(m["id"]) == "SET092" {
+				got = append(got, asStr(m["id"])+" "+asStr(m["message"]))
+			}
+		}
+		if c.id == "" {
+			if len(got) != 0 {
+				t.Errorf("%s: want clean, got %v", name, got)
+			}
+			continue
+		}
+		if len(got) != 1 || !strings.HasPrefix(got[0], c.id) || !strings.Contains(got[0], c.want) {
+			t.Errorf("%s: want %s %q, got %v", name, c.id, c.want, got)
+		}
+	}
+}
