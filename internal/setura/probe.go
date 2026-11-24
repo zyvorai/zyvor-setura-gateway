@@ -90,6 +90,7 @@ type Report struct {
 	OK        bool
 	Steps     map[string]*Step
 	ElapsedMS float64
+	Attempts  int // probes made; set only when a check case retried (omitted from JSON when 0 or 1)
 }
 
 func (r *Report) Step(name string) Step { return *r.Steps[name] }
@@ -109,7 +110,11 @@ func (r *Report) MarshalJSON() ([]byte, error) {
 		fmt.Fprintf(&b, `"%s":%s`, name, step)
 	}
 	ms, _ := json.Marshal(r.ElapsedMS)
-	fmt.Fprintf(&b, `},"elapsed_ms":%s}`, ms)
+	fmt.Fprintf(&b, `},"elapsed_ms":%s`, ms)
+	if r.Attempts > 1 {
+		fmt.Fprintf(&b, `,"attempts":%d`, r.Attempts)
+	}
+	b.WriteByte('}')
 	return b.Bytes(), nil
 }
 
@@ -126,7 +131,9 @@ type ProbeOptions struct {
 	// value "*" only requires the header to be present.
 	Headers      map[string]string
 	BodyContains string
-	MaxMS        float64 // total latency budget in milliseconds; 0 disables
+	BodyMatches  string       // regular expression the body must match (see bodyassert.go)
+	JSON         []JSONAssert // JSON path expectations on the body
+	MaxMS        float64      // total latency budget in milliseconds; 0 disables
 
 	// Optional TLS client authentication and policy (see mtls.go).
 	Cert, Key      string
@@ -202,6 +209,9 @@ func Probe(o ProbeOptions) (*Report, error) {
 	if o.MaxMS < 0 || math.IsNaN(o.MaxMS) {
 		return nil, userError("max latency must not be negative")
 	}
+	if err := o.validateBody(); err != nil {
+		return nil, err
+	}
 	if o.HTTP2 && !secure {
 		return nil, userError("--http2 needs an https:// URL (ALPN h2 is negotiated over TLS)")
 	}
@@ -227,7 +237,7 @@ func Probe(o ProbeOptions) (*Report, error) {
 	if o.Backend == "" {
 		r.Steps["backend"] = &Step{{"state", "unused"}}
 	}
-	asserting := len(o.Headers) > 0 || o.BodyContains != "" || o.MaxMS > 0
+	asserting := len(o.Headers) > 0 || o.needsBody() || o.MaxMS > 0
 	if !asserting {
 		r.Steps["assert"] = &Step{{"state", "unused"}}
 	}
@@ -379,25 +389,21 @@ func Probe(o ProbeOptions) (*Report, error) {
 			stage = "assert"
 			checked := 0
 			for _, name := range sortedKeys(o.Headers) {
-				want := o.Headers[name]
-				vals := resp.Header.Values(name)
-				if len(vals) == 0 {
-					return fmt.Errorf("header %s is missing", name)
-				}
-				if got := strings.Join(vals, ", "); want != "*" && got != want {
-					return fmt.Errorf("header %s: expected %s, received %s", name, pyRepr(want), pyRepr(got))
+				if err := checkHeader(resp.Header, name, o.Headers[name]); err != nil {
+					return err
 				}
 				checked++
 			}
-			if o.BodyContains != "" {
+			if o.needsBody() {
 				body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 				if err != nil {
 					return err
 				}
-				if !bytes.Contains(body, []byte(o.BodyContains)) {
-					return fmt.Errorf("response body does not contain %s", pyRepr(o.BodyContains))
+				n, err := o.checkBody(body)
+				if err != nil {
+					return err
 				}
-				checked++
+				checked += n
 			}
 			elapsed := float64(time.Since(start).Microseconds()) / 1000
 			if o.MaxMS > 0 {

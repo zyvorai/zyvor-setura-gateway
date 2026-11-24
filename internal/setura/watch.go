@@ -282,7 +282,7 @@ func parseWatchFile(path string) ([]ProbeOptions, error) {
 		return nil, userError("check file must be a nonempty JSON array")
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
-		"headers": true, "body_contains": true, "max_ms": true,
+		"headers": true, "body_contains": true, "max_ms": true, "body_matches": true, "json": true,
 		"method": true, "allow_unsafe_method": true, "request_headers": true}
 	var out []ProbeOptions
 	for _, c := range cases {
@@ -297,6 +297,9 @@ func parseWatchFile(path string) ([]ProbeOptions, error) {
 		o := NewProbe(asStr(m["url"]))
 		o.Address, o.Backend, o.CA = str(m, "address", ""), str(m, "backend", ""), str(m, "ca", "")
 		o.BodyContains = str(m, "body_contains", "")
+		if err := applyCheckBody(m, &o); err != nil {
+			return nil, err
+		}
 		for key, dst := range map[string]*float64{"timeout": &o.Timeout, "max_ms": &o.MaxMS} {
 			if x, ok := m[key]; ok {
 				f, isNum := num(x)

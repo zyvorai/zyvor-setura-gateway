@@ -72,6 +72,14 @@ func certInfo(c *x509.Certificate) CertInfo {
 	return ci
 }
 
+// preflight validates the options without connecting.
+func (o CertsOptions) preflight() error {
+	if host, _, err := net.SplitHostPort(o.Address); err != nil || host == "" {
+		return userError("expected HOST:PORT")
+	}
+	return o.tlsOpts.validate()
+}
+
 // Certs connects to HOST:PORT, records the presented chain and verifies it.
 // The handshake itself skips verification so an invalid chain can still be
 // reported; the chain is then verified explicitly against the chosen roots.

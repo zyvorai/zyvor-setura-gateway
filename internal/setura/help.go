@@ -36,7 +36,7 @@ var helpGroups = []helpGroup{
 	{"Inspect", []helpEntry{
 		{"inspect", "ROUTE", "show route conditions and backend inventory"},
 		{"listeners", "GATEWAY", "show listener attachment and conditions"},
-		{"certs", "HOST:PORT", "show and verify the presented TLS certificate chain"},
+		{"certs", "HOST:PORT... [--file F]", "show and verify the presented TLS certificate chain; several targets give an expiry-sorted table"},
 		{"snapshot", "", "capture Gateway and HTTPRoute specs"},
 		{"map", "", "render the declared route topology"},
 		{"ui", "[--listen ADDR]", "live read-only web dashboard: route map, lint, traffic, feed"},

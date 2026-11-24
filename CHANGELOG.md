@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **JSON, regex and header assertions.** `explain --json-path "$.a.b[0]=VALUE"` (values: exact, `*`, `!=`, `>`, `>=`, `<`, `<=`, `~regex`), `--body-matches REGEX`, and header values `~REGEX` and `!` (absent); the same as `json`, `body_matches` and `headers` keys in `check` and `watch` files.
+- **`check --retries N --retry-interval D`** and per-case `retries` and `retry_interval_ms`: a failed case is probed again, and `attempts` is reported when it was.
+- **`certs` list mode.** Several `HOST:PORT` arguments or `--file FILE` print one table sorted by soonest expiry, with `--json`.
+- **`cors --expect-refused`** passes only when a browser would refuse the origin.
+- See `docs/assertions.md`.
+
 ## 0.9.1
 
 A patch release from the first end-to-end test of 0.9.0 (33 checks with real binaries and real traffic, now `make e2e`). It also carries the probe features merged from pull request #2, listed under Added below.

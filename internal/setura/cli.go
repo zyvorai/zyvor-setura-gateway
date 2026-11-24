@@ -232,6 +232,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		var headers stringList
 		fs.Var(&headers, "header", `require a response header, "Name: value" or "Name: *" for presence; repeatable`)
 		body := fs.String("body-contains", "", "require this text in the first 1 MiB of the response body")
+		bodyRe := fs.String("body-matches", "", "require the first 1 MiB of the response body to match this regular expression")
+		var jsonAsserts stringList
+		fs.Var(&jsonAsserts, "json-path", `require a JSON body value, "$.a.b[0]=VALUE" (VALUE may be *, !=x, >n, >=n, <n, <=n or ~regex; no =VALUE means present); repeatable`)
 		maxMS := fs.Float64("max-ms", 0, "fail when the whole probe takes longer than this many milliseconds")
 		cert := fs.String("cert", "", "PEM client certificate for mTLS (requires --key)")
 		key := fs.String("key", "", "PEM client private key for mTLS (requires --cert)")
@@ -255,7 +258,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 			return 0, err
 		}
 		o := ProbeOptions{Method: *method, AllowUnsafeMethod: *unsafeMethod, RequestHeaders: rh, URL: pos[0], Address: *address, CA: *ca, Backend: *backend, Status: *status, Timeout: *timeout,
-			BodyContains: *body, MaxMS: *maxMS, HTTP2: *http2,
+			BodyContains: *body, BodyMatches: *bodyRe, MaxMS: *maxMS, HTTP2: *http2,
 			Cert: *cert, Key: *key, ServerName: *sni, MinTLS: *minTLS, WarnExpiryDays: *warnDays}
 		for _, h := range headers {
 			name, value, ok := strings.Cut(h, ":")
@@ -266,6 +269,13 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				o.Headers = map[string]string{}
 			}
 			o.Headers[strings.TrimSpace(name)] = strings.TrimSpace(value)
+		}
+		for _, j := range jsonAsserts {
+			a, err := parseJSONFlag(j)
+			if err != nil {
+				return 0, err
+			}
+			o.JSON = append(o.JSON, a)
 		}
 		r, err := Probe(o)
 		if err != nil {
@@ -288,9 +298,33 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		warn := fs.Int("warn-expiry-days", 0, "exit 1 when any chain certificate expires sooner than N days")
 		timeout := fs.Float64("timeout", 5, "timeout in seconds")
 		asJSON := fs.Bool("json", false, "print JSON")
+		listFile := fs.String("file", "", "list mode: read HOST:PORT targets from FILE, one per line (- for stdin); several targets also select list mode")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
+		}
+		if *listFile != "" || len(pos) > 1 {
+			targets := pos
+			if *listFile != "" {
+				more, err := readCertTargets(*listFile, os.Stdin)
+				if err != nil {
+					return 0, err
+				}
+				targets = append(targets, more...)
+			}
+			lrep, err := CertList(targets, CertsOptions{CA: *ca, SNI: *sni, Timeout: time.Duration(*timeout * float64(time.Second)),
+				tlsOpts: tlsOpts{Cert: *cert, Key: *key, WarnExpiryDays: *warn}})
+			if err != nil {
+				return 0, err
+			}
+			if *asJSON {
+				if err := lrep.writeJSON(stdout); err != nil {
+					return 0, err
+				}
+			} else {
+				fmt.Fprint(stdout, lrep.Text())
+			}
+			return boolExit(!lrep.OK), nil
 		}
 		if err := need(pos, 1, "HOST:PORT"); err != nil {
 			return 2, err
@@ -313,9 +347,14 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		junit := fs.String("junit", "", "also write JUnit XML to FILE")
 		sarifOut := fs.String("sarif", "", "also write SARIF 2.1.0 to FILE")
 		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty, json or github (workflow annotations)")
+		retries := fs.Int("retries", 0, "probe a failed case again up to N more times (default for cases without \"retries\")")
+		retryEvery := fs.Duration("retry-interval", time.Second, "wait between retries")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
+		}
+		if *retries < 0 || *retries > maxCheckRetries || *retryEvery < 0 || *retryEvery > maxRetryWait {
+			return 2, userErrorf("--retries must be 0 to %d and --retry-interval 0 to 1m", maxCheckRetries)
 		}
 		if err := need(pos, 1, "FILE"); err != nil {
 			return 2, err
@@ -327,7 +366,7 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				return 2, ferr
 			}
 		}
-		rows, err := Check(pos[0])
+		rows, err := CheckWith(pos[0], CheckRetry{Retries: *retries, Interval: *retryEvery})
 		if err != nil {
 			return 0, err
 		}
@@ -801,8 +840,45 @@ func boolExit(failed bool) int {
 	return 0
 }
 
+// CheckRetry is the default retry policy of a check run. A case can override
+// it with "retries" and "retry_interval_ms".
+type CheckRetry struct {
+	Retries  int
+	Interval time.Duration
+}
+
+const (
+	maxCheckRetries = 20
+	maxRetryWait    = time.Minute
+)
+
 // Check runs each case in a JSON assertion file.
-func Check(path string) ([]*Report, error) {
+func Check(path string) ([]*Report, error) { return CheckWith(path, CheckRetry{Interval: time.Second}) }
+
+// retryPolicy resolves a case's retries and interval over the defaults.
+func retryPolicy(m obj, def CheckRetry) (CheckRetry, error) {
+	rp := def
+	if v, ok := m["retries"]; ok {
+		f, isNum := num(v)
+		if !isNum || f != float64(int(f)) || f < 0 || f > maxCheckRetries {
+			return rp, userErrorf("retries must be an integer from 0 to %d", maxCheckRetries)
+		}
+		rp.Retries = int(f)
+	}
+	if v, ok := m["retry_interval_ms"]; ok {
+		f, isNum := num(v)
+		if !isNum || f < 0 || time.Duration(f*float64(time.Millisecond)) > maxRetryWait {
+			return rp, userError("retry_interval_ms must be a number from 0 to 60000")
+		}
+		rp.Interval = time.Duration(f * float64(time.Millisecond))
+	}
+	return rp, nil
+}
+
+// CheckWith is Check with a default retry policy. A failed case is probed
+// again up to Retries more times, Interval apart, and reports the last
+// attempt; this absorbs eventual consistency after a rollout.
+func CheckWith(path string, def CheckRetry) ([]*Report, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -816,7 +892,8 @@ func Check(path string) ([]*Report, error) {
 		return nil, userError("check file must be a nonempty JSON array")
 	}
 	allowed := map[string]bool{"url": true, "address": true, "status": true, "backend": true, "ca": true, "timeout": true,
-		"headers": true, "body_contains": true, "max_ms": true, "http2": true}
+		"headers": true, "body_contains": true, "max_ms": true, "http2": true,
+		"body_matches": true, "json": true, "retries": true, "retry_interval_ms": true}
 	for _, k := range append(append([]string{}, mtlsCheckKeys...), requestCheckKeys...) {
 		allowed[k] = true
 	}
@@ -847,6 +924,9 @@ func Check(path string) ([]*Report, error) {
 			o.Timeout = f
 		}
 		o.BodyContains = str(m, "body_contains", "")
+		if err := applyCheckBody(m, &o); err != nil {
+			return nil, err
+		}
 		if h, ok := m["headers"]; ok {
 			hm := asMap(h)
 			if hm == nil {
@@ -881,9 +961,20 @@ func Check(path string) ([]*Report, error) {
 			}
 			o.HTTP2 = b
 		}
-		r, err := Probe(o)
+		rp, err := retryPolicy(m, def)
 		if err != nil {
 			return nil, err
+		}
+		var r *Report
+		for attempt := 1; ; attempt++ {
+			if r, err = Probe(o); err != nil {
+				return nil, err
+			}
+			r.Attempts = attempt
+			if r.OK || attempt > rp.Retries {
+				break
+			}
+			time.Sleep(rp.Interval)
 		}
 		rows = append(rows, r)
 	}
