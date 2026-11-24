@@ -332,6 +332,10 @@ Setura is complementary to the tools that read cluster state:
 | [`egctl`](https://gateway.envoyproxy.io/docs/tasks/operations/egctl/) | Envoy Gateway config translation and status | Controller-neutral client checks and rollout gates, plus a gateway of its own so Envoy is optional |
 | [Gateway API conformance suite](https://gateway-api.sigs.k8s.io/concepts/conformance) | Proving an *implementation* meets the spec | Proving *your routes* behave, on every deploy |
 
+## Built into Zyvor Kubeza
+
+[Zyvor Kubeza](https://github.com/zyvorai/zyvor-kubeza-public) is a small Kubernetes distribution for edge sites and private clouds, built on K3s, that ships Setura as its gateway in place of Traefik: the Gateway API CRDs and the controller are installed with the cluster, and `zkube doctor --smoke` sends a real request through it. You do not need Kubeza to use Setura, and Setura stays a separate product. A pre-release of Kubeza for testing is on its releases page.
+
 ## Verification
 
 `make test` runs the suite with the race detector. Socket tests use real loopback HTTP and TLS servers with a certificate generated in the test, and Kubernetes responses are fixtures. See the [verification record](docs/verification.md) for exactly what has and has not been run on a live cluster.
