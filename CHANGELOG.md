@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- **A certificate rotation caught half way no longer closes the listener.** In file mode a poll between the write of the certificate and of the key found no usable pair and stopped serving the port until the next poll. A pair that was being served and changed moments ago is now waited for (the reload is reported as failed and the old certificate keeps serving); files that still do not match after 2 seconds are applied as before.
+- **Flaky circuit breaker test.** It now waits for each state change, which the gateway records just after the client has the answer.
 - **`make e2e` on Linux.** The compression check passed an empty suffix that GNU gzip refuses; the fake-Redis check failed on a busy host because its bash server missed the 250 ms deadline; the `nc` capture backend now waits until it is listening and reads only the capture made for the request, once its headers are complete.
 
 ### Dependency upgrades (checked 2026-11-25)
