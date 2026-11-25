@@ -161,24 +161,36 @@ fakegw() { # SNAP -> $FAKEP : a second gateway used as a scripted upstream (dire
   _gw FAKEP FAKEADM fake "$@"; }
 
 # capture backend: nc answering every connection with $W/NAME.reply and saving what it got.
+listening() { # PORT : true once something listens, without connecting (nc serves one connection)
+  if command -v ss >/dev/null 2>&1; then ss -ltn "sport = :$1" 2>/dev/null | grep -q LISTEN
+  elif command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  else sleep 0.3; fi; }
 capsrv() { # NAME -> $CAPP
-  local name=$1; CAPP=$(free_port)
+  local name=$1; CAPP=$(free_port); echo "$CAPP" >"$W/capport.$name"
   ( n=0; while :; do n=$((n+1)); nc -l 127.0.0.1 "$CAPP" <"$W/$name.reply" >"$W/cap.$name.$n" 2>/dev/null; done ) &
   echo $! >>"$W/pids"
-  local i; for i in $(seq 1 50); do [ -e "$W/cap.$name.1" ] && return 0; sleep 0.1; done; return 1
+  local i; for i in $(seq 1 100); do [ -e "$W/cap.$name.1" ] && listening "$CAPP" && return 0; sleep 0.1; done; return 1
 }
-capwait() { # NAME : wait until a nc is listening (an empty capture file is the open one)
-  local i f; for i in $(seq 1 60); do
-    for f in "$W"/cap."$1".*; do [ -e "$f" ] && [ ! -s "$f" ] && return 0; done; sleep 0.1; done; return 1; }
-caplast() { # NAME -> content of the newest non-empty capture (waits briefly for it)
-  local i f best
+capnewest() { # NAME -> the highest capture number so far
+  local f n=0; for f in "$W"/cap."$1".*; do [ -e "$f" ] && [ "${f##*.}" -gt "$n" ] && n=${f##*.}; done; echo "$n"; }
+capwait() { # NAME : wait until the next nc is listening and remember its number for caplast
+  local i n p; p=$(cat "$W/capport.$1")
   for i in $(seq 1 100); do
-    # newest by number
-    best=$(ls "$W"/cap."$1".* 2>/dev/null | sort -t. -k3 -n | while read -r f; do [ -s "$f" ] && echo "$f"; done | tail -1)
-    [ -n "$best" ] && tr -d '\r' <"$best" | grep -q '^$' && { tr -d '\r' <"$best"; return 0; }
+    n=$(capnewest "$1")
+    [ "$n" -gt 0 ] && [ ! -s "$W/cap.$1.$n" ] && listening "$p" && { echo "$n" >"$W/capnext.$1"; return 0; }
     sleep 0.1
-  done
-  [ -n "$best" ] && tr -d '\r' <"$best"; return 1; }
+  done; return 1; }
+caplast() { # NAME -> the newest capture made since capwait (waits for its headers to be complete)
+  local i n min f; min=$(cat "$W/capnext.$1" 2>/dev/null || echo 1)
+  for i in $(seq 1 100); do
+    n=$(capnewest "$1")
+    while [ "$n" -ge "$min" ]; do
+      f="$W/cap.$1.$n"
+      [ -s "$f" ] && tr -d '\r' <"$f" | grep -q '^$' && { tr -d '\r' <"$f"; return 0; }
+      n=$((n-1))
+    done
+    sleep 0.1
+  done; return 1; }
 capcount() { local n=0 f; for f in "$W"/cap."$1".*; do [ -s "$f" ] && n=$((n+1)); done; echo "$n"; }
 capheader() { awk -v n="$(printf '%s' "$2" | tr 'A-Z' 'a-z'):" 'tolower($1)==n {sub(/^[^:]*: */,""); print; exit}' <<<"$1"; }
 

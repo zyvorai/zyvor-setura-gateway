@@ -18,7 +18,7 @@
 
 ### Fixed
 
-- **`make e2e` on Linux.** The compression check passed an empty suffix that GNU gzip refuses; the fake-Redis check failed on a busy host because its bash server missed the 250 ms deadline; a captured upstream request is now read only once its headers are complete.
+- **`make e2e` on Linux.** The compression check passed an empty suffix that GNU gzip refuses; the fake-Redis check failed on a busy host because its bash server missed the 250 ms deadline; the `nc` capture backend now waits until it is listening and reads only the capture made for the request, once its headers are complete.
 
 ### Dependency upgrades (checked 2026-11-25)
 
