@@ -9,6 +9,25 @@
 - **`certs` list mode.** Several `HOST:PORT` arguments or `--file FILE` print one table sorted by soonest expiry, with `--json`.
 - **`cors --expect-refused`** passes only when a browser would refuse the origin.
 - See `docs/assertions.md`.
+- **`split` for GRPCRoute and TLSRoute.** `split --grpc` (`--grpc-method`) sends unary gRPC calls over h2c or TLS and reads the identity from response metadata; `split tls://HOST:PORT` samples one handshake per connection and names the backend by its certificate (`--identity cert-cn|cert-san|cert-sha256`, `--sni`). See `docs/probe-requests.md`.
+- **`certs --domain-expiry`.** Registration expiry over RDAP in the certificate table (`--warn-domain-days`, `--rdap-url`, `--rdap-bootstrap`). Opt-in, because it sends the domain name to its registry; an unreadable date fails the run.
+- **Variables in check and watch files.** `{{name}}` from `--var`, `--vars-file` or `SETURA_VAR_name`; an undefined name stops the run (and a rollout) before anything is sent or changed. A check file that contains literal `{{name}}` text now needs a leading backslash.
+- **`bench --threshold`.** Pass conditions such as `p95<200`, `error_rate<0.01`, `rps>=50`.
+- **`watch --alert-after` and `--alert-recover-after`.** Alert only after N consecutive failed or passed probes.
+- **`setura echo` speaks gRPC.** It also accepts cleartext HTTP/2 and answers any unary call with status OK and its identity.
+
+### Fixed
+
+- **A certificate rotation caught half way no longer closes the listener.** In file mode a poll between the write of the certificate and of the key found no usable pair and stopped serving the port until the next poll. A pair that was being served and changed moments ago is now waited for (the reload is reported as failed and the old certificate keeps serving); files that still do not match after 2 seconds are applied as before.
+- **Flaky circuit breaker test.** It now waits for each state change, which the gateway records just after the client has the answer.
+- **`make e2e` on Linux.** The compression check passed an empty suffix that GNU gzip refuses; the fake-Redis check failed on a busy host because its bash server missed the 250 ms deadline; the `nc` capture backend now waits until it is listening and reads only the capture made for the request, once its headers are complete.
+
+### Dependency upgrades (checked 2026-11-25)
+
+- `conformance/` test module: `k8s.io/api`, `apimachinery`, `client-go`, `apiextensions-apiserver` and `streaming` 0.37.1 to 0.37.2, `controller-runtime` 0.25.2 to 0.25.3, `google.golang.org/grpc` 1.84.0 to 1.85.0, `gateway-api-conformance-images` 0.2.0 to 0.3.0, `prometheus/client_golang` 1.24.0 to 1.25.0, `spf13/pflag` 1.0.10 to 1.1.0, the `golang.org/x` modules and other indirect modules. The module vets and compiles; the suite itself was not run (no cluster). `k8s.io/kube-openapi` stays at the revision `apimachinery` 0.37.2 requires: the newest one does not compile with it.
+- `sigstore/cosign-installer` v4.1.3 to v4.1.4 (cosign 3.1.5) in the release and image workflows. Not run: they only run on a tag.
+- No newer major exists for `gateway-api` (v1.7.0 is the latest) or for any pinned GitHub Action. The main module still has no third-party dependencies, and Go 1.27.4 is current.
+- Still held back, for lack of a cluster to test them: Envoy Gateway v1.8.6 (v1.10.0 exists) and K3s v1.35.6 (v1.37.2 exists).
 
 ## 0.9.1
 

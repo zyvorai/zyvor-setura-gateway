@@ -248,6 +248,9 @@ func TestCircuitOpensProbesAndCloses(t *testing.T) {
 			t.Fatalf("request %d status %d, want the backend's 500", i, r.Status)
 		}
 	}
+	// The outcome is recorded when the gateway closes the upstream body, which can
+	// be just after the client has read the answer: wait for each transition.
+	waitMetric(t, s, `setura_gateway_circuit_state{backend="t/svc:80"} 1`)
 	r := get(t, s, "x.test", "/")
 	if r.Status != 503 || r.Header.Get(CircuitHeader) != CircuitOpen || f.hits.Load() != 3 {
 		t.Fatalf("status %d circuit %q hits %d, want 503/open and the backend untouched", r.Status, r.Header.Get(CircuitHeader), f.hits.Load())
@@ -260,6 +263,7 @@ func TestCircuitOpensProbesAndCloses(t *testing.T) {
 	if r := get(t, s, "x.test", "/"); r.Status != 500 || f.hits.Load() != 4 {
 		t.Fatalf("probe: status %d hits %d, want the backend's 500 (4th hit)", r.Status, f.hits.Load())
 	}
+	waitMetric(t, s, `setura_gateway_circuit_opened_total{backend="t/svc:80"} 2`)
 	if r := get(t, s, "x.test", "/"); r.Status != 503 {
 		t.Fatalf("a failed probe must re-open the circuit, got %d", r.Status)
 	}
@@ -269,6 +273,7 @@ func TestCircuitOpensProbesAndCloses(t *testing.T) {
 	if r := get(t, s, "x.test", "/"); r.Status != 200 {
 		t.Fatalf("successful probe: %d", r.Status)
 	}
+	waitMetric(t, s, `setura_gateway_circuit_state{backend="t/svc:80"} 0`)
 	if r := get(t, s, "x.test", "/"); r.Status != 200 {
 		t.Fatalf("closed circuit: %d", r.Status)
 	}

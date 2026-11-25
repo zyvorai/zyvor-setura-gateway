@@ -104,3 +104,18 @@ rule; the finding text says what it believes the API requires.
 - No new dependency (standard library only); the CONTRIBUTING rule holds.
 - Exit codes keep their meaning: `0` passed, `1` observed failure, `2` usage or setup.
 - No data leaves the machine: header values are never echoed in errors.
+
+## Research pass 2026-11-25: what comparable tools check that Setura did not
+
+Pages fetched on 2026-11-25. Items marked **[U]** came from a search summary or a page that
+was only partly read.
+
+| Source | What was read | Setura decision |
+| --- | --- | --- |
+| [Gatus README](https://github.com/TwiN/gatus) | Placeholders `[DOMAIN_EXPIRATION]`, `[CERTIFICATE_EXPIRATION]`, `[DNS_RCODE]`; alert `failure-threshold` (default 3) and `success-threshold` (default 2); maintenance windows. How Gatus looks domains up (WHOIS or RDAP) was not in the part read **[U]**. | **Built**: `certs --domain-expiry` over RDAP; `watch --alert-after` and `--alert-recover-after` (default 1, so behaviour is unchanged). Maintenance windows and DNS record checks: not built. |
+| [Hurl templates](https://hurl.dev/docs/templates.html), [running tests](https://hurl.dev/docs/running-tests.html), [asserts](https://hurl.dev/docs/asserting-response.html) | `{{name}}` variables from `--variable`, `--variables-file`, `HURL_VARIABLE_name`; `--secret` redaction; JUnit, TAP, HTML and JSON reports; `--repeat`. | **Built**: variables in check and watch files with the same three sources. Secrets redaction is not offered and the docs say so. Setura already has JUnit and SARIF. |
+| [k6 thresholds](https://grafana.com/docs/k6/latest/using-k6/thresholds/) | `<metric> <operator> <value>`, `avg`, `p(N)`, `rate`, `count`; any failed threshold gives a non-zero exit; `abortOnFail`. | **Built**: `bench --threshold`. `abortOnFail` not built: `bench` runs are short and bounded. |
+| [gwctl README](https://github.com/kubernetes-sigs/gwctl) | `get`, `describe` with effective policies, `analyze` of a manifest before apply, DOT graphs; experimental. | Not built: `lint`, `pr-check`, `impact` and `map` cover most of it. Effective-policy display remains an idea. |
+| [Ingress2Gateway 1.0](https://kubernetes.io/blog/2026/03/20/ingress2gateway-1-0-release) | `print` with providers and emitters; warnings for untranslatable annotations; SSL redirect default; case-insensitive regex paths; behaviour tests against live controllers. | `migrate convert` already reports unsupported annotations and emits the default SSL redirect. Nothing built; its behavioural-equivalence testing is what `migrate check --ingress-url --gateway-url` does for one deployment. |
+| [GRPCRoute](https://gateway-api.sigs.k8s.io/reference/api-types/grpcroute/), [TLSRoute](https://gateway-api.sigs.k8s.io/reference/api-types/tlsroute/), [gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md) | `backendRefs` weights; TLSRoute matches on SNI; the outcome of a call is `grpc-status` in trailers (or a trailers-only response). | **Built**: `split --grpc` and `split tls://`. |
+| [RFC 9083](https://www.rfc-editor.org/rfc/rfc9083.html), [RFC 9224](https://www.rfc-editor.org/rfc/rfc9224.html), [IANA bootstrap](https://data.iana.org/rdap/dns.json) | `events[].eventAction = "expiration"`; longest label match, HTTPS first. The bootstrap file listed `com`, `net`, `dev` and `ai`, and no entry for `io`. | **Built** as above; a TLD without a server is `unknown`, which fails. Not tried against a real registry. |

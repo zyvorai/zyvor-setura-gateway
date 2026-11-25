@@ -180,3 +180,53 @@ func withQuery(path, query string) string {
 // established connections stay. OCSP staples are keyed by certificate, not by
 // table, so a reload that keeps a certificate keeps its staple, and a renewed
 // certificate is fetched right after the swap (see ocspSync).
+
+// certSettle is how long a certificate and key that stopped matching are taken
+// to be a rotation that is still being written.
+var certSettle = 2 * time.Second
+
+// workingFilePairs lists the file-based secrets that load.
+func workingFilePairs(c *Config) map[string]bool {
+	out := map[string]bool{}
+	for k, d := range c.Secrets {
+		if d.CertFile != "" && d.KeyFile != "" {
+			if _, err := d.load(); err == nil {
+				out[k] = true
+			}
+		}
+	}
+	return out
+}
+
+// rotationInProgress reports a secret that was being served, whose two files
+// changed moments ago and do not form a pair. Rotating a certificate takes two
+// writes; applying the state between them would close the listener, so the
+// previous configuration keeps serving until the files agree or have been left
+// alone for certSettle.
+func (s *Server) rotationInProgress(ld *Loaded) error {
+	s.mu.Lock()
+	served := s.filePairs // replaced, never modified, by Apply
+	s.mu.Unlock()
+	for _, k := range sortedKeys(ld.Config.Secrets) {
+		d := ld.Config.Secrets[k]
+		if !served[k] || d.CertFile == "" || d.KeyFile == "" {
+			continue
+		}
+		cert, cerr := os.Stat(d.CertFile)
+		key, kerr := os.Stat(d.KeyFile)
+		if cerr != nil || kerr != nil {
+			continue
+		}
+		newest := cert.ModTime()
+		if key.ModTime().After(newest) {
+			newest = key.ModTime()
+		}
+		if age := time.Since(newest); age >= certSettle || age <= -certSettle {
+			continue
+		}
+		if _, err := d.load(); err != nil {
+			return fmt.Errorf("secret %s: waiting for the certificate and key files to match: %w", k, err)
+		}
+	}
+	return nil
+}

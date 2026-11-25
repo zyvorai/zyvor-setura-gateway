@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -141,6 +142,60 @@ func TestFileModeRotatesListenerCertificateWithoutDroppingConnections(t *testing
 	waitFor(t, "the rotated certificate to be served", func() bool { return serialOf() != before })
 	if r := req(t, keep, "https", "GET", "a.test", "/", ""); r.Status != 200 {
 		t.Fatalf("the established client broke across the rotation: %d", r.Status)
+	}
+}
+
+func TestHalfWrittenCertificateRotationKeepsTheListener(t *testing.T) {
+	defer func(d time.Duration) { certSettle = d }(certSettle)
+	certSettle = time.Hour // set before the server starts, restored after it stops
+	p := newPKI(t)
+	cfg, certFile, keyFile, _ := certConfig(t, p, 2*time.Hour)
+	s := New(Options{PortMap: map[int]int{8443: 0}, Admin: "off", Rand: seededRand(1)})
+	defer s.Close()
+	src := FileSource{cfg}
+	reload := func() (bool, error) { return s.Reload(context.Background(), src) }
+	if _, err := reload(); err != nil {
+		t.Fatal(err)
+	}
+	addr := s.Addr(8443)
+	serial := func() string {
+		c, err := tls.Dial("tcp", s.Addr(8443), &tls.Config{RootCAs: p.pool, ServerName: "a.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		return c.ConnectionState().PeerCertificates[0].SerialNumber.String()
+	}
+	before := serial()
+	c, k := p.issue("a.test")
+	writeFile(t, certFile, c) // the key still belongs to the old certificate
+	for i := 0; i < 2; i++ {
+		if changed, err := reload(); changed || err == nil || !strings.Contains(err.Error(), "waiting for the certificate and key") {
+			t.Fatalf("half-written rotation: changed %v err %v", changed, err)
+		}
+	}
+	if s.Addr(8443) != addr || serial() != before || s.Status().LastReload.OK {
+		t.Fatal("the previous certificate must keep serving and the reload must be reported")
+	}
+	writeFile(t, keyFile, k)
+	if changed, err := reload(); !changed || err != nil {
+		t.Fatalf("completed rotation: %v %v", changed, err)
+	}
+	if s.Addr(8443) != addr || serial() == before {
+		t.Fatal("the new certificate is not served on the same socket")
+	}
+	// A pair that stays broken is applied once the files have settled, as before.
+	c2, _ := p.issue("a.test")
+	writeAged(t, certFile, c2, 3*time.Hour)
+	old := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(keyFile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := reload(); !changed || err != nil {
+		t.Fatalf("settled broken pair: %v %v", changed, err)
+	}
+	if s.Addr(8443) != "" {
+		t.Fatal("a listener without a usable certificate must not serve")
 	}
 }
 

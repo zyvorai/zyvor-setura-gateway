@@ -268,7 +268,10 @@ func (w *watcher) summary() {
 }
 
 // parseWatchFile reads a checks.json style file into probe options without probing.
-func parseWatchFile(path string) ([]ProbeOptions, error) {
+func parseWatchFile(path string) ([]ProbeOptions, error) { return parseWatchFileVars(path, nil) }
+
+// parseWatchFileVars is parseWatchFile with variables for {{name}} references.
+func parseWatchFileVars(path string, vars *Vars) ([]ProbeOptions, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -276,6 +279,9 @@ func parseWatchFile(path string) ([]ProbeOptions, error) {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, userErrorf("invalid check file JSON: %v", err)
+	}
+	if v, err = vars.expand(v); err != nil {
+		return nil, err
 	}
 	cases := asList(v)
 	if len(cases) == 0 {
@@ -402,6 +408,11 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 	alertSlack := fs.String("alert-slack", "", "post to this Slack incoming webhook URL on failure and recovery (secret; also from $SETURA_ALERT_SLACK)")
 	alertCooldown := fs.Duration("alert-cooldown", defaultAlertCooldown, "minimum time between alerts for one target")
 	alertRetries := fs.Int("alert-retries", defaultAlertRetries, "delivery retries with exponential backoff")
+	alertAfter := fs.Int("alert-after", 1, "alert only after this many consecutive failed probes of a target")
+	recoverAfter := fs.Int("alert-recover-after", 1, "announce recovery only after this many consecutive passed probes")
+	varsFile := fs.String("vars-file", "", "name=value lines for {{name}} references in --file")
+	var varItems stringList
+	fs.Var(&varItems, "var", "name=value for {{name}} references in --file; repeatable (also SETURA_VAR_name)")
 	backend := fs.String("backend", "", "expected X-Setura-Backend response header")
 	ca := fs.String("ca", "", "trusted PEM CA bundle")
 	address := fs.String("address", "", "connect to this numeric IP")
@@ -416,8 +427,15 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 		return 2, err
 	}
 	var targets []ProbeOptions
+	if *file == "" && (len(varItems) > 0 || *varsFile != "") {
+		return 0, userError("--var and --vars-file apply to --file")
+	}
 	if *file != "" {
-		if targets, err = parseWatchFile(*file); err != nil {
+		vars, err := newVars(varItems, *varsFile)
+		if err != nil {
+			return 0, err
+		}
+		if targets, err = parseWatchFileVars(*file, vars); err != nil {
 			return 0, err
 		}
 	}
@@ -444,7 +462,14 @@ func watchCommand(rest []string, stdout, stderr io.Writer) (int, error) {
 	}
 	w := newWatcher(targets, *interval, stdout)
 	w.count, w.duration = *count, *duration
-	if w.alerts, err = newAlerter(alertConfig{Webhook: *alertWebhook, Slack: *alertSlack, Cooldown: *alertCooldown, Retries: *alertRetries}, stderr); err != nil {
+	if *alertAfter < 1 || *recoverAfter < 1 {
+		return 0, userError("--alert-after and --alert-recover-after must be at least 1")
+	}
+	if *alertWebhook == "" && *alertSlack == "" && (*alertAfter > 1 || *recoverAfter > 1) {
+		return 0, userError("--alert-after and --alert-recover-after need --alert-webhook or --alert-slack")
+	}
+	if w.alerts, err = newAlerter(alertConfig{Webhook: *alertWebhook, Slack: *alertSlack, Cooldown: *alertCooldown, Retries: *alertRetries,
+		FailAfter: *alertAfter, RecoverAfter: *recoverAfter}, stderr); err != nil {
 		return 0, err
 	}
 	w.uiAddr, w.uiToken, w.uiRedact = *uiAddr, *uiToken, *uiRedact

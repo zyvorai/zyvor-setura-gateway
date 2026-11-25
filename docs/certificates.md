@@ -74,6 +74,12 @@ in this repository, so start with the default staging directory and check `/acme
 | Kubernetes, Secrets and ConfigMaps | Every Secret or ConfigMap the last load fetched (listener certificates, client CA bundles, BackendTLSPolicy CAs, backend client certificates) gets a watch selected by `fieldSelector=metadata.name=NAME` in its namespace. A cert-manager renewal produces an event and a reload within a second or two. Watches follow the references: new ones start, dropped ones stop. `--resync` stays as a safety net. `--poll` disables watches. |
 | ACME | The manager swaps certificates itself. |
 
+In file mode, a certificate and key that were being served and stop matching within 2 seconds
+of being written are treated as a rotation in progress: the previous pair keeps serving and
+`/status` reports the reload as waiting. A pair still broken after that is applied, which leaves
+its listener without a certificate. Writing both files and renaming them into place is still the
+best way to rotate.
+
 A reload builds a new routing table; listener sockets and established connections stay. TLS
 certificates are looked up per handshake, so the next handshake after the swap uses the new
 certificate. OCSP staples are keyed by certificate, so a reload that keeps a certificate keeps

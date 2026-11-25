@@ -49,5 +49,8 @@ make e2e E2E_ARGS="--list"            # list the checks
 make e2e E2E_ARGS="--only doctor"     # one check, by name or number (repeatable)
 ```
 
+The `split_protocols` check also runs `openssl s_server`, and `redis_ratelimit` raises the
+gateway's Redis deadline because its bash fake can miss 250 ms on a busy machine.
+
 The script exits 1 when any check fails. Each fixed behaviour has a Go regression test as well;
 the e2e run proves the same thing through the real binaries.

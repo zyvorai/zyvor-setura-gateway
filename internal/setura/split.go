@@ -163,8 +163,39 @@ type SplitOptions struct {
 	Expect      []SplitExpectation
 	Requests    int
 	Concurrency int
-	Identity    string  // response header carrying the backend identity
+	Identity    string  // response header (or gRPC metadata) carrying the backend identity
 	MaxErrRate  float64 // share of failed requests tolerated
+
+	// GRPC sends gRPC calls instead of HTTP requests (GRPCRoute weights).
+	GRPC       bool
+	GRPCMethod string // default grpc.health.v1.Health/Check
+	// A tls://HOST:PORT URL handshakes only (TLSRoute passthrough weights).
+	CertIdentity string // cert-cn (default), cert-san or cert-sha256
+	SNI          string // default: the URL host
+}
+
+// httpSampler sends one probe and attributes it by the identity header.
+func httpSampler(o SplitOptions) splitSampler {
+	return func() (splitSample, error) {
+		p := o.Probe
+		var ident string
+		p.capture = func(r *http.Response) {
+			vals := r.Header.Values(o.Identity)
+			if len(vals) == 0 {
+				ident = splitNone
+			} else {
+				ident = clipStr(strings.Join(vals, ", "), maxSplitNameLen)
+			}
+		}
+		rep, err := Probe(p)
+		switch {
+		case err != nil:
+			return splitSample{}, err
+		case !rep.OK:
+			return splitSample{failed: failureReason(rep)}, nil
+		}
+		return splitSample{ident: ident}, nil
+	}
 }
 
 // RunSplit sends o.Requests probes and judges the identity distribution.
@@ -186,8 +217,28 @@ func RunSplit(o SplitOptions) (obj, error) {
 			return nil, userError("--identity-header must be a valid header name")
 		}
 	}
+	tlsMode := strings.HasPrefix(o.Probe.URL, "tls://")
+	if tlsMode && o.GRPC {
+		return nil, userError("a gRPC split needs an http:// or https:// URL")
+	}
 	if need := minSplitRequests(o.Expect); o.Requests < need {
 		return nil, userErrorf("%d requests cannot verify a share this small: use at least %d (the smallest nonzero share needs an expected count of %d)", o.Requests, need, int(minSplitExpected))
+	}
+	var sample splitSampler
+	var err error
+	switch {
+	case tlsMode:
+		if o.CertIdentity == "" {
+			o.CertIdentity = "cert-cn"
+		}
+		sample, err = tlsSampler(o)
+	case o.GRPC:
+		sample, err = grpcSampler(o)
+	default:
+		sample = httpSampler(o)
+	}
+	if err != nil {
+		return nil, err
 	}
 	counts := map[string]int{}
 	var mu sync.Mutex
@@ -202,19 +253,7 @@ func RunSplit(o SplitOptions) (obj, error) {
 		go func() {
 			defer wg.Done()
 			for range jobs {
-				p := o.Probe
-				var ident string
-				var have bool
-				p.capture = func(r *http.Response) {
-					have = true
-					vals := r.Header.Values(o.Identity)
-					if len(vals) == 0 {
-						ident = splitNone
-					} else {
-						ident = clipStr(strings.Join(vals, ", "), maxSplitNameLen)
-					}
-				}
-				rep, err := Probe(p)
+				got, err := sample()
 				mu.Lock()
 				switch {
 				case err != nil:
@@ -222,13 +261,13 @@ func RunSplit(o SplitOptions) (obj, error) {
 					if fatal == nil {
 						fatal = err
 					}
-				case !rep.OK:
+				case got.failed != "":
 					nerr++
 					if firstErr == "" {
-						firstErr = failureReason(rep)
+						firstErr = got.failed
 					}
-				case have:
-					counts[ident]++
+				default:
+					counts[got.ident]++
 					attributed++
 				}
 				mu.Unlock()
@@ -249,7 +288,17 @@ func RunSplit(o SplitOptions) (obj, error) {
 	res["requests"] = o.Requests
 	res["errors"] = nerr
 	res["error_rate"] = math.Round(errRate*10000) / 10000
-	res["identity_header"] = o.Identity
+	switch {
+	case tlsMode:
+		res["protocol"], res["identity"] = "tls", o.CertIdentity
+		if len(counts) == 1 && nonZeroShares(o.Expect) > 1 && res["ok"] != true {
+			res["hint"] = "every connection presented the same certificate identity: the listener may terminate TLS, or the backends share a certificate (then try --identity cert-sha256, or split over https:// with an identity header)"
+		}
+	case o.GRPC:
+		res["protocol"], res["identity_header"] = "grpc", o.Identity
+	default:
+		res["identity_header"] = o.Identity
+	}
 	res["elapsed_ms"] = round1(float64(time.Since(start).Microseconds()) / 1000)
 	if firstErr != "" {
 		res["first_error"] = firstErr
@@ -263,6 +312,16 @@ func RunSplit(o SplitOptions) (obj, error) {
 		res["inconclusive"] = fmt.Sprintf("only %d responses were usable, fewer than the %d this split needs", attributed, minSplitRequests(o.Expect))
 	}
 	return res, nil
+}
+
+func nonZeroShares(exp []SplitExpectation) int {
+	n := 0
+	for _, e := range exp {
+		if e.Share > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // failureReason returns the first failed stage's reason from a report.
@@ -285,6 +344,10 @@ func runSplit(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 	conc := fs.Int("concurrency", 4, "parallel workers")
 	identity := fs.String("identity-header", "X-Setura-Backend", "response header that names the backend")
 	maxErr := fs.Float64("max-error-rate", 0.01, "exit 1 when more than this share (0..1) of requests fail")
+	useGRPC := fs.Bool("grpc", false, "send gRPC calls (GRPCRoute weights): http:// uses h2c, https:// uses TLS")
+	grpcMethod := fs.String("grpc-method", "", "gRPC method to call with an empty message, package.Service/Method (implies --grpc; default "+grpcHealthMethod+"; others need --allow-unsafe-method)")
+	certID := fs.String("identity", "cert-cn", "tls:// URLs: what names the backend, cert-cn, cert-san or cert-sha256 (first 16 hex digits)")
+	sni := fs.String("sni", "", "tls:// URLs: TLS SNI and verification name (default: the URL host)")
 	method := fs.String("method", "", "request method (GET, HEAD, OPTIONS; others need --allow-unsafe-method)")
 	unsafeMethod := fs.Bool("allow-unsafe-method", false, "allow POST, PUT, PATCH and DELETE (sent with no body)")
 	var expect, reqHeaders stringList
@@ -299,6 +362,29 @@ func runSplit(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 		fmt.Fprintln(stderr, "setura split: expected URL")
 		return 2, usageError{"URL"}
 	}
+	grpcMode := *useGRPC || *grpcMethod != ""
+	tlsMode := strings.HasPrefix(pos[0], "tls://")
+	// A flag that the chosen protocol would ignore is a mistake, not a default.
+	var ignored []string
+	fs.Visit(func(f *flag.Flag) {
+		switch {
+		case tlsMode:
+			switch f.Name {
+			case "status", "method", "allow-unsafe-method", "request-header", "identity-header", "http2":
+				ignored = append(ignored, "--"+f.Name)
+			}
+		case grpcMode:
+			switch f.Name {
+			case "status", "method", "http2", "identity", "sni":
+				ignored = append(ignored, "--"+f.Name)
+			}
+		case f.Name == "identity" || f.Name == "sni":
+			ignored = append(ignored, "--"+f.Name)
+		}
+	})
+	if len(ignored) > 0 {
+		return 0, userErrorf("%s does not apply to this kind of split (tls:// URLs use --identity and --sni; HTTP and gRPC use --identity-header)", strings.Join(ignored, ", "))
+	}
 	exp, err := ParseSplitExpectations(expect)
 	if err != nil {
 		return 0, err
@@ -310,7 +396,12 @@ func runSplit(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 	p := NewProbe(pos[0])
 	p.Address, p.CA, p.Status, p.Timeout, p.HTTP2 = *address, *ca, *status, *timeout, *http2
 	p.Method, p.AllowUnsafeMethod, p.RequestHeaders = *method, *unsafeMethod, rh
-	res, err := RunSplit(SplitOptions{Probe: p, Expect: exp, Requests: *requests, Concurrency: *conc, Identity: *identity, MaxErrRate: *maxErr})
+	so := SplitOptions{Probe: p, Expect: exp, Requests: *requests, Concurrency: *conc, Identity: *identity, MaxErrRate: *maxErr,
+		GRPC: grpcMode, GRPCMethod: *grpcMethod, SNI: *sni}
+	if tlsMode {
+		so.CertIdentity = *certID
+	}
+	res, err := RunSplit(so)
 	if err != nil {
 		return 0, err
 	}
@@ -319,7 +410,11 @@ func runSplit(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 			return 0, err
 		}
 	} else {
-		fmt.Fprintf(stdout, "%v responses attributed of %v requests (%v errors) via %v\n", res["samples"], res["requests"], res["errors"], res["identity_header"])
+		via := res["identity_header"]
+		if tlsMode {
+			via = res["identity"]
+		}
+		fmt.Fprintf(stdout, "%v responses attributed of %v requests (%v errors) via %v\n", res["samples"], res["requests"], res["errors"], via)
 		for _, r := range asList(res["backends"]) {
 			m := asMap(r)
 			mark := "ok  "
@@ -337,6 +432,9 @@ func runSplit(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 		}
 		if s, ok := res["inconclusive"]; ok {
 			fmt.Fprintf(stdout, "INCONCLUSIVE: %v\n", s)
+		}
+		if s, ok := res["hint"]; ok {
+			fmt.Fprintf(stdout, "hint: %v\n", s)
 		}
 		if res["error_budget_exceeded"] == true {
 			fmt.Fprintf(stdout, "ERROR BUDGET EXCEEDED: %v of requests failed, allowed %v\n", res["error_rate"], *maxErr)

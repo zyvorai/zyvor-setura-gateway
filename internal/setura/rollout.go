@@ -361,6 +361,10 @@ func (r *rollout) run(ctx context.Context) (*rolloutResult, int, error) {
 		if json.Unmarshal(raw, &v) != nil || len(asList(v)) == 0 {
 			return nil, 2, userError("checks file must be a nonempty JSON array")
 		}
+		// An undefined {{variable}} must stop the rollout before anything changes.
+		if _, err := (*Vars)(nil).expand(v); err != nil {
+			return nil, 2, err
+		}
 	}
 
 	lintOK, lintText := true, ""

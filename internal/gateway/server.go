@@ -135,20 +135,23 @@ type Server struct {
 	conns        *connTable   // nil when connection history is disabled
 	inflight     atomic.Int64 // requests inside the data-plane handler, until their log line is queued
 
-	mu       sync.Mutex
-	ports    map[int]*boundPort
-	seq      int64
-	hash     string
-	rejected string
-	status   atomic.Pointer[StatusDoc]
-	health   context.CancelFunc
-	mirrorWG sync.WaitGroup
-	shadow   shadowState
-	hist     *rateHistory
-	trusted  trustedNets
-	shadowP  *shadowPersist
-	latency  latencyStats
-	ext      extStats // auth, CORS, session, backend TLS counters (metrics_ext.go)
+	mu    sync.Mutex
+	ports map[int]*boundPort
+	seq   int64
+	hash  string
+	// filePairs names the secrets whose certificate and key files formed a pair
+	// in the configuration being served (see certwatch.go).
+	filePairs map[string]bool
+	rejected  string
+	status    atomic.Pointer[StatusDoc]
+	health    context.CancelFunc
+	mirrorWG  sync.WaitGroup
+	shadow    shadowState
+	hist      *rateHistory
+	trusted   trustedNets
+	shadowP   *shadowPersist
+	latency   latencyStats
+	ext       extStats // auth, CORS, session, backend TLS counters (metrics_ext.go)
 
 	res            *resilience
 	tr, trInsecure *http.Transport
@@ -461,6 +464,7 @@ func (s *Server) Apply(ld *Loaded) error {
 	doc.LastReload = ReloadInfo{OK: true, Time: now.UTC().Format(time.RFC3339)}
 	s.status.Store(doc)
 	s.hash, s.rejected = ld.Hash, ""
+	s.filePairs = workingFilePairs(cfg)
 	s.ready.Store(true)
 	return nil
 }
@@ -549,6 +553,10 @@ func (s *Server) Reload(ctx context.Context, src Source) (bool, error) {
 	if same {
 		s.markReloadOK()
 		return false, nil
+	}
+	if err := s.rotationInProgress(ld); err != nil {
+		s.recordFailure(err) // not remembered as rejected: the next poll looks again
+		return false, err
 	}
 	if err := s.lintGate(ld); err != nil {
 		s.mu.Lock()

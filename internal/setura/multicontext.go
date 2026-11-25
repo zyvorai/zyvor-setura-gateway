@@ -276,6 +276,9 @@ func multiMode(cmd, format string, tty bool) (string, error) {
 	return "", userErrorf("with multiple contexts, setura %s --format must be auto, pretty or json", cmd)
 }
 
+// checkValueFlags are the flags of "setura check" that take a separate value.
+var checkValueFlags = map[string]bool{"format": true, "retries": true, "retry-interval": true, "var": true, "vars-file": true}
+
 // substituteCheckFile writes a copy of the check file with {context} replaced
 // and returns args pointing at it. On any problem the args are returned as is
 // so the sub-run reports the underlying error itself.
@@ -286,6 +289,10 @@ func substituteCheckFile(args []string, ctx, dst string) []string {
 			idx = i
 			break
 		}
+		// "--var a=b" and the like: the next argument is the flag's value.
+		if checkValueFlags[strings.TrimLeft(args[i], "-")] {
+			i++
+		}
 	}
 	if idx < 0 {
 		return args
@@ -295,7 +302,8 @@ func substituteCheckFile(args []string, ctx, dst string) []string {
 		return args
 	}
 	q, _ := json.Marshal(ctx)
-	body := strings.ReplaceAll(string(raw), "{context}", string(q[1:len(q)-1]))
+	// "{{context}}" is a variable reference, not the context placeholder.
+	body := strings.NewReplacer("{{context}}", "{{context}}", "{context}", string(q[1:len(q)-1])).Replace(string(raw))
 	if os.WriteFile(dst, []byte(body), 0o600) != nil {
 		return args
 	}
