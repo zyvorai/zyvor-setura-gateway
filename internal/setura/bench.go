@@ -19,6 +19,7 @@ type BenchOptions struct {
 	Duration    time.Duration // 0 means no time limit
 	MaxP99MS    float64       // 0 disables
 	MaxErrRate  float64       // negative disables; 0..1 otherwise
+	Thresholds  []Threshold   // every one must hold
 }
 
 // percentile uses the nearest-rank method on sorted samples.
@@ -138,6 +139,10 @@ func Bench(o BenchOptions) (obj, error) {
 	if violations == nil {
 		violations = []any{}
 	}
+	thresholds, failed := evalThresholds(o.Thresholds, benchStats{latencies: latencies, sum: sum, failures: failures, seconds: elapsed.Seconds()})
+	for _, f := range failed {
+		violations = append(violations, f)
+	}
 	res := obj{
 		"url": o.Probe.URL, "ok": len(violations) == 0, "requests": total, "concurrency": o.Concurrency,
 		"errors": failures, "error_rate": math.Round(rate*10000) / 10000,
@@ -145,6 +150,9 @@ func Bench(o BenchOptions) (obj, error) {
 		"latency_ms": obj{"min": round1(percentile(latencies, 0)), "mean": 0.0, "p50": round1(percentile(latencies, 50)),
 			"p90": round1(percentile(latencies, 90)), "p99": round1(p99), "max": round1(percentile(latencies, 100))},
 		"status": hist, "violations": violations,
+	}
+	if thresholds != nil {
+		res["thresholds"] = thresholds
 	}
 	if total > 0 {
 		asMap(res["latency_ms"])["mean"] = round1(sum / float64(total))
@@ -170,6 +178,8 @@ func runBench(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 	maxP99 := fs.Float64("max-p99-ms", 0, "exit 1 when p99 latency exceeds this many milliseconds")
 	maxErr := fs.Float64("max-error-rate", -1, "exit 1 when the error rate (0..1) exceeds this")
 	asJSON := fs.Bool("json", false, "print JSON")
+	var exprs stringList
+	fs.Var(&exprs, "threshold", `pass condition such as "p95<200", "avg<100", "error_rate<0.01" or "rps>=50"; repeatable, all must hold`)
 	pos, err := parse(fs, rest)
 	if err != nil {
 		return 2, err
@@ -184,7 +194,11 @@ func runBench(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 	}
 	p := NewProbe(pos[0])
 	p.Address, p.CA, p.Status, p.Timeout, p.HTTP2 = *address, *ca, *status, *timeout, *http2
-	res, err := Bench(BenchOptions{Probe: p, Requests: n, Concurrency: *conc, Duration: *dur, MaxP99MS: *maxP99, MaxErrRate: *maxErr})
+	ts, err := ParseThresholds(exprs)
+	if err != nil {
+		return 0, err
+	}
+	res, err := Bench(BenchOptions{Probe: p, Requests: n, Concurrency: *conc, Duration: *dur, MaxP99MS: *maxP99, MaxErrRate: *maxErr, Thresholds: ts})
 	if err != nil {
 		return 0, err
 	}
@@ -202,6 +216,11 @@ func runBench(fs *flag.FlagSet, rest []string, stdout, stderr io.Writer) (int, e
 		}
 		if s, ok := res["first_error"]; ok {
 			fmt.Fprintf(stdout, "first error: %v\n", s)
+		}
+		for _, r := range asList(res["thresholds"]) {
+			if m := asMap(r); m["ok"] == true {
+				fmt.Fprintf(stdout, "threshold ok: %v (observed %v)\n", m["expr"], m["observed"])
+			}
 		}
 		for _, v := range asList(res["violations"]) {
 			fmt.Fprintf(stdout, "BUDGET EXCEEDED: %v\n", v)

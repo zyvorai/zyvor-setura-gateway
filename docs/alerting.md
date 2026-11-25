@@ -11,12 +11,20 @@
 | `--alert-slack URL` | POST a Slack incoming-webhook message |
 | `--alert-cooldown D` | minimum time between alerts for one target, default `1m` |
 | `--alert-retries N` | delivery retries after the first attempt, default `3`, at most 10 |
+| `--alert-after N` | consecutive failed probes before a `failure` is sent, default `1`, at most 1000 |
+| `--alert-recover-after N` | consecutive passed probes before a `recovery` is sent, default `1` |
 
 Both URLs may also come from `SETURA_ALERT_WEBHOOK` and `SETURA_ALERT_SLACK`, which keeps them out of the process list. Either, or both, can be set.
 
 ### Transitions only
 
 Alerts are sent when a target goes from passing to failing (`failure`) and from failing back to passing (`recovery`). A target that keeps failing does not alert again. A target whose first probe passes sends nothing; one whose first probe fails sends a `failure`.
+
+To ignore single blips, raise the streaks:
+
+    setura watch --file checks.json --alert-slack "$URL" --alert-after 3 --alert-recover-after 2
+
+With `--interval 10s` this reports a failure after about 30 seconds of failing probes. Any passed probe restarts the failure count, and any failed one restarts the recovery count. The generic JSON payload then carries `consecutive`, the streak that raised the alert. The streaks affect alerts only: the console, history, metrics and exit status still see every probe.
 
 The cooldown spaces alerts per target. A transition inside the cooldown is held back and reconsidered on each later probe, so a flap that settles back to the state recipients already know about produces no message at all, and a real change goes out once the cooldown ends. Alerts are delivered in the background, so slow endpoints do not delay probing; `watch` waits for pending deliveries before it exits.
 

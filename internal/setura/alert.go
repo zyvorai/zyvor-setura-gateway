@@ -18,6 +18,7 @@ const (
 	defaultAlertRetries  = 3
 	alertBackoffBase     = 500 * time.Millisecond
 	alertRequestTimeout  = 10 * time.Second
+	maxAlertStreak       = 1000
 )
 
 // alertSink is one notification destination. Its URL is a secret and must
@@ -33,6 +34,10 @@ type alertConfig struct {
 	Slack    string
 	Cooldown time.Duration
 	Retries  int // retries after the first attempt
+	// Consecutive failed (or passed) probes before a failure (or recovery) is
+	// announced; 0 means 1.
+	FailAfter    int
+	RecoverAfter int
 }
 
 // alertEvent is one transition delivered to the sinks.
@@ -43,12 +48,17 @@ type alertEvent struct {
 	Reason    string
 	ElapsedMS float64
 	Time      time.Time
+	// Consecutive is the length of the streak that raised the alert, set only
+	// when a threshold above 1 applies.
+	Consecutive int
 }
 
 type alertState struct {
 	failing  bool      // what recipients were last told
 	lastSent time.Time // last successful delivery
 	inflight bool
+	failRun  int // consecutive failed probes
+	okRun    int // consecutive passed probes
 }
 
 // alerter sends failure and recovery transitions, one notification per
@@ -62,6 +72,9 @@ type alerter struct {
 	now      func() time.Time
 	sleep    func(time.Duration)
 	log      io.Writer
+
+	failAfter    int
+	recoverAfter int
 
 	mu    sync.Mutex
 	state map[string]*alertState
@@ -101,10 +114,13 @@ func newAlerter(cfg alertConfig, log io.Writer) (*alerter, error) {
 	if cfg.Retries < 0 || cfg.Retries > 10 {
 		return nil, userError("--alert-retries must be between 0 and 10")
 	}
+	if cfg.FailAfter < 0 || cfg.FailAfter > maxAlertStreak || cfg.RecoverAfter < 0 || cfg.RecoverAfter > maxAlertStreak {
+		return nil, userErrorf("--alert-after and --alert-recover-after must be between 1 and %d", maxAlertStreak)
+	}
 	return &alerter{
 		sinks: sinks, cooldown: cfg.Cooldown, retries: cfg.Retries, backoff: alertBackoffBase,
 		client: &http.Client{Timeout: alertRequestTimeout}, now: time.Now, sleep: time.Sleep, log: log,
-		state: map[string]*alertState{},
+		state: map[string]*alertState{}, failAfter: cfg.FailAfter, recoverAfter: cfg.RecoverAfter,
 	}, nil
 }
 
@@ -122,13 +138,25 @@ func (a *alerter) observe(target string, ok bool, stage, reason string, elapsedM
 		a.state[target] = st
 	}
 	failing := !ok
-	if st.inflight || failing == st.failing || (!st.lastSent.IsZero() && now.Sub(st.lastSent) < a.cooldown) {
+	if ok {
+		st.okRun, st.failRun = st.okRun+1, 0
+	} else {
+		st.failRun, st.okRun = st.failRun+1, 0
+	}
+	run, need := st.okRun, a.recoverAfter
+	if failing {
+		run, need = st.failRun, a.failAfter
+	}
+	if st.inflight || failing == st.failing || run < need || (!st.lastSent.IsZero() && now.Sub(st.lastSent) < a.cooldown) {
 		a.mu.Unlock()
 		return
 	}
 	st.inflight = true
 	a.mu.Unlock()
 	ev := alertEvent{Failing: failing, Target: target, Stage: stage, Reason: reason, ElapsedMS: elapsedMS, Time: now}
+	if need > 1 {
+		ev.Consecutive = run
+	}
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -284,6 +312,9 @@ func alertPayload(kind string, e alertEvent) obj {
 		"elapsed_ms": e.ElapsedMS, "message": e.summary()}
 	if e.Failing {
 		p["stage"], p["reason"] = e.Stage, e.Reason
+	}
+	if e.Consecutive > 0 {
+		p["consecutive"] = e.Consecutive
 	}
 	return p
 }

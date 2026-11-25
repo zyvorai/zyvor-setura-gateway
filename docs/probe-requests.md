@@ -93,6 +93,51 @@ The verdict is statistical, and says so:
 Exit codes: `0` the observed split is consistent with the expectation, `1` it is not (or
 too many errors), `2` bad input. `--json` prints the per-backend rows.
 
+### GRPCRoute weights: `--grpc`
+
+```sh
+setura split http://grpc.shop.test:8080 --grpc --address 127.0.0.1 \
+  --expect orders-v1=90 --expect orders-v2=10 --requests 400
+```
+
+Each sample is one unary call on a new connection with an empty request message:
+`http://` speaks cleartext HTTP/2 with prior knowledge (h2c), `https://` negotiates `h2`
+over TLS (`--ca`). The default method is `grpc.health.v1.Health/Check`.
+`--grpc-method package.Service/Method` picks another one so that a method match can be
+reached; because that call may change state, it also needs `--allow-unsafe-method`.
+`--request-header` adds metadata (`content-type` and `grpc-*` are refused).
+
+A call counts only when it ends with HTTP 200 and `grpc-status: 0`; anything else is an
+error with the status in `first_error`. A backend that does not implement the health
+service therefore fails every default call: choose a harmless method it does implement.
+The identity is read from `--identity-header` in the response metadata, headers first,
+then trailers. The built-in gateway sets `X-Setura-Backend` to the backend Service name,
+and `setura echo` answers gRPC over h2c with its `--name`.
+
+### TLSRoute passthrough weights: `tls://`
+
+```sh
+setura split tls://db.secure.test:8443 --address 127.0.0.1 --ca ca.pem \
+  --expect db-blue=3 --expect db-green=1
+```
+
+A `TLSRoute` is chosen per connection and the gateway does not see inside it, so each
+sample is one TLS handshake and nothing else is sent. The backend is named by the leaf
+certificate it presents:
+
+| `--identity` | Name |
+| --- | --- |
+| `cert-cn` (default) | subject common name |
+| `cert-san` | first DNS subject alternative name |
+| `cert-sha256` | first 16 hex digits of the certificate's SHA-256 fingerprint |
+
+The certificate is verified for the SNI name (`--sni`, default the URL host) against
+`--ca` or the system roots; there is no way to skip verification. This only works when
+the backends present **different** certificates. If they share one, or the listener
+terminates TLS, every sample looks the same and the output says so. In that case, if the
+backends speak HTTP, use an `https://` URL and an identity header instead. Backends that
+require a client certificate are not supported.
+
 ## Verify a CORS preflight: `setura cors`
 
 ```sh

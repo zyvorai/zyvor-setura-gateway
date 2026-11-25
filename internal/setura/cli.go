@@ -299,11 +299,30 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		timeout := fs.Float64("timeout", 5, "timeout in seconds")
 		asJSON := fs.Bool("json", false, "print JSON")
 		listFile := fs.String("file", "", "list mode: read HOST:PORT targets from FILE, one per line (- for stdin); several targets also select list mode")
+		domainExpiry := fs.Bool("domain-expiry", false, "list mode: also look up when each target's domain registration expires (RDAP; sends the domain name to its registry)")
+		warnDomain := fs.Int("warn-domain-days", defaultWarnDomain, "with --domain-expiry: exit 1 when a registration expires sooner than N days")
+		rdapURL := fs.String("rdap-url", "", "with --domain-expiry: query this RDAP base URL instead of finding the registry's")
+		rdapBootstrap := fs.String("rdap-bootstrap", "", "with --domain-expiry: RDAP bootstrap file URL (default "+defaultRDAPBootstrap+")")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
 		}
-		if *listFile != "" || len(pos) > 1 {
+		var domains *DomainOptions
+		if *domainExpiry {
+			domains = &DomainOptions{Server: *rdapURL, Bootstrap: *rdapBootstrap, WarnDays: *warnDomain,
+				Timeout: time.Duration(*timeout * float64(time.Second))}
+		} else {
+			var stray string
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name == "warn-domain-days" || f.Name == "rdap-url" || f.Name == "rdap-bootstrap" {
+					stray = f.Name
+				}
+			})
+			if stray != "" {
+				return 0, userErrorf("--%s needs --domain-expiry", stray)
+			}
+		}
+		if *listFile != "" || len(pos) > 1 || domains != nil && len(pos) == 1 {
 			targets := pos
 			if *listFile != "" {
 				more, err := readCertTargets(*listFile, os.Stdin)
@@ -312,8 +331,8 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				}
 				targets = append(targets, more...)
 			}
-			lrep, err := CertList(targets, CertsOptions{CA: *ca, SNI: *sni, Timeout: time.Duration(*timeout * float64(time.Second)),
-				tlsOpts: tlsOpts{Cert: *cert, Key: *key, WarnExpiryDays: *warn}})
+			lrep, err := certList(targets, CertsOptions{CA: *ca, SNI: *sni, Timeout: time.Duration(*timeout * float64(time.Second)),
+				tlsOpts: tlsOpts{Cert: *cert, Key: *key, WarnExpiryDays: *warn}}, domains)
 			if err != nil {
 				return 0, err
 			}
@@ -349,6 +368,9 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 		format := fs.String("format", "auto", "auto (pretty on a terminal, JSON when piped), pretty, json or github (workflow annotations)")
 		retries := fs.Int("retries", 0, "probe a failed case again up to N more times (default for cases without \"retries\")")
 		retryEvery := fs.Duration("retry-interval", time.Second, "wait between retries")
+		varsFile := fs.String("vars-file", "", "name=value lines for {{name}} references in FILE")
+		var varItems stringList
+		fs.Var(&varItems, "var", "name=value for {{name}} references in FILE; repeatable (also SETURA_VAR_name)")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2, err
@@ -366,7 +388,11 @@ func run(injected *Cluster, args []string, stdout, stderr io.Writer) (int, error
 				return 2, ferr
 			}
 		}
-		rows, err := CheckWith(pos[0], CheckRetry{Retries: *retries, Interval: *retryEvery})
+		vars, err := newVars(varItems, *varsFile)
+		if err != nil {
+			return 0, err
+		}
+		rows, err := CheckWith(pos[0], CheckRetry{Retries: *retries, Interval: *retryEvery, Vars: vars})
 		if err != nil {
 			return 0, err
 		}
@@ -845,6 +871,8 @@ func boolExit(failed bool) int {
 type CheckRetry struct {
 	Retries  int
 	Interval time.Duration
+	// Vars resolves {{name}} references; nil reads the environment only.
+	Vars *Vars
 }
 
 const (
@@ -886,6 +914,9 @@ func CheckWith(path string, def CheckRetry) ([]*Report, error) {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, userErrorf("invalid check file JSON: %v", err)
+	}
+	if v, err = def.Vars.expand(v); err != nil {
+		return nil, err
 	}
 	cases := asList(v)
 	if len(cases) == 0 {

@@ -23,7 +23,7 @@ SETURA=$(cd "$(dirname "$SETURA")" && pwd)/$(basename "$SETURA")
 CHECKS="weighted_split consistent_hash least_request direct_response route_ratelimit limits path_normalise
 compression cors redirect_rewrite jwt apikey_basic authorization ip_deny header_vars accesslog chaos contract
 metering ai_gateway redis_ratelimit h2c_upstream hot_reload why_replay_prcheck metrics admin_token install_manifest doctor
-jwt_algorithms traffic_shaping typo_safety chaos_plan ai_privacy"
+jwt_algorithms traffic_shaping typo_safety chaos_plan ai_privacy split_protocols probe_inputs"
 
 ONLY=(); VERBOSE=0; KEEP=0
 while [ $# -gt 0 ]; do
@@ -172,14 +172,13 @@ capwait() { # NAME : wait until a nc is listening (an empty capture file is the 
     for f in "$W"/cap."$1".*; do [ -e "$f" ] && [ ! -s "$f" ] && return 0; done; sleep 0.1; done; return 1; }
 caplast() { # NAME -> content of the newest non-empty capture (waits briefly for it)
   local i f best
-  for i in $(seq 1 40); do
-    best=""
-    for f in "$W"/cap."$1".*; do [ -s "$f" ] && best=$f; done
+  for i in $(seq 1 100); do
     # newest by number
     best=$(ls "$W"/cap."$1".* 2>/dev/null | sort -t. -k3 -n | while read -r f; do [ -s "$f" ] && echo "$f"; done | tail -1)
-    [ -n "$best" ] && { tr -d '\r' <"$best"; return 0; }
+    [ -n "$best" ] && tr -d '\r' <"$best" | grep -q '^$' && { tr -d '\r' <"$best"; return 0; }
     sleep 0.1
-  done; return 1; }
+  done
+  [ -n "$best" ] && tr -d '\r' <"$best"; return 1; }
 capcount() { local n=0 f; for f in "$W"/cap."$1".*; do [ -s "$f" ] && n=$((n+1)); done; echo "$n"; }
 capheader() { awk -v n="$(printf '%s' "$2" | tr 'A-Z' 'a-z'):" 'tolower($1)==n {sub(/^[^:]*: */,""); print; exit}' <<<"$1"; }
 
@@ -367,7 +366,7 @@ check_compression() {
   local o; o=$(H -D - -o "$W/big.gz" -H 'Accept-Encoding: gzip' "$(G /big)" | tr -d '\r')
   has "gzip negotiated" "$o" "Content-Encoding: gzip"
   has "Vary: Accept-Encoding set" "$o" "Vary: Accept-Encoding"
-  ok "payload is a valid gzip stream" gzip -t -S "" "$W/big.gz" 2>/dev/null || { cp "$W/big.gz" "$W/big.gz2"; }
+  ok "payload is a valid gzip stream" sh -c 'gzip -t <"$1"' sh "$W/big.gz"
   local dec; dec=$(gzip -dc <"$W/big.gz" 2>/dev/null | head -c 40)
   eq "decompressed body is the original" "$dec" "$(printf '%s' "$big" | head -c 40)"
   local sz; sz=$(wc -c <"$W/big.gz" | tr -d ' ')
@@ -822,7 +821,7 @@ EOF
   sleep 0.5
   local pa; pa=$(echo_up a)
   mksnap "$W/s.json" "[{$(pfx /),\"setura.zyvor.dev/rate-limit\":{\"rate\":\"3/m\",\"shared\":{\"redis\":\"main\",\"keyPrefix\":\"e2e\",\"failOpen\":true,\"fallback\":\"local\"}},\"backendRefs\":[$(ref a)]}]" "$(be a "$pa")"
-  gw "$W/s.json" --redis "main=127.0.0.1:$rp" || return
+  gw "$W/s.json" --redis "main=127.0.0.1:$rp" --redis-timeout 5s --redis-dial-timeout 5s || return
   local codes="" i
   for i in 1 2 3 4 5; do codes="$codes $(code "$(G /x)")"; done
   if [ ! -s "$W/redis.cmds" ]; then skip "the bash/nc fake RESP server received no command (gateway never spoke to it): $(short "$(cat "$W/resp.log" 2>/dev/null)")"; return; fi
@@ -1209,6 +1208,69 @@ check_ai_privacy() { # what the provider receives: redacted prompt, gateway cred
   local u; u=$(tail -1 "$W/gw.al")
   has "access log carries pii_action redacted" "$u" '"pii_action":"redacted"'
   has "access log carries the identity ai_key t" "$u" '"ai_key":"t"'
+}
+
+# ============================================================================ 34
+check_split_protocols() { # GRPCRoute weights over h2c and TLSRoute passthrough weights
+  local pa pb; pa=$(echo_up a); pb=$(echo_up b)
+  cat >"$W/g.json" <<EOF
+{"schema":"setura.route-specs/v1","namespace":"e2e","resources":{
+"gateways.gateway.networking.k8s.io/gw":{"gatewayClassName":"setura","listeners":[{"name":"web","protocol":"HTTP","port":8080}]},
+"grpcroutes.gateway.networking.k8s.io/g":{"parentRefs":[{"name":"gw"}],"rules":[{"backendRefs":[$(ref a 3),$(ref b 1)]}]}},
+"backends":$(be a "$pa" b "$pb")}
+EOF
+  gw "$W/g.json" || return
+  local o rc
+  o=$("$SETURA" split "http://127.0.0.1:$GWP" --grpc --expect a=3 --expect b=1 --requests 300 2>&1); rc=$?
+  eq "gRPC split 3:1 through the GRPCRoute passes ($(short "$o"))" "$rc" 0
+  "$SETURA" split "http://127.0.0.1:$GWP" --grpc --expect a=1 --expect b=3 --requests 300 >/dev/null 2>&1; eq "reversed gRPC expectation fails" "$?" 1
+  # TLSRoute: two openssl TLS servers behind a passthrough listener, told apart by certificate CN
+  local n p eps=()
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=e2e-ca -keyout "$W/ca.key" -out "$W/ca.pem" 2>/dev/null
+  printf 'subjectAltName=DNS:db.secure.test\nextendedKeyUsage=serverAuth\n' >"$W/san.ext"
+  for n in db-blue db-green; do
+    openssl req -newkey rsa:2048 -nodes -subj "/CN=$n" -keyout "$W/$n.key" -out "$W/$n.csr" 2>/dev/null
+    openssl x509 -req -in "$W/$n.csr" -CA "$W/ca.pem" -CAkey "$W/ca.key" -CAcreateserial -days 2 -extfile "$W/san.ext" -out "$W/$n.pem" 2>/dev/null
+    p=$(free_port); eps+=("$p")
+    spawn "tls-$n" openssl s_server -accept "$p" -cert "$W/$n.pem" -key "$W/$n.key" -www -quiet
+    wait_port "$p" || { fail "openssl s_server $n did not start"; return; }
+  done
+  cat >"$W/t.json" <<EOF
+{"schema":"setura.route-specs/v1","namespace":"e2e","resources":{
+"gateways.gateway.networking.k8s.io/gw":{"gatewayClassName":"setura","listeners":[{"name":"db","protocol":"TLS","port":8080,"tls":{"mode":"Passthrough"}}]},
+"tlsroutes.gateway.networking.k8s.io/t":{"parentRefs":[{"name":"gw"}],"hostnames":["db.secure.test"],"rules":[{"backendRefs":[$(ref blue 3),$(ref green 1)]}]}},
+"backends":$(be blue "${eps[0]}" green "${eps[1]}")}
+EOF
+  gw "$W/t.json" || return
+  o=$("$SETURA" split "tls://db.secure.test:$GWP" --address 127.0.0.1 --ca "$W/ca.pem" --expect db-blue=3 --expect db-green=1 --requests 200 2>&1); rc=$?
+  eq "TLS passthrough split 3:1 by certificate CN passes ($(short "$o"))" "$rc" 0
+  "$SETURA" split "tls://db.secure.test:$GWP" --address 127.0.0.1 --expect db-blue=3 --expect db-green=1 --requests 40 >/dev/null 2>&1; eq "without --ca the handshakes fail" "$?" 1
+}
+
+# ============================================================================ 35
+check_probe_inputs() { # check-file variables, bench thresholds, certs --domain-expiry against a fake RDAP
+  local pa; pa=$(echo_up a)
+  printf '[{"url":"{{base}}/x","backend":"{{who}}"}]' >"$W/checks.json"
+  printf 'base=http://127.0.0.1:%s\n' "$pa" >"$W/vars"
+  "$SETURA" check "$W/checks.json" --vars-file "$W/vars" --var who=a >/dev/null 2>&1; eq "check with --vars-file and --var passes" "$?" 0
+  SETURA_VAR_who=b "$SETURA" check "$W/checks.json" --vars-file "$W/vars" >/dev/null 2>&1; eq "SETURA_VAR_ value is used (and fails the assertion)" "$?" 1
+  local o rc; o=$("$SETURA" check "$W/checks.json" --vars-file "$W/vars" 2>&1); rc=$?
+  eq "undefined variable is a usage error" "$rc" 2; has "it names the variable" "$o" "{{who}}"
+  o=$("$SETURA" bench "http://127.0.0.1:$pa/" --requests 50 --threshold 'error_rate<0.01' --threshold 'p95<5000' 2>&1); rc=$?
+  eq "bench thresholds met" "$rc" 0
+  has "met thresholds are listed" "$o" "threshold ok: p95<5000"
+  "$SETURA" bench "http://127.0.0.1:$pa/" --requests 20 --threshold 'rps>100000000' >/dev/null 2>&1; eq "an unmet threshold exits 1" "$?" 1
+  local body='{\"ldhName\":\"shop.test\",\"events\":[{\"eventAction\":\"expiration\",\"eventDate\":\"2001-01-01T00:00:00Z\"}]}'
+  cat >"$W/rdap.json" <<EOF
+{"schema":"setura.route-specs/v1","namespace":"e2e","resources":{
+"gateways.gateway.networking.k8s.io/gw":{"gatewayClassName":"setura","listeners":[{"name":"web","protocol":"HTTP","port":8080}]},
+"httproutes.gateway.networking.k8s.io/r":{"parentRefs":[{"name":"gw"}],"rules":[$(dr /domain/shop.test 200 "$body"),$(dr / 404 no)]}},
+"backends":{}}
+EOF
+  gw "$W/rdap.json" || return
+  o=$("$SETURA" certs www.shop.test:1 --domain-expiry --rdap-url "http://127.0.0.1:$GWP" --timeout 2 2>&1); rc=$?
+  eq "certs --domain-expiry exits 1 for a lapsed domain" "$rc" 1
+  has "the registered domain is found" "$o" "shop.test"; has "it is marked expiring" "$o" "EXPIRING"
 }
 
 # ============================================================================ runner

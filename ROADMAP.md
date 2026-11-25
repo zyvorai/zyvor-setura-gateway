@@ -17,9 +17,10 @@ Plans, not promises. Dates are intentionally absent.
 
 Things we know are missing, in the order we would take them:
 
-0. **Probe follow-ups** (after `split`, `cors` and request shaping): a split check for GRPCRoute and TLSRoute, and DNS (domain) expiry in the `certs` list mode. The certificate list mode, `cors --expect-refused`, JSON and regex assertions and `check --retries` are done (`docs/assertions.md`).
-1. **Prove it.** Run the upstream Gateway API conformance suite on K3s and publish the
-   report; watch the new controller-mode smoke (`scripts/controller-smoke.sh`, in the cluster-smoke job)
+1. **Prove it.** Get the upstream Gateway API conformance suite to run: the scheduled run
+   stops during setup because the suite creates several Gateways on port 80, which one
+   shared data plane reports as `HostnameConflict`. That needs an address or data plane per
+   Gateway. Then publish the report; watch the new controller-mode smoke (`scripts/controller-smoke.sh`, in the cluster-smoke job)
    go green for the first time; run ACME against Let's Encrypt
    staging end to end.
 2. **GRPCRoute filters and limits.** Auth and rate limits now apply; per-route size limits, direct responses and fault injection are still HTTP only.

@@ -89,3 +89,84 @@ Passes (exit 0) when a browser following the Fetch rules would refuse the prefli
 when it would accept it: the check that catches a server reflecting every `Origin`. An
 unreachable server still fails, so an outage is not mistaken for a refusal. JSON adds
 `"expect_refused": true` and `"allowed"`.
+
+## Variables in check and watch files
+
+One file, several environments, and no credential written into it:
+
+```json
+[{"url": "{{base}}/health", "request_headers": {"Authorization": "Bearer {{token}}"}}]
+```
+
+```sh
+SETURA_VAR_token="$TOKEN" setura check checks.json --var base=https://staging.shop.test
+setura check checks.json --vars-file prod.vars
+setura watch --file checks.json --vars-file prod.vars
+```
+
+- `{{name}}` (letters, digits, `_`, `-`; no spaces) is replaced in every string value.
+  Object keys (header names, JSON paths) and numbers are left as written, so `status`
+  cannot be templated.
+- Precedence: `--var name=value`, then `--vars-file` (`name=value` lines, `#` comments,
+  values trimmed, a name only once), then the environment variable `SETURA_VAR_name`.
+  A name containing `-` can only come from the first two in most shells.
+- An undefined name is a usage error (exit `2`) before any request is sent. `gateway
+  rollout --checks` resolves variables from the environment only and refuses before
+  changing the live config.
+- `\\{{name}}` in JSON (`\{{name}}` after decoding) keeps the braces as literal text.
+- Substitution happens after the JSON is parsed, so a value cannot add keys or cases.
+- This is not secret redaction. Request header values are never echoed, but a URL
+  appears in reports, history files and alerts, and a failed response assertion prints
+  the expected value. Prefer headers for credentials.
+
+## Bench thresholds
+
+`setura bench --threshold EXPR` (repeatable, at most 32) fails the run unless every
+expression holds:
+
+```sh
+setura bench http://orders.test:8080/ --address 127.0.0.1 --requests 500 \
+  --threshold 'p95<200' --threshold 'p(99.9)<=800ms' \
+  --threshold 'error_rate<0.01' --threshold 'rps>=50'
+```
+
+| Metric | Meaning |
+| --- | --- |
+| `min`, `avg` (`mean`), `med`, `p95`, `p(99.9)`, `max` | latency in milliseconds (`ms` suffix optional), nearest-rank percentiles over all requests including failed ones |
+| `error_rate` | failed share, 0 to 1 |
+| `errors`, `requests` | counts |
+| `rps` | requests divided by the run time |
+
+Operators are `<`, `<=`, `>`, `>=`, `==` and `!=`. A latency or rate threshold with no
+samples fails. `--json` adds `thresholds: [{expr, observed, ok}]`. The older
+`--max-p99-ms` and `--max-error-rate` still work and can be combined with it. Numbers are
+what one client measured from where it runs; they are not a capacity statement.
+
+## Domain registration expiry: `certs --domain-expiry`
+
+A certificate that renews itself does not help when the domain lapses.
+
+```sh
+setura certs --file targets.txt --warn-expiry-days 21 --domain-expiry --warn-domain-days 45
+```
+
+```text
+TARGET                STATUS  DAYS  DOMAIN         DOMSTATE   DAYS  DETAIL
+www.shop.example:443  OK        71  shop.example   EXPIRING     12  domain: the registration expires in under 45 days
+```
+
+- The date comes from RDAP (RFC 9083, the `expiration` event). The registry's server is
+  found in the IANA bootstrap file (RFC 9224); `--rdap-bootstrap URL` reads another copy
+  and `--rdap-url BASE` queries one server directly.
+- The longest name is asked first (`a.shop.co.uk`, then `shop.co.uk`) until a registry
+  has a record, at most five labels; the `DOMAIN` column shows which name answered.
+  Lookups are sequential and cached for the run.
+- `unknown` fails the run like `expiring`: a date that could not be read is not a pass.
+  This includes registries without RDAP in the bootstrap file, registries that publish no
+  expiration date, rate limiting (HTTP 429) and non-ASCII names (give the `xn--` form).
+  IP addresses and single-label names are `skipped`; for an IP target, `--sni` names the
+  domain.
+- Privacy: this is the one probe that talks to a third party. The domain name is sent to
+  its registry, and the bootstrap file is fetched from `data.iana.org`. Without the flag
+  nothing changes.
+- A single target with `--domain-expiry` prints the table.
